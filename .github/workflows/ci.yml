@@ -8,7 +8,7 @@ on:
     inputs:
       aiml_ref:
         description: "aiml ref to build against (branch, tag or SHA)"
-        default: master
+        default: feature/ui-draw-text
       aiml_quelle:
         description: "aiml: pull from kontor, build, or pull-else-build"
         type: choice
@@ -37,7 +37,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Pymann/aiml
-          ref: ${{ inputs.aiml_ref || 'master' }}
+          # TEMPORARY: the canvas needs ui.draw_rect / draw_text / draw_image, which
+          # live on Pymann/aiml's feature/ui-draw-text branch. Put this back to
+          # 'master' the moment that branch is merged -- a CI pinned to a branch is a
+          # CI that stops noticing when the branch moves.
+          ref: ${{ inputs.aiml_ref || 'feature/ui-draw-text' }}
           path: aiml
 
       - name: Which aiml commit
