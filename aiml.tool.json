@@ -1,0 +1,6 @@
+{
+    "$schema": "aiml.tool-1.0",
+    "name": "chart",
+    "version": "0.1.0",
+    "programs": ["chart"]
+}
