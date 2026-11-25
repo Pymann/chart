@@ -9,8 +9,16 @@ Written entirely in AIML, like `aidoc` and `glbview`.
 The contract is [`doc/spec/chart.md`](doc/spec/chart.md); this README is the practical
 overview.
 
-**Status: spec only.** No sources yet — the build and usage sections below describe the
-intended shape, not something that runs today.
+![Der Editor](doc/shots/editor.png)
+
+**Status:** the editor runs. Deck model, slides, Mermaid projection, Markdown export per
+slide, images and presentation mode are in; freehand recognition (spec §7) is not.
+
+| | |
+|---|---|
+| ![Formen](doc/shots/shapes.png) | ![Bilder](doc/shots/images.png) |
+
+![Praesentationsmodus](doc/shots/presentation.png)
 
 ## The one rule worth knowing up front
 
@@ -56,11 +64,33 @@ only when that commit is not there yet. Three repository secrets switch that on:
 Without them the run still works — it just builds aiml every time, which is the most
 expensive step by far (LLVM 18). `Pymann/aiml` is public, so no GitHub token is needed.
 
-## Use (planned)
+## Use
 
 ```bash
-chart --sheet sheets/login.chart.yaml --mermaid doc/login.mmd   # headless export
+chart --deck examples/demo.deck.yaml              # open the editor
+chart --deck examples/demo.deck.yaml --present 1  # straight into presentation mode
+
+# headless, no window:
+chart --deck examples/demo.deck.yaml --markdown doc/folien   # one .md per slide
+chart --sheet sheets/login.chart.yaml --mermaid doc/login.mmd
 ```
+
+`--frames N --shot FILE.png` runs N frames and captures the last one — that is how the
+editor is testable at all, and how the pictures above were made.
+
+### Keys
+
+| | |
+|---|---|
+| `F5` | present · `Esc` back |
+| `Right` `Space` `PageDown` | next slide |
+| `Left` `PageUp` | previous |
+| `Home` `End` | first · last |
+| `N` | speaker notes (presenter only, never exported) |
+| `Delete` | remove the selection |
+
+A stencil in the bar arms a shape; the next click on the page places it. Drag moves,
+click selects.
 
 ## What it leans on
 

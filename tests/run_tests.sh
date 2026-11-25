@@ -35,5 +35,32 @@ for fixture in tests/fixture/*.chart.yaml; do
         failed=$((failed + 1))
     fi
 done
+# Decks: one Markdown file per slide, plus the index (spec §13).
+for fixture in tests/fixture/*.deck.yaml; do
+    [ -e "$fixture" ] || continue
+    name=$(basename "$fixture" .deck.yaml)
+    expected="tests/expected/$name"
+    got="tests/out/$name"
+    total=$((total + 1))
+    rm -rf "$got"
+    if ! "$BIN" --deck "$fixture" --markdown "$got"; then
+        echo "[ FAIL ] $name -- exporter exited non-zero"
+        failed=$((failed + 1))
+        continue
+    fi
+    if [ ! -d "$expected" ]; then
+        echo "[ FAIL ] $name -- no expected directory at $expected"
+        failed=$((failed + 1))
+        continue
+    fi
+    # -r so a file the exporter forgot, or one it invented, is a failure too.
+    if diff -ru "$expected" "$got"; then
+        echo "[  OK  ] $name (markdown)"
+    else
+        echo "[ FAIL ] $name -- markdown differs from $expected"
+        failed=$((failed + 1))
+    fi
+done
+
 echo "chart: $((total - failed))/$total passed"
 [ "$failed" -eq 0 ]

@@ -1,0 +1,41 @@
+# A demo deck: shapes, edges, a picture, speaker notes, presentation mode.
+# Open it with:   chart --deck examples/demo.deck.yaml
+title: "chart"
+slides:
+  - title: "Zeichnung wird Mermaid"
+    dtype: flowchart
+    dir: TD
+    next_id: 6
+    notes: "Hier erzaehlen, warum das Blatt kanonisch ist und Mermaid der Export."
+    nodes:
+      - { id: n1, kind: stadium,    x: 120, y: 130, w: 240, h: 90,  text: "Blatt\n(*.chart.yaml)" }
+      - { id: n2, kind: diamond,    x: 520, y: 120, w: 240, h: 110, text: "vollstaendig?" }
+      - { id: n3, kind: rect,       x: 920, y: 130, w: 240, h: 90,  text: "Mermaid", fill: 776633087, stroke: 2005445375 }
+      - { id: n4, kind: circle,     x: 540, y: 380, w: 200, h: 200, text: "Fehler\nmelden" }
+      - { id: n5, kind: subroutine, x: 920, y: 400, w: 240, h: 90,  text: "Markdown\nje Folie" }
+    edges:
+      - { id: e1, from_id: n1, to_id: n2, kind: arrow }
+      - { id: e2, from_id: n2, to_id: n3, kind: arrow, text: "ja" }
+      - { id: e3, from_id: n2, to_id: n4, kind: dotted, text: "nein" }
+      - { id: e4, from_id: n3, to_id: n5, kind: thick }
+
+  - title: "Formen"
+    next_id: 8
+    notes: "Alle Stempel aus der linken Leiste."
+    nodes:
+      - { id: n1, kind: rect,       x: 90,  y: 150, w: 220, h: 100, text: "Kasten" }
+      - { id: n2, kind: round,      x: 360, y: 150, w: 220, h: 100, text: "Rund" }
+      - { id: n3, kind: hexagon,    x: 630, y: 150, w: 220, h: 100, text: "Sechseck" }
+      - { id: n4, kind: diamond,    x: 900, y: 150, w: 240, h: 110, text: "Raute" }
+      - { id: n5, kind: cylinder,   x: 90,  y: 360, w: 220, h: 100, text: "Zylinder" }
+      - { id: n6, kind: subroutine, x: 360, y: 360, w: 220, h: 100, text: "Unterprogramm" }
+      - { id: n7, kind: stadium,    x: 630, y: 360, w: 220, h: 100, text: "Kapsel" }
+
+  - title: "Bilder"
+    next_id: 3
+    notes: "src ist ein Pfad relativ zum Deck, nie die Bytes."
+    nodes:
+      - { id: n1, kind: image, x: 170, y: 130, w: 420, h: 420, text: "arena.png", src: "examples/bilder/arena.png" }
+      - { id: n2, kind: rect,  x: 680, y: 260, w: 420, h: 150, text: "Ein Bild ist eine\nKnotenart, kein\nzweites Objekt" }
+    edges:
+      - { id: e1, from_id: n1, to_id: n2, kind: arrow, text: "Beschriftung" }

@@ -71,6 +71,7 @@
             - if: { condition: { eq: [word, "hexagon"] },    then: [{ return: NodeKind.hexagon }] }
             - if: { condition: { eq: [word, "cylinder"] },   then: [{ return: NodeKind.cylinder }] }
             - if: { condition: { eq: [word, "subroutine"] }, then: [{ return: NodeKind.subroutine }] }
+            - if: { condition: { eq: [word, "image"] },      then: [{ return: NodeKind.image }] }
             - return: -1
 
       - def:
@@ -111,30 +112,20 @@
             - if: { condition: { eq: [word, "class_diagram"] }, then: [{ return: DiagramType.class_diagram }] }
             - return: -1
 
-      # Load `path` into `sheet`.  1 on success, 0 on a reported failure.
+      # Read one slide out of a mapping node.  1 on success, 0 on a reported
+      # failure -- the caller owns the document and frees it either way.
       - def:
-          name: load
+          name: read_sheet
           static_off: ["same_arg", "str_cmp"]
-          args: [[path, string], [sheet, ref<Sheet>]]
+          args: [[path, string], [root, ref<yaml_node>], [sheet, ref<Sheet>]]
           return: i32
           body:
-            - decl: [document, ptr<yaml_doc>, { call: [yaml.parse_file, path] }]
-            - decl: [error_text, string, { call: [yaml.error, document] }]
-            - if:
-                condition: { neq: [error_text, ""] }
-                then:
-                  - call: [log.error, "chart: ${path}: ${error_text}"]
-                  - call: [yaml.free, document]
-                  - return: 0
-            - decl: [root, ref<yaml_node>, { call: [yaml.root, document] }]
-
             - decl: [dtype_word, string, { call: [<.kv_text, root, "dtype", "flowchart"] }]
             - decl: [dtype_val, i32, { call: [<.diagram_type, dtype_word] }]
             - if:
                 condition: { lt: [dtype_val, 0] }
                 then:
                   - call: [log.error, "chart: ${path}: unknown dtype '${dtype_word}'"]
-                  - call: [yaml.free, document]
                   - return: 0
             - set: [sheet.dtype, dtype_val]
 
@@ -144,12 +135,13 @@
                 condition: { lt: [dir_val, 0] }
                 then:
                   - call: [log.error, "chart: ${path}: unknown dir '${dir_word}'"]
-                  - call: [yaml.free, document]
                   - return: 0
             - set: [sheet.dir, dir_val]
+            - set: [sheet.title, { call: [<.kv_text, root, "title", ""] }]
+            - set: [sheet.notes, { call: [<.kv_text, root, "notes", ""] }]
             - set: [sheet.next_id, { call: [<.kv_i32, root, "next_id"] }]
 
-            # ── groups ──────────────────────────────────────────────────────
+            # groups
             - decl: [groups_idx, i32, { call: [<.kv_index, root, "groups"] }]
             - if:
                 condition: { ge: [groups_idx, 0] }
@@ -167,7 +159,7 @@
                         - call: [sheet.groups.push, group]
                         - set: [gidx, { +: [gidx, 1] }]
 
-            # ── nodes ───────────────────────────────────────────────────────
+            # nodes
             - decl: [nodes_idx, i32, { call: [<.kv_index, root, "nodes"] }]
             - if:
                 condition: { ge: [nodes_idx, 0] }
@@ -186,7 +178,6 @@
                             condition: { lt: [kind_val, 0] }
                             then:
                               - call: [log.error, "chart: ${path}: node '${node.ident}' has unknown kind '${kind_word}'"]
-                              - call: [yaml.free, document]
                               - return: 0
                         - set: [node.kind, kind_val]
                         - set: [node.pos_x, { call: [<.kv_f32, item, "x"] }]
@@ -194,13 +185,14 @@
                         - set: [node.width, { call: [<.kv_f32, item, "w"] }]
                         - set: [node.height, { call: [<.kv_f32, item, "h"] }]
                         - set: [node.text, { call: [<.kv_text, item, "text", ""] }]
+                        - set: [node.src, { call: [<.kv_text, item, "src", ""] }]
                         - set: [node.fill, { call: [<.kv_i32, item, "fill"] }]
                         - set: [node.stroke, { call: [<.kv_i32, item, "stroke"] }]
                         - set: [node.group, { call: [<.kv_text, item, "group", ""] }]
                         - call: [sheet.nodes.push, node]
                         - set: [nidx, { +: [nidx, 1] }]
 
-            # ── edges ───────────────────────────────────────────────────────
+            # edges
             - decl: [edges_idx, i32, { call: [<.kv_index, root, "edges"] }]
             - if:
                 condition: { ge: [edges_idx, 0] }
@@ -221,13 +213,150 @@
                             condition: { lt: [ekind_val, 0] }
                             then:
                               - call: [log.error, "chart: ${path}: edge '${edge.ident}' has unknown kind '${ekind_word}'"]
-                              - call: [yaml.free, document]
                               - return: 0
                         - set: [edge.kind, ekind_val]
                         - set: [edge.text, { call: [<.kv_text, item, "text", ""] }]
                         - set: [edge.stroke, { call: [<.kv_i32, item, "stroke"] }]
                         - call: [sheet.edges.push, edge]
                         - set: [eidx, { +: [eidx, 1] }]
+            - return: 1
 
+      # Load `path` into `deck`.  A file with `slides:` is a deck; any other mapping
+      # is a one-slide deck, so a *.chart.yaml keeps loading as it always did
+      # (spec §11.1).  1 on success, 0 on a reported failure.
+      - def:
+          name: load
+          static_off: ["same_arg", "str_cmp"]
+          args: [[path, string], [deck, ref<Deck>]]
+          return: i32
+          body:
+            - decl: [document, ptr<yaml_doc>, { call: [yaml.parse_file, path] }]
+            - decl: [error_text, string, { call: [yaml.error, document] }]
+            - if:
+                condition: { neq: [error_text, ""] }
+                then:
+                  - call: [log.error, "chart: ${path}: ${error_text}"]
+                  - call: [yaml.free, document]
+                  - return: 0
+            - decl: [root, ref<yaml_node>, { call: [yaml.root, document] }]
+            - set: [deck.title, { call: [<.kv_text, root, "title", ""] }]
+            - decl: [slides_idx, i32, { call: [<.kv_index, root, "slides"] }]
+            - if:
+                condition: { lt: [slides_idx, 0] }
+                then:
+                  - decl: [single, Sheet]
+                  - decl: [ok_single, i32, { call: [<.read_sheet, path, root, single] }]
+                  - if:
+                      condition: { eq: [ok_single, 0] }
+                      then:
+                        - call: [yaml.free, document]
+                        - return: 0
+                  # A lone sheet carries no deck title of its own; its slide title stands in.
+                  - if: { condition: { eq: [deck.title, ""] }, then: [{ set: [deck.title, single.title] }] }
+                  - call: [deck.slides.push, single]
+                  - call: [yaml.free, document]
+                  - return: 1
+            - decl: [slides_node, ref<yaml_node>, { call: [yaml.value, root, slides_idx] }]
+            - decl: [sidx, i32, 0]
+            - while:
+                condition: { lt: [sidx, { call: [yaml.size, slides_node] }] }
+                body:
+                  - decl: [item, ref<yaml_node>, { call: [yaml.item, slides_node, sidx] }]
+                  - decl: [slide, Sheet]
+                  - decl: [ok_slide, i32, { call: [<.read_sheet, path, item, slide] }]
+                  - if:
+                      condition: { eq: [ok_slide, 0] }
+                      then:
+                        - call: [yaml.free, document]
+                        - return: 0
+                  - call: [deck.slides.push, slide]
+                  - set: [sidx, { +: [sidx, 1] }]
+            - if:
+                condition: { eq: [deck.slides.len, 0] }
+                then:
+                  - call: [log.error, "chart: ${path}: 'slides' is empty -- a deck needs at least one slide"]
+                  - call: [yaml.free, document]
+                  - return: 0
             - call: [yaml.free, document]
             - return: 1
+
+      # YAML escaping for a double-quoted scalar.
+      - def:
+          name: esc_yaml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          return: string
+          body:
+            - decl: [flat, string, { call: [text.replace, "\\", "\\\\"] }]
+            - set: [flat, { call: [flat.replace, "\"", "\\\""] }]
+            - set: [flat, { call: [flat.replace, "\n", "\\n"] }]
+            - return: flat
+
+      # The deck as YAML -- a pure function, so a round trip can be checked byte for
+      # byte.  The member words come from enums.name: a second hand-written inverse
+      # of the vocabulary would be a second place to forget a member.
+      - def:
+          name: deck_yaml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          return: string
+          body:
+            - decl: [out, string, "title: \"${ { call: [<.esc_yaml, deck.title] } }\"\nslides:\n"]
+            - decl: [sidx, i32, 0]
+            - while:
+                condition: { lt: [sidx, deck.slides.len] }
+                body:
+                  - decl: [slide, ref<Sheet>, { at: [deck.slides, sidx] }]
+                  - decl: [dtype_word, string, { call: [enums.name, "DiagramType", slide.dtype] }]
+                  - decl: [dir_word, string, { call: [enums.name, "Direction", slide.dir] }]
+                  - set: [out, "${out}  - title: \"${ { call: [<.esc_yaml, slide.title] } }\"\n"]
+                  - set: [out, "${out}    dtype: ${dtype_word}\n    dir: ${dir_word}\n"]
+                  - if:
+                      condition: { neq: [slide.notes, ""] }
+                      then: [{ set: [out, "${out}    notes: \"${ { call: [<.esc_yaml, slide.notes] } }\"\n"] }]
+                  - set: [out, "${out}    next_id: ${slide.next_id}\n"]
+                  - if:
+                      condition: { gt: [slide.groups.len, 0] }
+                      then:
+                        - set: [out, "${out}    groups:\n"]
+                        - decl: [gidx, i32, 0]
+                        - while:
+                            condition: { lt: [gidx, slide.groups.len] }
+                            body:
+                              - decl: [group, ref<Group>, { at: [slide.groups, gidx] }]
+                              - set: [out, "${out}      - { id: ${group.ident}, title: \"${ { call: [<.esc_yaml, group.title] } }\", parent: \"${group.parent}\" }\n"]
+                              - set: [gidx, { +: [gidx, 1] }]
+                  - if:
+                      condition: { gt: [slide.nodes.len, 0] }
+                      then:
+                        - set: [out, "${out}    nodes:\n"]
+                        - decl: [nidx, i32, 0]
+                        - while:
+                            condition: { lt: [nidx, slide.nodes.len] }
+                            body:
+                              - decl: [node, ref<Node>, { at: [slide.nodes, nidx] }]
+                              - decl: [kind_word, string, { call: [enums.name, "NodeKind", node.kind] }]
+                              - set: [out, "${out}      - { id: ${node.ident}, kind: ${kind_word}, x: ${node.pos_x}, y: ${node.pos_y}, w: ${node.width}, h: ${node.height}"]
+                              - set: [out, "${out}, text: \"${ { call: [<.esc_yaml, node.text] } }\""]
+                              - if: { condition: { neq: [node.src, ""] }, then: [{ set: [out, "${out}, src: \"${node.src}\""] }] }
+                              - if: { condition: { neq: [node.fill, 0] }, then: [{ set: [out, "${out}, fill: ${node.fill}"] }] }
+                              - if: { condition: { neq: [node.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${node.stroke}"] }] }
+                              - if: { condition: { neq: [node.group, ""] }, then: [{ set: [out, "${out}, group: ${node.group}"] }] }
+                              - set: [out, "${out} }\n"]
+                              - set: [nidx, { +: [nidx, 1] }]
+                  - if:
+                      condition: { gt: [slide.edges.len, 0] }
+                      then:
+                        - set: [out, "${out}    edges:\n"]
+                        - decl: [eidx, i32, 0]
+                        - while:
+                            condition: { lt: [eidx, slide.edges.len] }
+                            body:
+                              - decl: [edge, ref<Edge>, { at: [slide.edges, eidx] }]
+                              - decl: [ekind_word, string, { call: [enums.name, "EdgeKind", edge.kind] }]
+                              - set: [out, "${out}      - { id: ${edge.ident}, from_id: ${edge.from_id}, to_id: ${edge.to_id}, kind: ${ekind_word}"]
+                              - if: { condition: { neq: [edge.text, ""] }, then: [{ set: [out, "${out}, text: \"${ { call: [<.esc_yaml, edge.text] } }\""] }] }
+                              - set: [out, "${out} }\n"]
+                              - set: [eidx, { +: [eidx, 1] }]
+                  - set: [sidx, { +: [sidx, 1] }]
+            - return: out

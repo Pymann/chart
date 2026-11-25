@@ -1,0 +1,146 @@
+# Markdown export, one file per slide (doc/spec/chart.md §13).
+#
+# GitHub renders a ```mermaid block natively, so an exported slide IS the slide when
+# the repository is browsed -- no renderer, no build step, and no picture of a diagram
+# that drifts away from its source.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: MarkdownOut
+    description: "Renders a slide and a deck index as Markdown; pure, string in string out"
+    methods:
+      - def:
+          name: lower_ascii
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          return: string
+          body:
+            - decl: [upper, string, "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+            - decl: [lower, string, "abcdefghijklmnopqrstuvwxyz"]
+            - decl: [out, string, ""]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, text.len] }
+                body:
+                  - decl: [chr, string, { call: [text.substr, pos, 1] }]
+                  - decl: [hit, i32, { call: [upper.index_of, chr] }]
+                  - if:
+                      condition: { ge: [hit, 0] }
+                      then: [{ set: [out, "${out}${ { call: [lower.substr, hit, 1] } }"] }]
+                      else: [{ set: [out, "${out}${chr}"] }]
+                  - set: [pos, { +: [pos, 1] }]
+            - return: out
+
+      # Title -> file-name slug: lowercase, every run of non-alphanumerics folded to
+      # one '-', trimmed.  An empty title gives "slide" (spec §13).
+      - def:
+          name: slug
+          static_off: ["same_arg", "str_cmp"]
+          args: [[title, string]]
+          return: string
+          body:
+            - decl: [allowed, string, "abcdefghijklmnopqrstuvwxyz0123456789"]
+            - decl: [flat, string, { call: [<.lower_ascii, title] }]
+            - decl: [out, string, ""]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, flat.len] }
+                body:
+                  - decl: [chr, string, { call: [flat.substr, pos, 1] }]
+                  - if:
+                      condition: { ge: [{ call: [allowed.index_of, chr] }, 0] }
+                      then: [{ set: [out, "${out}${chr}"] }]
+                      else:
+                        - if:
+                            condition: { eq: [{ call: [out.ends_with, "-"] }, 0] }
+                            then: [{ set: [out, "${out}-"] }]
+                  - set: [pos, { +: [pos, 1] }]
+            - while:
+                condition: { eq: [{ call: [out.ends_with, "-"] }, 1] }
+                body: [{ set: [out, { call: [out.substr, 0, { -: [out.len, 1] }] }] }]
+            - while:
+                condition: { eq: [{ call: [out.substr, 0, 1] }, "-"] }
+                body: [{ set: [out, { call: [out.substr, 1, { -: [out.len, 1] }] }] }]
+            - if: { condition: { eq: [out, ""] }, then: [{ return: "slide" }] }
+            - return: out
+
+      # Slide number, two digits, so a file listing sorts in deck order (spec §13).
+      - def:
+          name: two_digits
+          args: [[number, i32]]
+          return: string
+          body:
+            - if: { condition: { lt: [number, 10] }, then: [{ return: "0${number}" }] }
+            - return: "${number}"
+
+      - def:
+          name: file_name
+          static_off: ["same_arg", "str_cmp"]
+          args: [[number, i32], [title, string]]
+          return: string
+          body:
+            - decl: [digits, string, { call: [<.two_digits, number] }]
+            - decl: [name, string, { call: [<.slug, title] }]
+            - return: "${digits}-${name}.md"
+
+      # One slide.  `chart_text` is the Mermaid projection (spec §5) as the emitter
+      # produced it, newline-terminated.
+      #
+      # Speaker notes are deliberately absent: they belong to the presenter (spec §14)
+      # and an export that carried them would publish them to everyone who opens the
+      # repository, which is the one thing notes must not do.
+      - def:
+          name: slide_md
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [chart_text, string]]
+          return: string
+          body:
+            - decl: [out, string, ""]
+            # No heading when there is no title: inventing one would put a word on the
+            # page that the author never wrote.
+            - if:
+                condition: { neq: [sheet.title, ""] }
+                then: [{ set: [out, "# ${sheet.title}\n\n"] }]
+            - if:
+                condition: { neq: [chart_text, ""] }
+                then: [{ set: [out, "${out}```mermaid\n${chart_text}```\n"] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.kind, NodeKind.image] }
+                      then:
+                        - if:
+                            condition: { neq: [node.src, ""] }
+                            then: [{ set: [out, "${out}\n![${node.text}](${node.src})\n"] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out
+
+      # The index.  GitHub shows README.md when a directory is opened, so the deck has
+      # a front page without anybody asking for one (spec §13).
+      - def:
+          name: index_md
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          return: string
+          body:
+            - decl: [out, string, ""]
+            - if:
+                condition: { neq: [deck.title, ""] }
+                then: [{ set: [out, "# ${deck.title}\n\n"] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [slide, Sheet, { at: [deck.slides, idx] }]
+                  - decl: [number, i32, { +: [idx, 1] }]
+                  - decl: [name, string, { call: [<.file_name, number, slide.title] }]
+                  - decl: [label, string, slide.title]
+                  - if:
+                      condition: { eq: [label, ""] }
+                      then: [{ set: [label, "Slide ${number}"] }]
+                  - set: [out, "${out}${number}. [${label}](${name})\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out

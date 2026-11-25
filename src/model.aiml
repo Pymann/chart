@@ -7,7 +7,7 @@
 - enum:
     name: NodeKind
     wire: true
-    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine]
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image]
 
 - enum:
     name: EdgeKind
@@ -34,7 +34,8 @@
       - [pos_y, f32, 0.0]
       - [width, f32, 120.0]
       - [height, f32, 60.0]
-      - [text, string, ""]            # may contain "\n"
+      - [text, string, ""]            # may contain "\n"; the caption of an image (spec §12)
+      - [src, string, ""]             # image file, relative to the deck (spec §12)
       - [fill, i32, 0]                # 0xRRGGBBAA; 0 = inherit the theme
       - [stroke, i32, 0]
       - [group, string, ""]           # owning Group.id, "" = top level

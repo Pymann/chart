@@ -1,0 +1,895 @@
+# The editor surface (doc/spec/chart.md §15) and presentation mode (§14).
+#
+# A slide is a fixed 1280x720 page, scaled to fit and centred -- never re-laid-out
+# (§14, normative): positions belong to the author, and a presentation that moved
+# things to fit would show something the author never saw.
+- import: "src/runtime.aiml"
+
+- model:
+    name: Shape
+    description: "A rect plus the pen that draws it -- what every canvas helper needs"
+    fields:
+      - [pos_x, f32, 0.0]
+      - [pos_y, f32, 0.0]
+      - [width, f32, 0.0]
+      - [height, f32, 0.0]
+      - [tint, i32, 0]
+      - [thick, f32, 2.0]
+
+- class:
+    name: Editor
+    description: "Window, action bar, canvas, presentation mode"
+    members:
+      - [sheet_io, ref<SheetIO>]        # borrow, wired by the classgroup
+      - [mermaid, ref<MermaidOut>]
+      - [markdown, ref<MarkdownOut>]
+      - [exporter, ref<Exporter>]
+      - [deck, Deck]
+      - [deck_path, string]
+      - [armed, i32]                    # NodeKind to place on the next canvas click, -1 = none
+      - [sel, string]                   # selected node ident, "" = nothing
+      - [drag_id, string]               # node being dragged
+      - [drag_dx, f32]
+      - [drag_dy, f32]
+      - [presenting, i32]
+      - [show_notes, i32]
+      - [status, string]
+      - [textures, map<string:gl_texture>]
+    methods:
+      # ── geometry ────────────────────────────────────────────────────────────
+      # Scale that fits the 1280x720 page into the canvas rect, with a margin.
+      - def:
+          name: fit_scale
+          args: [[avail_w, f32], [avail_h, f32], [margin, f32]]
+          return: f32
+          body:
+            - decl: [scale_x, f32, { /: [{ "*": [avail_w, margin] }, 1280.0] }]
+            - decl: [scale_y, f32, { /: [{ "*": [avail_h, margin] }, 720.0] }]
+            - if: { condition: { lt: [scale_x, scale_y] }, then: [{ return: scale_x }] }
+            - return: scale_y
+
+      # Readable ink for a fill: luminance decides, not taste.  A node coloured dark
+      # by its author would otherwise keep the dark default and lose its label.
+      - def:
+          name: ink_for
+          args: [[fill, i32]]
+          return: i32
+          body:
+            - decl: [red, i32, { band: [{ shr: [fill, 24] }, 255] }]
+            - decl: [green, i32, { band: [{ shr: [fill, 16] }, 255] }]
+            - decl: [blue, i32, { band: [{ shr: [fill, 8] }, 255] }]
+            - decl: [lum, i32, { /: [{ +: [{ +: [{ "*": [red, 299] }, { "*": [green, 587] }] }, { "*": [blue, 114] }] }, 1000] }]
+            - if: { condition: { lt: [lum, 140] }, then: [{ return: 0xF4F7FAFF }] }
+            - return: 0x1A2430FF
+
+      # Where the centre-to-centre line leaves an axis-aligned box.  Edges must stop
+      # at the shape, not run to its middle: a line through a node hides the node,
+      # and an arrowhead at the centre is buried under it.
+      - def:
+          name: edge_stop
+          args: [[half_w, f32], [half_h, f32], [uni_x, f32], [uni_y, f32]]
+          return: f32
+          body:
+            - decl: [abs_x, f32, { call: [math.max, uni_x, { -: [0.0, uni_x] }] }]
+            - decl: [abs_y, f32, { call: [math.max, uni_y, { -: [0.0, uni_y] }] }]
+            - decl: [span, f32, 100000.0]
+            - if:
+                condition: { gt: [abs_x, 0.001] }
+                then: [{ set: [span, { /: [half_w, abs_x] }] }]
+            - if:
+                condition: { gt: [abs_y, 0.001] }
+                then: [{ set: [span, { call: [math.min, span, { /: [half_h, abs_y] }] }] }]
+            - return: span
+
+      # ── drawing helpers ─────────────────────────────────────────────────────
+      - def:
+          name: frame
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
+            - call: [ui.draw_line, box.pos_x, box.pos_y, right, box.pos_y, box.thick, box.tint]
+            - call: [ui.draw_line, right, box.pos_y, right, bottom, box.thick, box.tint]
+            - call: [ui.draw_line, right, bottom, box.pos_x, bottom, box.thick, box.tint]
+            - call: [ui.draw_line, box.pos_x, bottom, box.pos_x, box.pos_y, box.thick, box.tint]
+
+      # A closed polyline around the ellipse inscribed in the box.  aiml's math
+      # namespace has no cos/sin, so the unit circle is a table -- 16 segments read
+      # as round at slide scale.
+      - def:
+          name: ellipse
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [unit, list<f32>, [1.0, 0.0, 0.9239, 0.3827, 0.7071, 0.7071, 0.3827, 0.9239,
+                                       0.0, 1.0, -0.3827, 0.9239, -0.7071, 0.7071, -0.9239, 0.3827,
+                                       -1.0, 0.0, -0.9239, -0.3827, -0.7071, -0.7071, -0.3827, -0.9239,
+                                       0.0, -1.0, 0.3827, -0.9239, 0.7071, -0.7071, 0.9239, -0.3827,
+                                       1.0, 0.0]]
+            - decl: [rad_x, f32, { /: [box.width, 2.0] }]
+            - decl: [rad_y, f32, { /: [box.height, 2.0] }]
+            - decl: [mid_x, f32, { +: [box.pos_x, rad_x] }]
+            - decl: [mid_y, f32, { +: [box.pos_y, rad_y] }]
+            - decl: [pts, buffer<f32>]
+            - call: [pts.alloc, 160]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, unit.len] }
+                body:
+                  - decl: [unit_x, f32, { at: [unit, idx] }]
+                  - decl: [unit_y, f32, { at: [unit, { +: [idx, 1] }] }]
+                  - call: [pts.write, { +: [mid_x, { "*": [rad_x, unit_x] }] }, f32]
+                  - call: [pts.write, { +: [mid_y, { "*": [rad_y, unit_y] }] }, f32]
+                  - set: [idx, { +: [idx, 2] }]
+            - call: [ui.draw_polyline, pts, box.thick, box.tint]
+
+      - def:
+          name: diamond
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [pts, buffer<f32>]
+            - call: [pts.alloc, 48]
+            - decl: [half_w, f32, { /: [box.width, 2.0] }]
+            - decl: [half_h, f32, { /: [box.height, 2.0] }]
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
+            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [pts.write, right, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
+            - call: [pts.write, bottom, f32]
+            - call: [pts.write, box.pos_x, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [ui.draw_polyline, pts, box.thick, box.tint]
+
+      - def:
+          name: hexagon
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [pts, buffer<f32>]
+            - call: [pts.alloc, 64]
+            - decl: [inset, f32, { /: [box.width, 5.0] }]
+            - decl: [half_h, f32, { /: [box.height, 2.0] }]
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
+            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [pts.write, { -: [right, inset] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [pts.write, right, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { -: [right, inset] }, f32]
+            - call: [pts.write, bottom, f32]
+            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
+            - call: [pts.write, bottom, f32]
+            - call: [pts.write, box.pos_x, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [ui.draw_polyline, pts, box.thick, box.tint]
+
+      # Centred, multi-line.  Measured and drawn from the same two numbers
+      # (aiml spec/44_3 §4.6), so the text sits where the box says it does.
+      - def:
+          name: text_block
+          static_off: ["same_arg", "str_cmp"]
+          args: [[box, ref<Shape>], [text, string]]
+          body:
+            - if: { condition: { eq: [text, ""] }, then: [{ return: null }] }
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [line_h, f32, { call: [ui.text_height] }]
+            - decl: [total, f32, 0.0]
+            - decl: [count, i32, 0]
+            - while:
+                condition: { lt: [count, lines.len] }
+                body:
+                  - set: [total, { +: [total, line_h] }]
+                  - set: [count, { +: [count, 1] }]
+            - decl: [line_y, f32, { +: [box.pos_y, { /: [{ -: [box.height, total] }, 2.0] }] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, idx] }]
+                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                  - decl: [left, f32, { +: [box.pos_x, { /: [{ -: [box.width, line_w] }, 2.0] }] }]
+                  - call: [ui.draw_text, left, line_y, line, box.tint]
+                  - set: [line_y, { +: [line_y, line_h] }]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # ── nodes and edges ─────────────────────────────────────────────────────
+      - def:
+          name: draw_node
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [org_x, f32], [org_y, f32], [scale, f32]]
+          body:
+            - decl: [box, Shape]
+            - set: [box.pos_x, { +: [org_x, { "*": [node.pos_x, scale] }] }]
+            - set: [box.pos_y, { +: [org_y, { "*": [node.pos_y, scale] }] }]
+            - set: [box.width, { "*": [node.width, scale] }]
+            - set: [box.height, { "*": [node.height, scale] }]
+            - set: [box.thick, 2.0]
+            - decl: [fill, i32, node.fill]
+            - if: { condition: { eq: [fill, 0] }, then: [{ set: [fill, 0xF2F5F9FF] }] }
+            - decl: [stroke, i32, node.stroke]
+            - if: { condition: { eq: [stroke, 0] }, then: [{ set: [stroke, 0x3A4A5AFF] }] }
+
+            - if:
+                condition: { eq: [node.kind, NodeKind.image] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.textures.contains, node.src] }, 1] }
+                      then:
+                        - decl: [tex, gl_texture, { call: [<.textures.get, node.src] }]
+                        - call: [ui.draw_image, box.pos_x, box.pos_y, box.width, box.height, tex]
+                      else:
+                        # A missing file is a placeholder carrying the path (spec §12):
+                        # a blank box would hide WHICH file is absent.
+                        - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, 0xE8E2D8FF]
+                        - set: [box.tint, 0x806030FF]
+                        - call: [<.text_block, box, "[${node.src}]"]
+                  - set: [box.tint, stroke]
+                  - call: [<.frame, box]
+                  - if:
+                      condition: { neq: [node.text, ""] }
+                      then:
+                        - decl: [cap, Shape]
+                        - set: [cap.pos_x, box.pos_x]
+                        - set: [cap.pos_y, { +: [box.pos_y, box.height] }]
+                        - set: [cap.width, box.width]
+                        - set: [cap.height, { "*": [24.0, scale] }]
+                        - set: [cap.tint, 0x4A5A6AFF]
+                        - call: [<.text_block, cap, node.text]
+                  - return: null
+
+            - if:
+                condition: { eq: [node.kind, NodeKind.diamond] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.diamond, box]
+                  - set: [box.tint, { call: [<.ink_for, fill] }]
+                  - call: [<.text_block, box, node.text]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.hexagon] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.hexagon, box]
+                  - set: [box.tint, { call: [<.ink_for, fill] }]
+                  - call: [<.text_block, box, node.text]
+                  - return: null
+            - decl: [rounded, i32, 0]
+            - if: { condition: { eq: [node.kind, NodeKind.circle] }, then: [{ set: [rounded, 1] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.round] }, then: [{ set: [rounded, 1] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.stadium] }, then: [{ set: [rounded, 1] }] }
+            - if:
+                condition: { eq: [rounded, 1] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.ellipse, box]
+                  - set: [box.tint, { call: [<.ink_for, fill] }]
+                  - call: [<.text_block, box, node.text]
+                  - return: null
+
+            # rect, cylinder, subroutine
+            - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, fill]
+            - set: [box.tint, stroke]
+            - call: [<.frame, box]
+            - if:
+                condition: { eq: [node.kind, NodeKind.subroutine] }
+                then:
+                  - decl: [inset, f32, { "*": [9.0, scale] }]
+                  - call: [ui.draw_line, { +: [box.pos_x, inset] }, box.pos_y, { +: [box.pos_x, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
+                  - call: [ui.draw_line, { -: [{ +: [box.pos_x, box.width] }, inset] }, box.pos_y, { -: [{ +: [box.pos_x, box.width] }, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
+            - set: [box.tint, { call: [<.ink_for, fill] }]
+            - call: [<.text_block, box, node.text]
+
+      - def:
+          name: node_by_id
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [out, ref<Node>]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - set: [out.pos_x, node.pos_x]
+                        - set: [out.pos_y, node.pos_y]
+                        - set: [out.width, node.width]
+                        - set: [out.height, node.height]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0
+
+      - def:
+          name: draw_edges
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32]]
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.edges.len] }
+                body:
+                  - decl: [edge, ref<Edge>, { at: [slide.edges, idx] }]
+                  - decl: [head_node, Node]
+                  - decl: [tail_node, Node]
+                  - decl: [found, i32, { call: [<.node_by_id, slide, edge.from_id, head_node] }]
+                  - if:
+                      condition: { eq: [found, 1] }
+                      then: [{ set: [found, { call: [<.node_by_id, slide, edge.to_id, tail_node] }] }]
+                  - if:
+                      condition: { eq: [found, 1] }
+                      then:
+                        - decl: [from_cx, f32, { +: [org_x, { "*": [{ +: [head_node.pos_x, { /: [head_node.width, 2.0] }] }, scale] }] }]
+                        - decl: [from_cy, f32, { +: [org_y, { "*": [{ +: [head_node.pos_y, { /: [head_node.height, 2.0] }] }, scale] }] }]
+                        - decl: [to_cx, f32, { +: [org_x, { "*": [{ +: [tail_node.pos_x, { /: [tail_node.width, 2.0] }] }, scale] }] }]
+                        - decl: [to_cy, f32, { +: [org_y, { "*": [{ +: [tail_node.pos_y, { /: [tail_node.height, 2.0] }] }, scale] }] }]
+                        - decl: [del_x, f32, { -: [from_cx, to_cx] }]
+                        - decl: [del_y, f32, { -: [from_cy, to_cy] }]
+                        - decl: [span, f32, { call: [math.pow, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }, 0.5] }]
+                        - if:
+                            condition: { gt: [span, 1.0] }
+                            then:
+                              - decl: [uni_x, f32, { /: [del_x, span] }]
+                              - decl: [uni_y, f32, { /: [del_y, span] }]
+                              - decl: [stop_to, f32, { call: [<.edge_stop, { "*": [{ /: [tail_node.width, 2.0] }, scale] }, { "*": [{ /: [tail_node.height, 2.0] }, scale] }, uni_x, uni_y] }]
+                              - decl: [stop_from, f32, { call: [<.edge_stop, { "*": [{ /: [head_node.width, 2.0] }, scale] }, { "*": [{ /: [head_node.height, 2.0] }, scale] }, uni_x, uni_y] }]
+                              - decl: [tip_x, f32, { +: [to_cx, { "*": [uni_x, stop_to] }] }]
+                              - decl: [tip_y, f32, { +: [to_cy, { "*": [uni_y, stop_to] }] }]
+                              - decl: [tail_x, f32, { -: [from_cx, { "*": [uni_x, stop_from] }] }]
+                              - decl: [tail_y, f32, { -: [from_cy, { "*": [uni_y, stop_from] }] }]
+                              - call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, 2.0, 0x55687AFF]
+                              - decl: [head, f32, { "*": [16.0, scale] }]
+                              - call: [ui.draw_line, tip_x, tip_y, { +: [tip_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { +: [tip_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, 2.0, 0x55687AFF]
+                              - call: [ui.draw_line, tip_x, tip_y, { +: [tip_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { +: [tip_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, 2.0, 0x55687AFF]
+                              - if:
+                                  condition: { neq: [edge.text, ""] }
+                                  then:
+                                    - decl: [lab, Shape]
+                                    - decl: [lab_w, f32, { call: [ui.measure_text, edge.text] }]
+                                    - decl: [lab_h, f32, { call: [ui.text_height] }]
+                                    - decl: [pad, f32, 7.0]
+                                    - set: [lab.pos_x, { -: [{ /: [{ +: [tail_x, tip_x] }, 2.0] }, { +: [{ /: [lab_w, 2.0] }, pad] }] }]
+                                    - set: [lab.pos_y, { -: [{ /: [{ +: [tail_y, tip_y] }, 2.0] }, { /: [lab_h, 2.0] }] }]
+                                    - set: [lab.width, { +: [lab_w, { "*": [pad, 2.0] }] }]
+                                    - set: [lab.height, lab_h]
+                                    - set: [lab.tint, 0x33455AFF]
+                                    - call: [ui.draw_rect, lab.pos_x, lab.pos_y, lab.width, lab.height, 0xFFFFFFF2]
+                                    - call: [<.text_block, lab, edge.text]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # ── the page ────────────────────────────────────────────────────────────
+      - def:
+          name: draw_slide
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [margin, f32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - if: { condition: { lt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, 0] }] }
+            - if: { condition: { ge: [<.deck.current, <.deck.slides.len] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [scale, f32, { call: [<.fit_scale, cvs_w, cvs_h, margin] }]
+            - decl: [page_w, f32, { "*": [1280.0, scale] }]
+            - decl: [page_h, f32, { "*": [720.0, scale] }]
+            - decl: [org_x, f32, { +: [cvs_x, { /: [{ -: [cvs_w, page_w] }, 2.0] }] }]
+            - decl: [org_y, f32, { +: [cvs_y, { /: [{ -: [cvs_h, page_h] }, 2.0] }] }]
+            # a soft shadow, so the page reads as a sheet of paper
+            - call: [ui.draw_rect, { +: [org_x, 6.0] }, { +: [org_y, 7.0] }, page_w, page_h, 0x0A0F1438]
+            - call: [ui.draw_rect, org_x, org_y, page_w, page_h, 0xFFFFFFFF]
+            - decl: [page, Shape]
+            - set: [page.pos_x, org_x]
+            - set: [page.pos_y, org_y]
+            - set: [page.width, page_w]
+            - set: [page.height, page_h]
+            - set: [page.tint, 0xC2CCD6FF]
+            - set: [page.thick, 1.0]
+            - call: [<.frame, page]
+            - if:
+                condition: { neq: [slide.title, ""] }
+                then:
+                  - call: [ui.draw_text, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [30.0, scale] }] }, slide.title, 0x101A24FF]
+                  - call: [ui.draw_line, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, { -: [{ +: [org_x, page_w] }, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, 1.0, 0xD8DEE6FF]
+            - call: [<.draw_edges, slide, org_x, org_y, scale]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - call: [<.draw_node, node, org_x, org_y, scale]
+                  - if:
+                      condition: { eq: [node.ident, <.sel] }
+                      then:
+                        - if:
+                            condition: { eq: [<.presenting, 0] }
+                            then:
+                              - decl: [halo, Shape]
+                              - set: [halo.pos_x, { -: [{ +: [org_x, { "*": [node.pos_x, scale] }] }, 5.0] }]
+                              - set: [halo.pos_y, { -: [{ +: [org_y, { "*": [node.pos_y, scale] }] }, 5.0] }]
+                              - set: [halo.width, { +: [{ "*": [node.width, scale] }, 10.0] }]
+                              - set: [halo.height, { +: [{ "*": [node.height, scale] }, 10.0] }]
+                              - set: [halo.tint, 0x2F80EDFF]
+                              - set: [halo.thick, 2.0]
+                              - call: [<.frame, halo]
+                  - set: [idx, { +: [idx, 1] }]
+            - if:
+                condition: { eq: [<.presenting, 1] }
+                then:
+                  - decl: [number, i32, { +: [<.deck.current, 1] }]
+                  - call: [ui.draw_text, { -: [{ +: [cvs_x, cvs_w] }, 70.0] }, { -: [{ +: [cvs_y, cvs_h] }, 26.0] }, "${number} / ${<.deck.slides.len}", 0x8A97A5FF]
+                  - if:
+                      condition: { eq: [<.show_notes, 1] }
+                      then:
+                        - if:
+                            condition: { neq: [slide.notes, ""] }
+                            then:
+                              - call: [ui.draw_rect, cvs_x, { -: [{ +: [cvs_y, cvs_h] }, 58.0] }, cvs_w, 58.0, 0x0A0F14D8]
+                              - call: [ui.draw_text, { +: [cvs_x, 18.0] }, { -: [{ +: [cvs_y, cvs_h] }, 42.0] }, slide.notes, 0xF0E8D0FF]
+
+      # ── the action bar (spec §8.1) ──────────────────────────────────────────
+      # glbview's pattern: a column of buttons, each setting ONE integer that a
+      # single dispatch point consumes afterwards.
+      - def:
+          name: bar
+          static_off: ["same_arg", "str_cmp"]
+          return: i32
+          body:
+            - decl: [action, i32, 0]
+            - call: [ui.begin_cell, 0, 0, 1, 1]
+            - call: [ui.set_scroll, "y"]
+            - call: [ui.label, "chart"]
+            - call: [ui.label, <.status]
+            - call: [ui.separator]
+
+            - call: [ui.label, "Datei"]
+            - if: { condition: { call: [ui.button, "Speichern"] }, then: [{ set: [action, 1] }] }
+            - if: { condition: { call: [ui.button, "Markdown"] }, then: [{ set: [action, 2] }] }
+            - if: { condition: { call: [ui.button, "Mermaid"] }, then: [{ set: [action, 3] }] }
+            - call: [ui.separator]
+
+            - call: [ui.label, "Formen"]
+            - if: { condition: { call: [ui.button, "Kasten"] }, then: [{ set: [action, 10] }] }
+            - if: { condition: { call: [ui.button, "Rund"] }, then: [{ set: [action, 11] }] }
+            - if: { condition: { call: [ui.button, "Kapsel"] }, then: [{ set: [action, 12] }] }
+            - if: { condition: { call: [ui.button, "Kreis"] }, then: [{ set: [action, 13] }] }
+            - if: { condition: { call: [ui.button, "Raute"] }, then: [{ set: [action, 14] }] }
+            - if: { condition: { call: [ui.button, "Sechseck"] }, then: [{ set: [action, 15] }] }
+            - if: { condition: { call: [ui.button, "Zylinder"] }, then: [{ set: [action, 16] }] }
+            - if: { condition: { call: [ui.button, "Unterprogramm"] }, then: [{ set: [action, 17] }] }
+            - if: { condition: { call: [ui.button, "Bild"] }, then: [{ set: [action, 18] }] }
+            - call: [ui.separator]
+
+            - call: [ui.label, "Auswahl"]
+            - if: { condition: { call: [ui.button, "Entfernen"] }, then: [{ set: [action, 20] }] }
+            - call: [ui.separator]
+
+            - call: [ui.label, "Folien"]
+            - if: { condition: { call: [ui.button, "< Zurueck"] }, then: [{ set: [action, 21] }] }
+            - if: { condition: { call: [ui.button, "Weiter >"] }, then: [{ set: [action, 22] }] }
+            - if: { condition: { call: [ui.button, "Neue Folie"] }, then: [{ set: [action, 23] }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [slide, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - decl: [number, i32, { +: [idx, 1] }]
+                  - decl: [mark, string, "  "]
+                  - if: { condition: { eq: [idx, <.deck.current] }, then: [{ set: [mark, "> "] }] }
+                  - decl: [name, string, slide.title]
+                  - if: { condition: { eq: [name, ""] }, then: [{ set: [name, "(ohne Titel)"] }] }
+                  - if:
+                      condition: { call: [ui.button, "${mark}${number} ${name}"] }
+                      then: [{ set: [action, { +: [40, idx] }] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - call: [ui.separator]
+
+            - call: [ui.label, "Ansicht"]
+            - if: { condition: { call: [ui.button, "Praesentieren"] }, then: [{ set: [action, 30] }] }
+            - call: [ui.end_cell]
+            - return: action
+
+      # ── dispatch ────────────────────────────────────────────────────────────
+      - def:
+          name: dispatch
+          static_off: ["same_arg", "str_cmp"]
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
+
+            - if:
+                condition: { eq: [action, 1] }
+                then:
+                  - decl: [yaml_text, string, { call: [<.sheet_io.deck_yaml, <.deck] }]
+                  - if:
+                      condition: { eq: [{ call: [<.exporter.write_file, <.deck_path, yaml_text] }, 1] }
+                      then: [{ set: [<.status, "gespeichert"] }]
+                      else: [{ set: [<.status, "Speichern fehlgeschlagen"] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 2] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.exporter.write_markdown, <.deck, "export/md"] }, 1] }
+                      then: [{ set: [<.status, "Markdown in export/md"] }]
+                      else: [{ set: [<.status, "Markdown fehlgeschlagen"] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 3] }
+                then:
+                  - decl: [cur_mm, i32, <.deck.current]
+                  - decl: [slide_mm, ref<Sheet>, { at: [<.deck.slides, cur_mm] }]
+                  - decl: [text, string, { call: [<.mermaid.emit, slide_mm] }]
+                  - if:
+                      condition: { eq: [{ call: [<.exporter.write_file, "export/slide.mmd", text] }, 1] }
+                      then: [{ set: [<.status, "Mermaid in export/slide.mmd"] }]
+                      else: [{ set: [<.status, "Mermaid fehlgeschlagen"] }]
+                  - return: null
+
+            # 10..18: arm a stencil.  The next canvas click places it (spec §15.1).
+            - if:
+                condition: { ge: [action, 10] }
+                then:
+                  - if:
+                      condition: { le: [action, 18] }
+                      then:
+                        - set: [<.armed, { -: [action, 10] }]
+                        - set: [<.status, "Form gewaehlt -- in die Flaeche klicken"]
+                        - return: null
+
+            - if:
+                condition: { eq: [action, 20] }
+                then:
+                  - if:
+                      condition: { neq: [<.sel, ""] }
+                      then:
+                        - decl: [cur_del, i32, <.deck.current]
+                        - decl: [slide_del, ref<Sheet>, { at: [<.deck.slides, cur_del] }]
+                        - decl: [pos, i32, 0]
+                        - while:
+                            condition: { lt: [pos, slide_del.nodes.len] }
+                            body:
+                              - decl: [node, ref<Node>, { at: [slide_del.nodes, pos] }]
+                              - if:
+                                  condition: { eq: [node.ident, <.sel] }
+                                  then:
+                                    - call: [slide_del.nodes.remove, pos]
+                                    - set: [<.sel, ""]
+                                    - set: [<.status, "entfernt"]
+                                    - return: null
+                              - set: [pos, { +: [pos, 1] }]
+                  - return: null
+
+            - if:
+                condition: { eq: [action, 21] }
+                then:
+                  - if: { condition: { gt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, { -: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
+                  - return: null
+            - if:
+                condition: { eq: [action, 22] }
+                then:
+                  - if: { condition: { lt: [<.deck.current, { -: [<.deck.slides.len, 1] }] }, then: [{ set: [<.deck.current, { +: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
+                  - return: null
+            - if:
+                condition: { eq: [action, 23] }
+                then:
+                  - decl: [fresh, Sheet]
+                  - set: [fresh.title, "Neue Folie"]
+                  - set: [fresh.next_id, 1]
+                  - call: [<.deck.slides.push, fresh]
+                  - set: [<.deck.current, { -: [<.deck.slides.len, 1] }]
+                  - set: [<.sel, ""]
+                  - set: [<.status, "Folie angelegt"]
+                  - return: null
+
+            - if:
+                condition: { eq: [action, 30] }
+                then:
+                  - set: [<.presenting, 1]
+                  - set: [<.sel, ""]
+                  - return: null
+
+            # 40+: pick that slide
+            - if:
+                condition: { ge: [action, 40] }
+                then:
+                  - set: [<.deck.current, { -: [action, 40] }]
+                  - set: [<.sel, ""]
+
+      # ── canvas input (spec §15.1) ───────────────────────────────────────────
+      - def:
+          name: canvas_input
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [margin, f32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [mouse_x, f32, { call: [input.mouse_pos_x] }]
+            - decl: [mouse_y, f32, { call: [input.mouse_pos_y] }]
+            - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ return: null }] }
+
+            - decl: [scale, f32, { call: [<.fit_scale, cvs_w, cvs_h, margin] }]
+            - decl: [page_w, f32, { "*": [1280.0, scale] }]
+            - decl: [page_h, f32, { "*": [720.0, scale] }]
+            - decl: [org_x, f32, { +: [cvs_x, { /: [{ -: [cvs_w, page_w] }, 2.0] }] }]
+            - decl: [org_y, f32, { +: [cvs_y, { /: [{ -: [cvs_h, page_h] }, 2.0] }] }]
+            - decl: [slide_x, f32, { /: [{ -: [mouse_x, org_x] }, scale] }]
+            - decl: [slide_y, f32, { /: [{ -: [mouse_y, org_y] }, scale] }]
+
+            - decl: [cur, i32, <.deck.current]
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, cur] }]
+
+            - if:
+                condition: { call: [input.mouse_pressed, 0] }
+                then:
+                  # placing wins over selecting: the stencil was armed on purpose
+                  - if:
+                      condition: { ge: [<.armed, 0] }
+                      then:
+                        - decl: [fresh, Node]
+                        - set: [fresh.ident, "n${slide.next_id}"]
+                        - set: [fresh.kind, <.armed]
+                        - set: [fresh.pos_x, { -: [slide_x, 100.0] }]
+                        - set: [fresh.pos_y, { -: [slide_y, 45.0] }]
+                        - set: [fresh.width, 200.0]
+                        - set: [fresh.height, 90.0]
+                        - set: [fresh.text, "Text"]
+                        - call: [slide.nodes.push, fresh]
+                        - set: [slide.next_id, { +: [slide.next_id, 1] }]
+                        - set: [<.sel, fresh.ident]
+                        - set: [<.armed, -1]
+                        - set: [<.status, "platziert"]
+                        - return: null
+                  # topmost first: the last node drawn is the one on top
+                  - decl: [pos, i32, { -: [slide.nodes.len, 1] }]
+                  - set: [<.sel, ""]
+                  - while:
+                      condition: { ge: [pos, 0] }
+                      body:
+                        - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                        - if:
+                            condition: { ge: [slide_x, node.pos_x] }
+                            then:
+                              - if:
+                                  condition: { le: [slide_x, { +: [node.pos_x, node.width] }] }
+                                  then:
+                                    - if:
+                                        condition: { ge: [slide_y, node.pos_y] }
+                                        then:
+                                          - if:
+                                              condition: { le: [slide_y, { +: [node.pos_y, node.height] }] }
+                                              then:
+                                                - set: [<.sel, node.ident]
+                                                - set: [<.drag_id, node.ident]
+                                                - set: [<.drag_dx, { -: [slide_x, node.pos_x] }]
+                                                - set: [<.drag_dy, { -: [slide_y, node.pos_y] }]
+                                                - set: [pos, -1]
+                        - if: { condition: { ge: [pos, 0] }, then: [{ set: [pos, { -: [pos, 1] }] }] }
+                  - return: null
+
+            - if:
+                condition: { eq: [{ call: [input.mouse_button, 0] }, 0] }
+                then:
+                  - set: [<.drag_id, ""]
+                  - return: null
+
+            - if:
+                condition: { neq: [<.drag_id, ""] }
+                then:
+                  - decl: [pos, i32, 0]
+                  - while:
+                      condition: { lt: [pos, slide.nodes.len] }
+                      body:
+                        - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                        - if:
+                            condition: { eq: [node.ident, <.drag_id] }
+                            then:
+                              - set: [node.pos_x, { -: [slide_x, <.drag_dx] }]
+                              - set: [node.pos_y, { -: [slide_y, <.drag_dy] }]
+                              - set: [pos, slide.nodes.len]
+                        - set: [pos, { +: [pos, 1] }]
+
+      # ── keys ────────────────────────────────────────────────────────────────
+      - def:
+          name: keys
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if:
+                condition: { call: [input.key_pressed_once, "Escape"] }
+                then: [{ set: [<.presenting, 0] }]
+            - if:
+                condition: { call: [input.key_pressed_once, "F5"] }
+                then: [{ set: [<.presenting, 1] }, { set: [<.sel, ""] }]
+            - decl: [forward, i32, 0]
+            - if: { condition: { call: [input.key_pressed_once, "Right"] }, then: [{ set: [forward, 1] }] }
+            - if: { condition: { call: [input.key_pressed_once, "Space"] }, then: [{ set: [forward, 1] }] }
+            - if: { condition: { call: [input.key_pressed_once, "PageDown"] }, then: [{ set: [forward, 1] }] }
+            - if:
+                condition: { eq: [forward, 1] }
+                then:
+                  - if: { condition: { lt: [<.deck.current, { -: [<.deck.slides.len, 1] }] }, then: [{ set: [<.deck.current, { +: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
+            - decl: [back, i32, 0]
+            - if: { condition: { call: [input.key_pressed_once, "Left"] }, then: [{ set: [back, 1] }] }
+            - if: { condition: { call: [input.key_pressed_once, "PageUp"] }, then: [{ set: [back, 1] }] }
+            - if:
+                condition: { eq: [back, 1] }
+                then:
+                  - if: { condition: { gt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, { -: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
+            - if: { condition: { call: [input.key_pressed_once, "Home"] }, then: [{ set: [<.deck.current, 0] }] }
+            - if: { condition: { call: [input.key_pressed_once, "End"] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
+            - if: { condition: { call: [input.key_pressed_once, "n"] }, then: [{ set: [<.show_notes, { -: [1, <.show_notes] }] }] }
+            - if: { condition: { call: [input.key_pressed_once, "Delete"] }, then: [{ call: [<.dispatch, 20] }] }
+
+      # ── images ──────────────────────────────────────────────────────────────
+      # Loaded once per distinct path when the deck is opened: a texture per frame
+      # would re-upload every picture 60 times a second.
+      - def:
+          name: load_images
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - decl: [sidx, i32, 0]
+            - while:
+                condition: { lt: [sidx, <.deck.slides.len] }
+                body:
+                  - decl: [slide, ref<Sheet>, { at: [<.deck.slides, sidx] }]
+                  - decl: [nidx, i32, 0]
+                  - while:
+                      condition: { lt: [nidx, slide.nodes.len] }
+                      body:
+                        - decl: [node, ref<Node>, { at: [slide.nodes, nidx] }]
+                        - if:
+                            condition: { eq: [node.kind, NodeKind.image] }
+                            then:
+                              - if:
+                                  condition: { neq: [node.src, ""] }
+                                  then:
+                                    - if:
+                                        condition: { eq: [{ call: [<.textures.contains, node.src] }, 0] }
+                                        then:
+                                          - decl: [tex, gl_texture, { call: [gl.load_texture, node.src] }]
+                                          - if:
+                                              condition: { neq: [tex, null] }
+                                              then: [{ call: [<.textures.put, node.src, tex] }]
+                                              else: [{ call: [log.error, "chart: ${node.src}: cannot load image"] }]
+                        - set: [nidx, { +: [nidx, 1] }]
+                  - set: [sidx, { +: [sidx, 1] }]
+
+      # ── the loop ────────────────────────────────────────────────────────────
+      - def:
+          name: run
+          static_off: ["same_arg", "str_cmp"]
+          args: [[path, string], [frame_limit, i32], [shot_path, string], [opts, ref<ChartOptions>]]
+          return: i32
+          body:
+            - set: [<.deck_path, path]
+            - set: [<.armed, -1]
+            - set: [<.sel, ""]
+            - set: [<.drag_id, ""]
+            - set: [<.presenting, 0]
+            - set: [<.show_notes, 0]
+            - set: [<.status, "bereit"]
+            - if:
+                condition: { eq: [{ call: [<.sheet_io.load, path, <.deck] }, 0] }
+                then: [{ return: 1 }]
+            - set: [<.presenting, opts.present]
+            - set: [<.show_notes, opts.notes]
+            - set: [<.deck.current, { -: [opts.start, 1] }]
+            - if: { condition: { lt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, 0] }] }
+            - if: { condition: { ge: [<.deck.current, <.deck.slides.len] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
+            - decl: [win, window_handle, { call: [engine.create_window, 1400, 880, "chart"] }]
+            - if:
+                condition: { eq: [win, null] }
+                then:
+                  - call: [log.error, "chart: cannot open a window"]
+                  - return: 1
+            - call: [gl.init]
+            - call: [ui.init]
+            - decl: [font, ui_font, { call: [ui.load_font_default, 15.0] }]
+            - if:
+                condition: { peq: [font, null] }
+                then:
+                  - call: [log.error, "chart: no font"]
+                  - return: 1
+            - call: [ui.set_default_font, font]
+            - call: [<.load_images]
+
+            - decl: [cols_edit, buffer<f32>, [0.18, 0.82]]
+            - decl: [cols_show, buffer<f32>, [1.0]]
+            - decl: [rows, buffer<f32>, [1.0]]
+
+            - decl: [frame, i32, 0]
+            - while:
+                condition: { call: [engine.running, win] }
+                body:
+                  - set: [frame, { +: [frame, 1] }]
+                  - call: [gl.clear_all, 0.09, 0.11, 0.14, 1.0]
+                  - decl: [isize, ivec2, { call: [engine.window_size, win] }]
+                  - decl: [fsize, vec2, { call: [math.ivec2_to_vec2, isize] }]
+                  - decl: [win_w, f32, fsize.x]
+                  - decl: [win_h, f32, fsize.y]
+                  - call: [ui.begin, win]
+                  - call: [ui.set_gap, 0.0, 0.0]
+                  - call: [<.keys]
+                  - if:
+                      condition: { eq: [<.presenting, 1] }
+                      then:
+                        - call: [ui.begin_grid, cols_show, rows]
+                        - call: [ui.begin_cell, 0, 0, 1, 1]
+                        - call: [<.draw_slide, 0.0, 0.0, win_w, win_h, 0.98]
+                        - call: [ui.end_cell]
+                        - call: [ui.end_grid]
+                      else:
+                        - call: [ui.begin_grid, cols_edit, rows]
+                        - decl: [action, i32, { call: [<.bar] }]
+                        - call: [ui.begin_cell, 1, 0, 1, 1]
+                        - decl: [cvs_x, f32, { "*": [win_w, 0.18] }]
+                        - decl: [cvs_w, f32, { "*": [win_w, 0.82] }]
+                        - call: [<.draw_slide, cvs_x, 0.0, cvs_w, win_h, 0.88]
+                        - call: [<.canvas_input, cvs_x, 0.0, cvs_w, win_h, 0.88]
+                        - call: [ui.end_cell]
+                        - call: [ui.end_grid]
+                        - call: [<.dispatch, action]
+                  - call: [ui.end]
+                  # The capture happens BEFORE the swap: after it the back buffer is
+                  # undefined, and a screenshot of an undefined buffer is noise that
+                  # looks like a rendering bug.
+                  - if:
+                      condition: { gt: [frame_limit, 0] }
+                      then:
+                        - if:
+                            condition: { ge: [frame, frame_limit] }
+                            then:
+                              - if:
+                                  condition: { neq: [shot_path, ""] }
+                                  then: [{ call: [<.capture, shot_path, isize.x, isize.y] }]
+                              - call: [engine.swap, win]
+                              - return: 0
+                  - call: [engine.swap, win]
+            - return: 0
+
+      # The final frame as a PNG (same path glbview uses: read_rgba8 + encode_png).
+      - def:
+          name: capture
+          static_off: ["same_arg", "str_cmp"]
+          args: [[file_path, string], [width, i32], [height, i32]]
+          body:
+            - decl: [pixels, buffer<u8>, { call: [gl.read_rgba8, 0, 0, width, height] }]
+            - decl: [png, buffer]
+            - call: [png.alloc, { +: [{ "*": [{ "*": [width, height] }, 5] }, 1024] }]
+            - decl: [written, i32, { call: [png.encode_png, pixels, width, height] }]
+            - if:
+                condition: { le: [written, 0] }
+                then:
+                  - call: [log.error, "chart: ${file_path}: cannot encode the capture"]
+                  - return: null
+            - decl: [out_file, file_handle, { call: [io.open, file_path, "wb"] }]
+            - if:
+                condition: { eq: [out_file, null] }
+                then:
+                  - call: [log.error, "chart: ${file_path}: cannot write the capture"]
+                  - return: null
+            - decl: [stored, i32, { call: [png.write_to, out_file] }]
+            - call: [io.close, out_file]
+            - if:
+                condition: { le: [stored, 0] }
+                then: [{ call: [log.error, "chart: ${file_path}: short write on the capture"] }]
+
+- classgroup:
+    name: ChartRuntime
+    instances:
+      - class: SheetIO
+        instance: sheet_io
+      - class: MermaidOut
+        instance: mermaid
+      - class: MarkdownOut
+        instance: markdown
+      - class: Exporter
+        instance: exporter
+        sees: [sheet_io, mermaid, markdown]
+      - class: Editor
+        instance: editor
+        sees: [sheet_io, mermaid, markdown, exporter]

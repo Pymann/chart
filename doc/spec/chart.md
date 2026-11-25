@@ -55,10 +55,12 @@ carefully.
 ```aiml
 - model:
     name: Sheet
-    description: "A whole drawing; the canonical document (spec §2)"
+    description: "One slide: a drawing, and the canonical document for it (spec §2)"
     fields:
       - [dtype, DiagramType, flowchart]   # only `flowchart` emits in v1
       - [dir, Direction, TD]
+      - [title, string, ""]            # slide heading; the `# ` of the Markdown export (§13)
+      - [notes, string, ""]            # speaker notes: presenter only, never on the slide (§14)
       - [nodes, list<Node>]
       - [edges, list<Edge>]
       - [groups, list<Group>]
@@ -67,21 +69,22 @@ carefully.
 - model:
     name: Node
     fields:
-      - [id, string, ""]               # "n7"; stable for the sheet's lifetime
-      - [kind, NodeKind, rect]
-      - [x, f32, 0.0]                  # design coords, top-left anchor
-      - [y, f32, 0.0]
-      - [w, f32, 120.0]
-      - [h, f32, 60.0]
-      - [text, string, ""]             # may contain "\n"
+      - [ident, string, ""]            # "n7"; stable for the sheet's lifetime
+      - [kind, NodeKind, NodeKind.rect]
+      - [pos_x, f32, 0.0]              # design coords, top-left anchor
+      - [pos_y, f32, 0.0]
+      - [width, f32, 120.0]
+      - [height, f32, 60.0]
+      - [text, string, ""]             # may contain "\n"; the caption of an image (§12)
+      - [src, string, ""]              # image file, relative to the deck (§12); "" for every other kind
       - [fill, i32, 0]                 # 0xRRGGBBAA; 0 = inherit theme (§5.6)
       - [stroke, i32, 0]
-      - [group, string, ""]            # owning Group.id, "" = top level
+      - [group, string, ""]            # owning Group.ident, "" = top level
 
 - model:
     name: Edge
     fields:
-      - [id, string, ""]
+      - [ident, string, ""]
       - [from_id, string, ""]          # Node.id
       - [to_id, string, ""]
       - [kind, EdgeKind, arrow]
@@ -91,9 +94,14 @@ carefully.
 - model:
     name: Group
     fields:
-      - [id, string, ""]
+      - [ident, string, ""]
       - [title, string, ""]
       - [parent, string, ""]           # nesting; "" = top level
+
+**Field names, not YAML keys.** A model field must be at least three characters
+(aiml spec/49 §23), hence `ident`/`pos_x`/`width`/`height`. The YAML keys stay short —
+`id`, `x`, `y`, `w`, `h` (§4) — because a sheet is hand-edited and the check is on the
+model, not on the file. Only the (de)serialiser knows both spellings.
 ```
 
 ### 3.2 Vocabularies
@@ -106,7 +114,7 @@ build reads them back. They are therefore `wire: true` (spec/49 §18.2a): the me
 - enum:
     name: NodeKind
     wire: true
-    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine]
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image]
 
 - enum:
     name: EdgeKind
@@ -520,3 +528,174 @@ diagram that is subtly wrong, which is worse than one that fails.
 `chart` therefore requires an AIML that has both. Until that lands, stage 0 (§README) is
 unaffected: it needs neither, since stencils carry their own geometry and a Mermaid export
 measures nothing.
+
+---
+
+## 11. Decks and slides
+
+A drawing is rarely one picture. A **deck** is an ordered list of slides, each slide
+exactly a `Sheet` (§3.1) — so everything §2 through §7 says about a sheet holds for a
+slide, unchanged.
+
+```aiml
+- model:
+    name: Deck
+    description: "An ordered list of slides; the unit a presentation and an export work on"
+    fields:
+      - [title, string, ""]            # deck heading; the index's `# ` (§13)
+      - [slides, list<Sheet>]
+      - [current, i32, 0]              # the slide being edited or shown; not saved
+```
+
+### 11.1 One file, or one slide
+
+- `*.deck.yaml` carries `title:` and `slides:`, a sequence whose entries are each exactly
+  a sheet mapping (§4).
+- `*.chart.yaml` stays what it was and loads as a **one-slide deck**. Stage 0's
+  `--sheet FILE` keeps working and keeps meaning the same thing.
+
+**Normative — ids are per slide.** `n1` may exist on every slide, and `next_id` counts
+per slide. This is not laziness: a Mermaid id is unique within *its* diagram (§5.1), and
+one counter across a 40-slide deck would make every slide's export depend on the slides
+before it — the opposite of §2's promise that an export is a pure function of what it
+exports.
+
+### 11.2 Why one file and not one file per slide
+
+A deck is reordered far more often than a single slide is edited, and reordering files
+means renaming them. One file reorders by moving a block, and a diff shows the move. The
+cost is honest: two people editing different slides of one deck conflict in one file.
+
+---
+
+## 12. Images
+
+An image is a **node kind**, not a second kind of object: `NodeKind.image` with `src`
+naming the file and `text` carrying the caption. It therefore drags, resizes, aligns,
+snaps and belongs to a group exactly like a box does, and none of §7's geometry needed a
+second code path.
+
+- **`src` is a path relative to the deck file's directory**, never the bytes. A deck is a
+  text file that diffs and merges; a base64 blob in it would end both. It also means the
+  pictures stay editable with the tools that made them.
+- **A missing file is drawn as a placeholder** carrying the path, and export still writes
+  the link, with **one** reported line per missing file. Writing a working link to a file
+  that is not there would be a lie; writing nothing would silently drop the picture.
+- **Mermaid cannot carry an image.** An image node emits as a labelled rectangle so the
+  structure survives (§5.7 lists it as lost). The Markdown export (§13) is where a picture
+  actually arrives, which is the reason that export exists at all.
+
+---
+
+## 13. Markdown export — one file per slide
+
+```
+chart --deck FILE.deck.yaml --markdown DIR
+```
+
+GitHub renders a ` ```mermaid ` block natively, so a slide exported this way **is** the
+slide when the repository is browsed — no renderer, no build step, no image of a diagram
+that drifts from its source.
+
+Per slide, `DIR/NN-<slug>.md`, numbered from 01 in deck order:
+
+```markdown
+# Mitgliedsantrag
+
+```mermaid
+flowchart TD
+    n1(["Eingang"])
+    n2{"vollständig?"}
+    n1 --> n2
+```
+
+![Formular, Seite 1](bilder/antrag_s1.png)
+```
+
+- `NN` is the 1-based slide number, two digits, so files sort in deck order in any file
+  listing.
+- `<slug>` is the title, lowercased, every run of non-alphanumerics folded to one `-`,
+  trimmed; an empty title gives `slide`.
+- `DIR/README.md` is the index: the deck title, then a numbered list linking each slide
+  file. GitHub shows `README.md` when the directory is opened, so the deck has a front
+  page without anybody asking for one.
+- Image paths are rewritten **relative to the Markdown file**, so they resolve when GitHub
+  serves the page.
+
+**An empty title gets no heading.** The file then starts with the diagram. Inventing
+„Slide 3" would put a word on the page that the author never wrote; the index (below) does
+name it that way, because a link needs a label.
+
+**Normative — speaker notes are not exported.** `Sheet.notes` belongs to the presenter
+(§14) and never reaches the slide file. An export that carried them would publish them to
+everyone who opens the repository, which is the one thing notes must not do.
+
+**Normative — the export is byte-exact and ordered.** Same deck in, same bytes out, as in
+§2, and for the same reason: it is the only property a test can actually check.
+
+---
+
+## 14. Presentation mode
+
+A key leaves the editor and shows the current slide alone: no action bar, no grid, no
+handles, the slide scaled to fit the window and centred.
+
+| Key | |
+|---|---|
+| `Right` · `Space` · `PageDown` | next slide |
+| `Left` · `PageUp` | previous slide |
+| `Home` · `End` | first · last |
+| `N` | toggle speaker notes (presenter's screen only) |
+| `Esc` | back to the editor, on the slide that was shown |
+
+**Normative — presentation mode never mutates the deck.** No drag, no stencil, no label
+edit, no delete; the right-click menu does not open. Clicking is navigation, not
+selection. A mode that could edit while presenting *will* edit by accident, in front of
+an audience, and the damage is discovered later.
+
+**Normative — the deck is not reflowed.** The slide is scaled, never re-laid-out:
+positions are the author's (§1.1), and a presentation that moved things to fit would show
+something the author never saw.
+
+---
+
+## 15. The editor surface
+
+The window is the action bar (§8.1) on the left and the canvas filling the rest. The
+canvas is one slide of the deck; a strip at the bottom of the bar lists the slides and
+switches on click.
+
+### 15.1 Placing and editing
+
+- A **stencil** click arms a kind; the next canvas click places that node at the cursor in
+  the default size and goes straight into label editing (§6).
+- **Drag** a node to move it; drag a handle to resize. Both snap per §7.6.1 when the
+  snaps are on.
+- **Click** selects, `Shift+click` adds, a drag on empty canvas is a rubber band,
+  `Delete` removes the selection.
+- **Freehand** (§7) is the drawing tool; with the select tool a drag is a rubber band
+  instead. One drag cannot mean both, and the tool in the bar says which it is.
+
+### 15.2 What the canvas owes the rest of the spec
+
+- Nodes draw in sheet order, so **z-order is the order in the file** — the thing a diff
+  shows and a user can reason about, rather than a hidden per-node z field.
+- An image node draws its picture, a placeholder when `src` is missing (§12).
+- The canvas never draws outside its rect: it is a cell, and `ui.draw_*` clips to it
+  (aiml spec/44_3 §4.6).
+
+---
+
+## 16. Stage plan for the surface
+
+| Stage | Content |
+|---|---|
+| **0** (done) | Sheet model, YAML load, Mermaid projection, headless export, venv install |
+| **1** | Deck model, slides, Markdown export per slide, images in the model — all headless and byte-exact testable |
+| **2** | The window: action bar, canvas, stencils, selection, drag, label editing |
+| **3** | Presentation mode, image drawing, slide strip |
+| **4** | Freehand recognition (§7) and straightening (§7.6) |
+
+Stages 1 and 3 are deliberately split: everything in stage 1 can be tested without a
+display, and that is where the export promises of §2 and §13 are actually checked. The
+window is then only the way a human reaches it.

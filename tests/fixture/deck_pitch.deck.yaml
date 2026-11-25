@@ -1,0 +1,24 @@
+# A deck: three slides, one of them an image, one without a title (spec §11, §13).
+title: "Mitgliedsantrag"
+slides:
+  - title: "Eingang"
+    dtype: flowchart
+    dir: TD
+    next_id: 3
+    nodes:
+      - { id: n1, kind: stadium, x: 40, y: 40,  w: 140, h: 56, text: "Antrag" }
+      - { id: n2, kind: diamond, x: 40, y: 160, w: 160, h: 90, text: "vollstaendig?" }
+    edges:
+      - { id: e1, from_id: n1, to_id: n2, kind: arrow }
+
+  # notes must NOT reach the export (spec §13, normative)
+  - title: "Formular, Seite 1"
+    notes: "Fristen erwaehnen, dann weiter zur Pruefung"
+    next_id: 2
+    nodes:
+      - { id: n1, kind: image, x: 20, y: 20, w: 400, h: 300, text: "Antrag, Seite 1", src: "bilder/antrag_s1.png" }
+
+  # no title: no heading, and the slug falls back to "slide"
+  - next_id: 2
+    nodes:
+      - { id: n1, kind: rect, x: 0, y: 0, w: 120, h: 60, text: "Ende" }

@@ -8,7 +8,17 @@
     fields:
       - [dtype, DiagramType, DiagramType.flowchart]
       - [dir, Direction, Direction.TD]
+      - [title, string, ""]           # slide heading; the "# " of the Markdown export (spec §13)
+      - [notes, string, ""]           # speaker notes: presenter only, never exported (spec §14)
       - [nodes, list<Node>]
       - [edges, list<Edge>]
       - [groups, list<Group>]
       - [next_id, i32, 1]             # monotonic; never reused, so ids stay diff-stable
+
+- model:
+    name: Deck
+    description: "An ordered list of slides; what a presentation and an export work on (spec §11)"
+    fields:
+      - [title, string, ""]           # deck heading; the index's "# " (spec §13)
+      - [slides, list<Sheet>]
+      - [current, i32, 0]             # slide being edited or shown; not saved

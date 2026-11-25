@@ -199,6 +199,25 @@ jobs:
         working-directory: chart
         run: bash tests/run_tests.sh
 
+      # The editor needs a display AND a terminal: xvfb-run gives the first, `script`
+      # the second. Its own step, never inside the headless suite -- aiml's CI learned
+      # that a display test without a TTY is skipped in silence, and a silent skip
+      # reads exactly like a pass.
+      - name: Editor smoke test
+        working-directory: chart
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb x11-utils libgl1-mesa-dri
+          script -qec "bash tests/run_ui_test.sh" /dev/null
+
+      - name: Upload the captured frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-ui-frames
+          path: chart/tests/out/*.png
+          if-no-files-found: ignore
+
       - name: Upload produced Mermaid on failure
         if: failure()
         uses: actions/upload-artifact@v4

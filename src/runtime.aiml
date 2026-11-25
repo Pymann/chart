@@ -1,16 +1,28 @@
-# Composition of one headless export pass (doc/spec/chart.md §2).
+# Composition of one headless export pass (doc/spec/chart.md §2, §13).
 #
 # Separate from the entry point on purpose: `main` has to instantiate a class declared
 # in another file, otherwise a multi-file project is dead weight.
 - import: "src/sheet.aiml"
 - import: "src/mermaid.aiml"
+- import: "src/markdown.aiml"
 
 - model:
     name: ChartOptions
     description: "Command line of chart"
     fields:
-      - [sheet, string, ""]        # the canonical document to read
-      - [mermaid, string, ""]      # where to write the projection
+      - [sheet, string, ""]        # input: a single sheet (spec §4)
+      - [deck, string, ""]         # input: a deck, or a sheet -- both load as a deck (spec §11.1)
+      - [mermaid, string, ""]      # output: one .mmd, only for a one-slide deck
+      - [markdown, string, ""]     # output: a directory, one Markdown file per slide (spec §13)
+      # Testing and screenshots: run a fixed number of frames, optionally capture the
+      # last one.  Without this the editor runs until the window closes, and a test
+      # that waits for a human is a test nobody runs (aiml run_all_tests.sh: a
+      # blocking test stops the whole suite).
+      - [frames, i32, 0]           # 0 = until the window closes
+      - [shot, string, ""]         # PNG of the last frame
+      - [start, i32, 1]            # slide to open on, 1-based
+      - [present, i32, 0]          # open straight in presentation mode (spec §14)
+      - [notes, i32, 0]            # presenter notes visible from the start
 
 - class:
     name: Exporter
@@ -18,6 +30,7 @@
     members:
       - [sheet_io, ref<SheetIO>]      # borrow, wired by the classgroup (aiml spec/58 §5.1)
       - [mermaid, ref<MermaidOut>]
+      - [markdown, ref<MarkdownOut>]
     methods:
       # buffer.write_to reports a short write or a failed flush; io.write cannot
       # (aiml spec/23) -- and a half-written diagram must not pass for a written one.
@@ -51,32 +64,65 @@
                   - return: 0
             - return: 1
 
+      # One Markdown file per slide, plus the index (spec §13).
+      - def:
+          name: write_markdown
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [dir_path, string]]
+          return: i32
+          body:
+            - call: [io.mkdir_all, dir_path]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [slide, Sheet, { at: [deck.slides, idx] }]
+                  - decl: [number, i32, { +: [idx, 1] }]
+                  - decl: [chart_text, string, { call: [<.mermaid.emit, slide] }]
+                  - decl: [page, string, { call: [<.markdown.slide_md, slide, chart_text] }]
+                  - decl: [name, string, { call: [<.markdown.file_name, number, slide.title] }]
+                  - if:
+                      condition: { eq: [{ call: [<.write_file, "${dir_path}/${name}", page] }, 0] }
+                      then: [{ return: 0 }]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [index_page, string, { call: [<.markdown.index_md, deck] }]
+            - return: { call: [<.write_file, "${dir_path}/README.md", index_page] }
+
       - def:
           name: run
           static_off: ["same_arg", "str_cmp"]
           args: [[options, ChartOptions]]
           return: i32
           body:
-            - decl: [sheet, Sheet]
+            - decl: [input, string, options.deck]
+            - if: { condition: { eq: [input, ""] }, then: [{ set: [input, options.sheet] }] }
+            - decl: [deck, Deck]
             - if:
-                condition: { eq: [{ call: [<.sheet_io.load, options.sheet, sheet] }, 0] }
+                condition: { eq: [{ call: [<.sheet_io.load, input, deck] }, 0] }
                 then: [{ return: 1 }]
-            - decl: [text, string, { call: [<.mermaid.emit, sheet] }]
-            - if:
-                condition: { eq: [text, ""] }
-                then: [{ return: 1 }]
-            - if:
-                condition: { eq: [{ call: [<.write_file, options.mermaid, text] }, 0] }
-                then: [{ return: 1 }]
-            - return: 0
 
-- classgroup:
-    name: ChartRuntime
-    instances:
-      - class: SheetIO
-        instance: sheet_io
-      - class: MermaidOut
-        instance: mermaid
-      - class: Exporter
-        instance: exporter
-        sees: [sheet_io, mermaid]
+            - if:
+                condition: { neq: [options.markdown, ""] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.write_markdown, deck, options.markdown] }, 0] }
+                      then: [{ return: 1 }]
+
+            - if:
+                condition: { neq: [options.mermaid, ""] }
+                then:
+                  # One .mmd is one diagram.  A deck of many slides has no single
+                  # projection, and picking the first silently would export a third of
+                  # a presentation and call it done.
+                  - if:
+                      condition: { neq: [deck.slides.len, 1] }
+                      then:
+                        - call: [log.error, "chart: --mermaid needs a one-slide deck; '${input}' has ${deck.slides.len} slides -- use --markdown DIR"]
+                        - return: 1
+                  - decl: [only, Sheet, { at: [deck.slides, 0] }]
+                  - decl: [text, string, { call: [<.mermaid.emit, only] }]
+                  - if: { condition: { eq: [text, ""] }, then: [{ return: 1 }] }
+                  - if:
+                      condition: { eq: [{ call: [<.write_file, options.mermaid, text] }, 0] }
+                      then: [{ return: 1 }]
+            - return: 0
