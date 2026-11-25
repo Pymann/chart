@@ -21,11 +21,34 @@ that treated the Mermaid as its document would lose the arrangement on every reo
 
 ## Build (planned)
 
+`exodus-chart.json` names the toolchain as `$AIML` and `$AIML_VENV/lib`, never a path, so
+the same config builds on a workstation and in CI (aiml spec/68 §3). It needs an aiml venv:
+
 ```bash
-cd /media/nikolai/95a208ef-ffa2-478b-abdd-ff394baa6a76/projects/python/test/chart
-source ../../exvenv/bin/activate
-exodus build -c exodus-chart.json      # produces ./chart
+# once, from an aiml build tree
+<aiml>/out/aiml/aiml venv <aiml>/out/venv
+
+cd <this repo>
+source ../../exvenv/bin/activate     # exodus
+. <aiml>/out/venv/env                # sets AIML, AIML_VENV, PATH
+exodus build -c exodus-chart.json    # produces ./chart
 ```
+
+Tests run in CI, not locally (see `.github/workflows/ci.yml`).
+
+## CI secrets
+
+The workflow pulls a prebuilt aiml venv from kontor, keyed by aiml's commit, and builds it
+only when that commit is not there yet. Three repository secrets switch that on:
+
+| Secret | What it is |
+|---|---|
+| `KONTOR_URL` | base URL of the kontor instance |
+| `KONTOR_TOKEN` | kontor token; `reader` is enough to pull, `writer` also lets CI store a freshly built aiml |
+| `KONTOR_CA` | PEM of the private CA that signed kontor's certificate |
+
+Without them the run still works — it just builds aiml every time, which is the most
+expensive step by far (LLVM 18). `Pymann/aiml` is public, so no GitHub token is needed.
 
 ## Use (planned)
 

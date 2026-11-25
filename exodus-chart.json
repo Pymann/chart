@@ -18,7 +18,7 @@
   "pre_linkage": null,
   "architecture": {"arch": "x86_64", "cpu": null, "fpu": null, "float_abi": null},
   "compiler": {
-    "name": "../aiml/out/aiml/aiml",
+    "name": "$AIML",
     "lang_standard": "17",
     "flags": []
   },
@@ -27,9 +27,9 @@
     "path": null,
     "script": null,
     "map_file": null,
-    "flags": ["-Wl,-rpath,$ORIGIN/../aiml/out/libaiml"],
+    "flags": ["-Wl,-rpath,$AIML_VENV/lib"],
     "libraries": ["aiml", "pthread", "ssl", "crypto", "dl"],
-    "library_paths": ["../aiml/out/libaiml"]
+    "library_paths": ["$AIML_VENV/lib"]
   },
   "artifact_in_cwd": true,
   "env": {

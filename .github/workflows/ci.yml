@@ -8,8 +8,12 @@ on:
     inputs:
       aiml_ref:
         description: "aiml ref to build against (branch, tag or SHA)"
-        required: false
         default: master
+      aiml_quelle:
+        description: "aiml: pull from kontor, build, or pull-else-build"
+        type: choice
+        default: auto
+        options: [auto, kontor, bauen]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -19,57 +23,22 @@ jobs:
   build-and-test:
     name: Build chart and run the headless suite
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       EXODUS_CACHE: ${{ github.workspace }}/aiml/__exodus_cache
     steps:
-      # chart and aiml are checked out as SIBLINGS, the same layout as on a
-      # workstation: exodus-chart.json finds the compiler and libaiml.so at
-      # ../aiml/out/... . A path through $AIML cannot be used for the library,
-      # because $AIML is the compiler FILE and nothing can traverse through a
-      # file ("aiml/../.." is ENOTDIR, and -L then silently finds no -laiml).
       - name: Check out chart
         uses: actions/checkout@v4
         with:
           path: chart
 
-      # chart is an AIML project, so CI needs an AIML compiler. There is no
-      # published aiml package to pull, so it is built from source here and
-      # cached by its commit: the slow path runs only when aiml actually moves.
+      # Public, so no token: dc_traincorp's workflow checks it out the same way.
       - name: Check out aiml
         uses: actions/checkout@v4
         with:
           repository: Pymann/aiml
-          ref: ${{ github.event.inputs.aiml_ref || 'master' }}
+          ref: ${{ inputs.aiml_ref || 'master' }}
           path: aiml
-          # Needed only while Pymann/aiml is private -- GITHUB_TOKEN is scoped to
-          # this repository alone. Set the AIML_REPO_TOKEN secret to a PAT with
-          # read access to aiml; a public aiml needs no secret.
-          token: ${{ secrets.AIML_REPO_TOKEN || github.token }}
-
-      - name: Resolve aiml commit
-        id: aimlrev
-        run: echo "sha=$(git -C aiml rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore aiml build
-        id: aimlcache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            aiml/out
-            aiml/__exodus_cache
-          key: aiml-build-${{ steps.aimlrev.outputs.sha }}
-
-      - name: System packages
-        if: steps.aimlcache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            g++ python3-venv dpkg-dev patchelf \
-            xvfb x11-utils libgl1-mesa-dri
-          # The display packages are not needed by stage 0, which is headless.
-          # They are installed with the aiml build because libaiml links GL, and
-          # a runtime built without it cannot be used by the editor stage later.
 
       - name: Install Exodus
         run: |
@@ -77,41 +46,146 @@ jobs:
           "$RUNNER_TEMP/exvenv/bin/pip" install -q "git+https://github.com/Pymann/exodus.git"
           echo "$RUNNER_TEMP/exvenv/bin" >> "$GITHUB_PATH"
 
-      - name: Build aiml (compiler + runtime)
-        if: steps.aimlcache.outputs.cache-hit != 'true'
+      - name: Which aiml commit
+        run: echo "AIML_SHA=$(git -C aiml rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # Missing secrets are not an error: the run then builds aiml itself.
+      - name: kontor access
+        id: kontor
+        env:
+          KONTOR_URL: ${{ secrets.KONTOR_URL }}
+          KONTOR_TOKEN: ${{ secrets.KONTOR_TOKEN }}
+          KONTOR_CA: ${{ secrets.KONTOR_CA }}
+        run: |
+          set -eu
+          mkdir -p tools
+          if [ -z "${KONTOR_URL:-}" ] || [ -z "${KONTOR_TOKEN:-}" ] || [ -z "${KONTOR_CA:-}" ]; then
+            echo "da=0" >> "$GITHUB_OUTPUT"
+            echo "KONTOR_* secrets missing -- aiml will be built."
+            exit 0
+          fi
+          printf '%s\n' "$KONTOR_CA" > tools/kontor-ca.crt
+          # No `curl -k`: without certificate checking a man in the middle could
+          # take the token.
+          echo "kontor: $(curl --silent --show-error --fail-with-body --max-time 60 \
+                              --cacert tools/kontor-ca.crt \
+                              -H "Authorization: Bearer $KONTOR_TOKEN" \
+                              "$KONTOR_URL/api/v1/whoami")"
+          echo "da=1" >> "$GITHUB_OUTPUT"
+
+      # The aiml compiler links LLVM 18; building it per run would be the most
+      # expensive line here. kontor keeps the finished venv keyed by COMMIT --
+      # the GENERIC store, not /exodus/<name>/<version>/package, because aiml
+      # carries one version across all commits and each state would overwrite
+      # the last. Same key and same layout as dc_traincorp uses, so both repos
+      # read and fill one store rather than two.
+      - name: Pull aiml from kontor
+        id: holen
+        if: (inputs.aiml_quelle || 'auto') != 'bauen' && steps.kontor.outputs.da == '1'
+        env:
+          KONTOR_URL: ${{ secrets.KONTOR_URL }}
+          KONTOR_TOKEN: ${{ secrets.KONTOR_TOKEN }}
+        run: |
+          set -eu
+          ziel="$KONTOR_URL/generic/aiml/${AIML_SHA}/aiml-x86_64-linux.tar.gz"
+          if curl --silent --show-error --fail --max-time 900 \
+                  --cacert tools/kontor-ca.crt \
+                  -H "Authorization: Bearer $KONTOR_TOKEN" \
+                  -o aiml-paket.tar.gz "$ziel"; then
+            mkdir -p aiml-venv
+            tar -xzf aiml-paket.tar.gz -C aiml-venv
+            rm -f aiml-paket.tar.gz
+            # A state from before the bundling does not resolve its pinned
+            # libraries: treat that as absent and build instead.
+            fehlt="$(ldd aiml-venv/bin/aiml aiml-venv/lib/libaiml.so | grep 'not found' || true)"
+            if [ -x aiml-venv/bin/aiml ] && [ -f aiml-venv/lib/libaiml.so ] && [ -z "$fehlt" ]; then
+              echo "da=1" >> "$GITHUB_OUTPUT"
+              echo "pulled: $ziel"
+            else
+              echo "pulled but incomplete -- rebuilding:"; echo "$fehlt"
+              rm -rf aiml-venv
+              echo "da=0" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "da=0" >> "$GITHUB_OUTPUT"
+            echo "${AIML_SHA} is not in kontor -- building it."
+          fi
+
+      - name: aiml was required from kontor
+        if: (inputs.aiml_quelle || 'auto') == 'kontor' && steps.holen.outputs.da != '1'
+        run: |
+          echo "aiml_quelle=kontor was asked for, but ${AIML_SHA} could not be pulled."
+          exit 1
+
+      - name: System packages
+        if: steps.holen.outputs.da != '1'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            g++ python3-venv dpkg-dev patchelf \
+            xvfb x11-utils libgl1-mesa-dri
+          # The display packages come with the aiml build because libaiml links
+          # GL: a runtime built without it is useless to the editor stage later.
+
+      - name: Build aiml and bundle it as a venv
+        if: steps.holen.outputs.da != '1'
         working-directory: aiml
         run: |
+          set -eu
           python3 tools/ci/fetch_pinned_debs.py exodus.json exodus2.json
           exodus pkg install
           exodus build -c exodus.json -j "$(nproc)"
           exodus build -c exodus2.json -j "$(nproc)"
+          # The release packaging also bundles the pinned libraries next to
+          # libaiml.so with RUNPATH $ORIGIN, so the venv is relocatable -- which
+          # is what makes it worth storing at all.
+          bash tools/ci/package_release.sh "git-${AIML_SHA::7}" dist
+          mkdir -p "$GITHUB_WORKSPACE/aiml-venv"
+          tar -xzf dist/aiml-git-*-linux-x86_64.tar.gz \
+              -C "$GITHUB_WORKSPACE/aiml-venv" --strip-components=1
+          # The venv marker (aiml spec/68 §3 F68-20) -- kept so the blob stays
+          # the same shape dc_traincorp reads.
+          echo "# aiml venv" > "$GITHUB_WORKSPACE/aiml-venv/env"
 
-      - name: Save aiml build
-        if: steps.aimlcache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            aiml/out
-            aiml/__exodus_cache
-          key: aiml-build-${{ steps.aimlrev.outputs.sha }}
-
-      - name: Check the toolchain is where the config expects it
+      # Filling the store is best effort: a reader-only token must not fail the
+      # run, it only means the next run builds again.
+      - name: Put aiml into kontor
+        if: steps.holen.outputs.da != '1' && steps.kontor.outputs.da == '1'
+        continue-on-error: true
+        env:
+          KONTOR_URL: ${{ secrets.KONTOR_URL }}
+          KONTOR_TOKEN: ${{ secrets.KONTOR_TOKEN }}
         run: |
-          for needed in aiml/out/aiml/aiml aiml/out/libaiml/libaiml.so; do
-            if [ ! -e "$needed" ]; then
-              echo "missing $needed -- the cached aiml build is incomplete"
-              exit 1
-            fi
-          done
+          set -eu
+          tar -czf aiml-paket.tar.gz -C aiml-venv bin lib env
+          summe=$(sha256sum aiml-paket.tar.gz | cut -d' ' -f1)
+          curl --silent --show-error --fail-with-body --max-time 1800 \
+               --cacert tools/kontor-ca.crt \
+               -H "Authorization: Bearer $KONTOR_TOKEN" \
+               -H "X-Checksum-Sha256: $summe" \
+               -X PUT -T aiml-paket.tar.gz \
+               "$KONTOR_URL/generic/aiml/${AIML_SHA}/aiml-x86_64-linux.tar.gz"
+          echo "stored: generic/aiml/${AIML_SHA}/ ($(stat -c%s aiml-paket.tar.gz) B)"
+          rm -f aiml-paket.tar.gz
+
+      # exodus-chart.json names the toolchain as $AIML and $AIML_VENV/lib, so one
+      # config serves both routes and a workstation (aiml spec/68 §3, F68-23).
+      - name: Set the toolchain paths
+        run: |
+          set -eu
+          test -x aiml-venv/bin/aiml
+          test -f aiml-venv/lib/libaiml.so
+          echo "AIML=$PWD/aiml-venv/bin/aiml" >> "$GITHUB_ENV"
+          echo "AIML_VENV=$PWD/aiml-venv" >> "$GITHUB_ENV"
 
       - name: Build chart
         working-directory: chart
         run: exodus build -c exodus-chart.json -j "$(nproc)"
 
-      # Stage 0 is headless on purpose: the emitter is a pure function of the sheet
-      # (spec §2), so its suite needs no display. When the editor suite arrives it
-      # gets its OWN step under `xvfb-run -a script -qec ...` -- aiml's CI learned
-      # that a display test without a TTY is skipped in silence, and a silent skip
+      # Stage 0 is headless on purpose: the emitter is a pure function of the
+      # sheet (spec §2), so its suite needs no display. The editor suite will get
+      # its OWN step under `xvfb-run -a script -qec ...` -- aiml's CI learned that
+      # a display test without a TTY is skipped in silence, and a silent skip
       # reads exactly like a pass.
       - name: Tests
         working-directory: chart
