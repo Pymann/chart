@@ -40,12 +40,6 @@ jobs:
           ref: ${{ inputs.aiml_ref || 'master' }}
           path: aiml
 
-      - name: Install Exodus
-        run: |
-          python3 -m venv "$RUNNER_TEMP/exvenv"
-          "$RUNNER_TEMP/exvenv/bin/pip" install -q "git+https://github.com/Pymann/exodus.git"
-          echo "$RUNNER_TEMP/exvenv/bin" >> "$GITHUB_PATH"
-
       - name: Which aiml commit
         run: echo "AIML_SHA=$(git -C aiml rev-parse HEAD)" >> "$GITHUB_ENV"
 
@@ -117,6 +111,17 @@ jobs:
           echo "aiml_quelle=kontor was asked for, but ${AIML_SHA} could not be pulled."
           exit 1
 
+      # Only the aiml build needs exodus (and Python): `aiml build` covers an aiml
+      # TOOL, but exodus is the build system of aiml ITSELF -- 171 pinned apt
+      # packages, C++ sources, wasm (aiml spec/68 §7). On the kontor path neither
+      # is installed at all.
+      - name: Install Exodus (only to build aiml)
+        if: steps.holen.outputs.da != '1'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/exvenv"
+          "$RUNNER_TEMP/exvenv/bin/pip" install -q "git+https://github.com/Pymann/exodus.git"
+          echo "$RUNNER_TEMP/exvenv/bin" >> "$GITHUB_PATH"
+
       - name: System packages
         if: steps.holen.outputs.da != '1'
         run: |
@@ -178,9 +183,12 @@ jobs:
           echo "AIML=$PWD/aiml-venv/bin/aiml" >> "$GITHUB_ENV"
           echo "AIML_VENV=$PWD/aiml-venv" >> "$GITHUB_ENV"
 
+      # The compiler builds the tool itself -- no exodus, no Python (spec/68 §7).
+      # chart qualifies: an executable of .aiml sources, no apt/git packages, no
+      # hooks, no __exodus_cache path, all of which F68-82 refuses by name.
       - name: Build chart
         working-directory: chart
-        run: exodus build -c exodus-chart.json -j "$(nproc)"
+        run: '"$AIML" build -c exodus-chart.json'
 
       # Stage 0 is headless on purpose: the emitter is a pure function of the
       # sheet (spec §2), so its suite needs no display. The editor suite will get

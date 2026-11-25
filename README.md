@@ -22,16 +22,22 @@ that treated the Mermaid as its document would lose the arrangement on every reo
 ## Build (planned)
 
 `exodus-chart.json` names the toolchain as `$AIML` and `$AIML_VENV/lib`, never a path, so
-the same config builds on a workstation and in CI (aiml spec/68 §3). It needs an aiml venv:
+the same config builds on a workstation and in CI (aiml spec/68 §3). The compiler builds it
+itself — **no exodus, no Python** (spec/68 §7):
 
 ```bash
 # once, from an aiml build tree
 <aiml>/out/aiml/aiml venv <aiml>/out/venv
 
-cd <this repo>
-source ../../exvenv/bin/activate     # exodus
 . <aiml>/out/venv/env                # sets AIML, AIML_VENV, PATH
-exodus build -c exodus-chart.json    # produces ./chart
+cd <this repo>
+aiml build -c exodus-chart.json      # produces ./chart
+```
+
+Or let a venv install it, which builds it with the compiler it will live next to:
+
+```bash
+aiml venv <venv> install chart --path <this repo>   # -> <venv>/bin/chart
 ```
 
 Tests run in CI, not locally (see `.github/workflows/ci.yml`).
@@ -68,6 +74,7 @@ chart --sheet sheets/login.chart.yaml --mermaid doc/login.mmd   # headless expor
 | Right-click menu | the `ui.spinbox` popup shield as the model for claiming input (aiml spec/44_3 §4.2) |
 | Ink and edge drawing | `ui.draw_line` / `ui.draw_polyline` (aiml spec/44_3 §4.6) |
 | Sheet (de)serialisation | `yaml.parse_file` + hand-written writer, same as aidoc |
+| Building | `aiml build` (spec/68 §7) — exodus is only needed to build aiml itself |
 
 ## Stages
 

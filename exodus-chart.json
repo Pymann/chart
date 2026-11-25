@@ -27,7 +27,7 @@
     "path": null,
     "script": null,
     "map_file": null,
-    "flags": ["-Wl,-rpath,$ORIGIN/../lib", "-Wl,-rpath,$AIML_VENV/lib"],
+    "flags": ["-Wl,-rpath,$ORIGIN/../lib"],
     "libraries": ["aiml", "pthread", "ssl", "crypto", "dl"],
     "library_paths": ["$AIML_VENV/lib"]
   },
