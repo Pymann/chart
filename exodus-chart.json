@@ -1,0 +1,39 @@
+{
+  "$schema": "exodus.project.config-1.0",
+  "name": "chart",
+  "version": "0.1.0",
+  "license": [],
+  "dependencies": [],
+  "output_type": "executable",
+  "optimization": "0",
+  "debug": true,
+  "warnings": [],
+  "werror": false,
+  "source_root": ".",
+  "build_root": "out/chart",
+  "search_paths": [],
+  "sources": ["src/main.aiml"],
+  "defines": {},
+  "pre_compilation": null,
+  "pre_linkage": null,
+  "architecture": {"arch": "x86_64", "cpu": null, "fpu": null, "float_abi": null},
+  "compiler": {
+    "name": "../aiml/out/aiml/aiml",
+    "lang_standard": "17",
+    "flags": []
+  },
+  "linker": {
+    "name": "g++",
+    "path": null,
+    "script": null,
+    "map_file": null,
+    "flags": ["-Wl,-rpath,$ORIGIN/../aiml/out/libaiml"],
+    "libraries": ["aiml", "pthread", "ssl", "crypto", "dl"],
+    "library_paths": ["../aiml/out/libaiml"]
+  },
+  "artifact_in_cwd": true,
+  "env": {
+    "AIML_MEM_V3": "1",
+    "AIML_LIFETIME_DROPS": "1"
+  }
+}

@@ -1,0 +1,82 @@
+# Composition of one headless export pass (doc/spec/chart.md §2).
+#
+# Separate from the entry point on purpose: `main` has to instantiate a class declared
+# in another file, otherwise a multi-file project is dead weight.
+- import: "src/sheet.aiml"
+- import: "src/mermaid.aiml"
+
+- model:
+    name: ChartOptions
+    description: "Command line of chart"
+    fields:
+      - [sheet, string, ""]        # the canonical document to read
+      - [mermaid, string, ""]      # where to write the projection
+
+- class:
+    name: Exporter
+    description: "One headless export pass"
+    members:
+      - [sheet_io, ref<SheetIO>]      # borrow, wired by the classgroup (aiml spec/58 §5.1)
+      - [mermaid, ref<MermaidOut>]
+    methods:
+      # buffer.write_to reports a short write or a failed flush; io.write cannot
+      # (aiml spec/23) -- and a half-written diagram must not pass for a written one.
+      - def:
+          name: write_file
+          static_off: ["same_arg", "str_cmp"]
+          args: [[file_path, string], [content, string]]
+          return: i32
+          body:
+            - decl: [handle, file_handle, { call: [io.open, file_path, "w"] }]
+            - if:
+                condition: { eq: [handle, null] }
+                then:
+                  - call: [log.error, "chart: ${file_path}: cannot write"]
+                  - return: 0
+            - decl: [bytes, buffer<u8>]
+            - call: [bytes.alloc, { +: [content.len, 1] }]
+            - decl: [staged, i32, { call: [bytes.write_string, content] }]
+            - if:
+                condition: { lt: [staged, 0] }
+                then:
+                  - call: [io.close, handle]
+                  - call: [log.error, "chart: ${file_path}: cannot stage ${content.len} bytes"]
+                  - return: 0
+            - decl: [written, i32, { call: [bytes.write_to, handle] }]
+            - call: [io.close, handle]
+            - if:
+                condition: { lt: [written, content.len] }
+                then:
+                  - call: [log.error, "chart: ${file_path}: short write (${written} of ${content.len})"]
+                  - return: 0
+            - return: 1
+
+      - def:
+          name: run
+          static_off: ["same_arg", "str_cmp"]
+          args: [[options, ChartOptions]]
+          return: i32
+          body:
+            - decl: [sheet, Sheet]
+            - if:
+                condition: { eq: [{ call: [<.sheet_io.load, options.sheet, sheet] }, 0] }
+                then: [{ return: 1 }]
+            - decl: [text, string, { call: [<.mermaid.emit, sheet] }]
+            - if:
+                condition: { eq: [text, ""] }
+                then: [{ return: 1 }]
+            - if:
+                condition: { eq: [{ call: [<.write_file, options.mermaid, text] }, 0] }
+                then: [{ return: 1 }]
+            - return: 0
+
+- classgroup:
+    name: ChartRuntime
+    instances:
+      - class: SheetIO
+        instance: sheet_io
+      - class: MermaidOut
+        instance: mermaid
+      - class: Exporter
+        instance: exporter
+        sees: [sheet_io, mermaid]

@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      aiml_ref:
+        description: "aiml ref to build against (branch, tag or SHA)"
+        required: false
+        default: master
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build chart and run the headless suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      EXODUS_CACHE: ${{ github.workspace }}/aiml/__exodus_cache
+    steps:
+      # chart and aiml are checked out as SIBLINGS, the same layout as on a
+      # workstation: exodus-chart.json finds the compiler and libaiml.so at
+      # ../aiml/out/... . A path through $AIML cannot be used for the library,
+      # because $AIML is the compiler FILE and nothing can traverse through a
+      # file ("aiml/../.." is ENOTDIR, and -L then silently finds no -laiml).
+      - name: Check out chart
+        uses: actions/checkout@v4
+        with:
+          path: chart
+
+      # chart is an AIML project, so CI needs an AIML compiler. There is no
+      # published aiml package to pull, so it is built from source here and
+      # cached by its commit: the slow path runs only when aiml actually moves.
+      - name: Check out aiml
+        uses: actions/checkout@v4
+        with:
+          repository: Pymann/aiml
+          ref: ${{ github.event.inputs.aiml_ref || 'master' }}
+          path: aiml
+          # Needed only while Pymann/aiml is private -- GITHUB_TOKEN is scoped to
+          # this repository alone. Set the AIML_REPO_TOKEN secret to a PAT with
+          # read access to aiml; a public aiml needs no secret.
+          token: ${{ secrets.AIML_REPO_TOKEN || github.token }}
+
+      - name: Resolve aiml commit
+        id: aimlrev
+        run: echo "sha=$(git -C aiml rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore aiml build
+        id: aimlcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            aiml/out
+            aiml/__exodus_cache
+          key: aiml-build-${{ steps.aimlrev.outputs.sha }}
+
+      - name: System packages
+        if: steps.aimlcache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            g++ python3-venv dpkg-dev patchelf \
+            xvfb x11-utils libgl1-mesa-dri
+          # The display packages are not needed by stage 0, which is headless.
+          # They are installed with the aiml build because libaiml links GL, and
+          # a runtime built without it cannot be used by the editor stage later.
+
+      - name: Install Exodus
+        run: |
+          python3 -m venv "$RUNNER_TEMP/exvenv"
+          "$RUNNER_TEMP/exvenv/bin/pip" install -q "git+https://github.com/Pymann/exodus.git"
+          echo "$RUNNER_TEMP/exvenv/bin" >> "$GITHUB_PATH"
+
+      - name: Build aiml (compiler + runtime)
+        if: steps.aimlcache.outputs.cache-hit != 'true'
+        working-directory: aiml
+        run: |
+          python3 tools/ci/fetch_pinned_debs.py exodus.json exodus2.json
+          exodus pkg install
+          exodus build -c exodus.json -j "$(nproc)"
+          exodus build -c exodus2.json -j "$(nproc)"
+
+      - name: Save aiml build
+        if: steps.aimlcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            aiml/out
+            aiml/__exodus_cache
+          key: aiml-build-${{ steps.aimlrev.outputs.sha }}
+
+      - name: Check the toolchain is where the config expects it
+        run: |
+          for needed in aiml/out/aiml/aiml aiml/out/libaiml/libaiml.so; do
+            if [ ! -e "$needed" ]; then
+              echo "missing $needed -- the cached aiml build is incomplete"
+              exit 1
+            fi
+          done
+
+      - name: Build chart
+        working-directory: chart
+        run: exodus build -c exodus-chart.json -j "$(nproc)"
+
+      # Stage 0 is headless on purpose: the emitter is a pure function of the sheet
+      # (spec §2), so its suite needs no display. When the editor suite arrives it
+      # gets its OWN step under `xvfb-run -a script -qec ...` -- aiml's CI learned
+      # that a display test without a TTY is skipped in silence, and a silent skip
+      # reads exactly like a pass.
+      - name: Tests
+        working-directory: chart
+        run: bash tests/run_tests.sh
+
+      - name: Upload produced Mermaid on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-test-output
+          path: chart/tests/out
+          if-no-files-found: ignore

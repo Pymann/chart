@@ -1,0 +1,267 @@
+# Projecting a Sheet to Mermaid (doc/spec/chart.md §5).  Pure: same sheet in, same
+# bytes out (§2) -- which is why the output order in §5.5a is fixed, not incidental.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: MermaidOut
+    description: "The lossy projection of a sheet; never read back as the document"
+    methods:
+      # Label text.  Quoted unconditionally by the caller, so only the quote itself
+      # and the line break need handling (spec §5.2).
+      - def:
+          name: esc
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          return: string
+          body:
+            - decl: [flat, string, { call: [text.replace, "\"", "#quot;"] }]
+            - set: [flat, { call: [flat.replace, "\n", "<br/>"] }]
+            - return: flat
+
+      - def:
+          name: hex2
+          args: [[value, i32]]
+          return: string
+          body:
+            - decl: [digits, string, "0123456789abcdef"]
+            - decl: [high, i32, { /: [value, 16] }]
+            - decl: [low, i32, { -: [value, { "*": [high, 16] }] }]
+            - decl: [hi_text, string, { call: [digits.substr, high, 1] }]
+            - decl: [lo_text, string, { call: [digits.substr, low, 1] }]
+            - return: "${hi_text}${lo_text}"
+
+      # 0xRRGGBBAA -> "#rrggbb".  Masked after the shift, so the sign bits of a
+      # negative i32 (every colour with alpha >= 0x80) cannot leak into a digit.
+      - def:
+          name: hex6
+          args: [[color, i32]]
+          return: string
+          body:
+            - decl: [red, i32, { band: [{ shr: [color, 24] }, 255] }]
+            - decl: [green, i32, { band: [{ shr: [color, 16] }, 255] }]
+            - decl: [blue, i32, { band: [{ shr: [color, 8] }, 255] }]
+            - decl: [red_text, string, { call: [<.hex2, red] }]
+            - decl: [green_text, string, { call: [<.hex2, green] }]
+            - decl: [blue_text, string, { call: [<.hex2, blue] }]
+            - return: "#${red_text}${green_text}${blue_text}"
+
+      # "" when the node inherits the theme, else a key identifying the colour pair.
+      - def:
+          name: color_key
+          args: [[node, Node]]
+          return: string
+          body:
+            # Both must be 0.  A sum would call fill == -stroke "no colour".
+            - if:
+                condition: { eq: [node.fill, 0] }
+                then:
+                  - if:
+                      condition: { eq: [node.stroke, 0] }
+                      then: [{ return: "" }]
+            - return: "${node.fill}:${node.stroke}"
+
+      - def:
+          name: node_decl
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, Node]]
+          return: string
+          body:
+            - decl: [label, string, { call: [<.esc, node.text] }]
+            - if: { condition: { eq: [node.kind, NodeKind.round] },      then: [{ return: "${node.ident}(\"${label}\")" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.stadium] },    then: [{ return: "${node.ident}([\"${label}\"])" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.circle] },     then: [{ return: "${node.ident}((\"${label}\"))" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.diamond] },    then: [{ return: "${node.ident}{\"${label}\"}" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.hexagon] },    then: [{ return: "${node.ident}{{\"${label}\"}}" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.cylinder] },   then: [{ return: "${node.ident}[(\"${label}\")]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.subroutine] }, then: [{ return: "${node.ident}[[\"${label}\"]]" }] }
+            - return: "${node.ident}[\"${label}\"]"
+
+      # One node line at `depth`, with its colour class appended when it has one.
+      - def:
+          name: node_line
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, Node], [depth, i32], [class_of, map<string:string>]]
+          return: string
+          body:
+            - decl: [pad, string, ""]
+            - decl: [step, i32, 0]
+            - while:
+                condition: { lt: [step, depth] }
+                body:
+                  - set: [pad, "${pad}    "]
+                  - set: [step, { +: [step, 1] }]
+            - decl: [decl_text, string, { call: [<.node_decl, node] }]
+            - decl: [key, string, { call: [<.color_key, node] }]
+            - if:
+                condition: { eq: [{ call: [class_of.contains, key] }, 1] }
+                then:
+                  - decl: [cls, string, { call: [class_of.get, key] }]
+                  - return: "${pad}${decl_text}:::${cls}\n"
+            - return: "${pad}${decl_text}\n"
+
+      # The pipe form carries every label, so one quoting rule covers them all (§5.3).
+      - def:
+          name: edge_line
+          static_off: ["same_arg", "str_cmp"]
+          args: [[edge, Edge]]
+          return: string
+          body:
+            - decl: [link, string, "-->"]
+            - if: { condition: { eq: [edge.kind, EdgeKind.open] },          then: [{ set: [link, "---"] }] }
+            - if: { condition: { eq: [edge.kind, EdgeKind.dotted] },        then: [{ set: [link, "-.->"] }] }
+            - if: { condition: { eq: [edge.kind, EdgeKind.thick] },         then: [{ set: [link, "==>"] }] }
+            - if: { condition: { eq: [edge.kind, EdgeKind.bidirectional] }, then: [{ set: [link, "<-->"] }] }
+            - if: { condition: { eq: [edge.kind, EdgeKind.invisible] },     then: [{ set: [link, "~~~"] }] }
+            # An invisible link has no place to put a label, so it loses it (§5.3).
+            - if:
+                condition: { eq: [edge.kind, EdgeKind.invisible] }
+                then: [{ return: "    ${edge.from_id} ${link} ${edge.to_id}\n" }]
+            - if:
+                condition: { neq: [edge.text, ""] }
+                then:
+                  - decl: [label, string, { call: [<.esc, edge.text] }]
+                  - return: "    ${edge.from_id} ${link}|\"${label}\"| ${edge.to_id}\n"
+            - return: "    ${edge.from_id} ${link} ${edge.to_id}\n"
+
+      # One subgraph block: its own nodes, then its nested groups (§5.5).
+      - def:
+          name: group_block
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, Sheet], [group, Group], [depth, i32], [class_of, map<string:string>]]
+          return: string
+          body:
+            - decl: [pad, string, ""]
+            - decl: [step, i32, 0]
+            - while:
+                condition: { lt: [step, depth] }
+                body:
+                  - set: [pad, "${pad}    "]
+                  - set: [step, { +: [step, 1] }]
+            - decl: [title, string, { call: [<.esc, group.title] }]
+            - decl: [out, string, "${pad}subgraph ${group.ident} [\"${title}\"]\n"]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.group, group.ident] }
+                      then:
+                        - set: [out, "${out}${ { call: [<.node_line, node, { +: [depth, 1] }, class_of] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [gidx, i32, 0]
+            - while:
+                condition: { lt: [gidx, sheet.groups.len] }
+                body:
+                  - decl: [child, Group, { at: [sheet.groups, gidx] }]
+                  - if:
+                      condition: { eq: [child.parent, group.ident] }
+                      then:
+                        - set: [out, "${out}${ { call: [<.group_block, sheet, child, { +: [depth, 1] }, class_of] } }"]
+                  - set: [gidx, { +: [gidx, 1] }]
+            - return: "${out}${pad}end\n"
+
+      # The whole projection (§5.5a fixes the order).
+      - def:
+          name: emit
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, Sheet]]
+          return: string
+          body:
+            - if:
+                condition: { neq: [sheet.dtype, DiagramType.flowchart] }
+                then:
+                  - call: [log.error, "chart: only 'flowchart' is emitted in v1 (spec §1.1)"]
+                  - return: ""
+            - decl: [dir_name, string, { call: [enums.name, "Direction", sheet.dir] }]
+            - decl: [out, string, "flowchart ${dir_name}\n"]
+
+            # ── colour: a pair used twice or more becomes a class (§5.6) ─────
+            - decl: [counts, map<string:i32>]
+            - decl: [keys, list<string>]
+            - decl: [fills, list<i32>]
+            - decl: [strokes, list<i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - decl: [key, string, { call: [<.color_key, node] }]
+                  - if:
+                      condition: { neq: [key, ""] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [counts.contains, key] }, 1] }
+                            then:
+                              - call: [counts.put, key, { +: [{ call: [counts.get, key] }, 1] }]
+                            else:
+                              - call: [counts.put, key, 1]
+                              - call: [keys.push, key]
+                              - call: [fills.push, node.fill]
+                              - call: [strokes.push, node.stroke]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [class_of, map<string:string>]
+            - decl: [class_no, i32, 1]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, keys.len] }
+                body:
+                  - decl: [key, string, { at: [keys, idx] }]
+                  - if:
+                      condition: { ge: [{ call: [counts.get, key] }, 2] }
+                      then:
+                        - decl: [cls, string, "c${class_no}"]
+                        - call: [class_of.put, key, cls]
+                        - decl: [fill_hex, string, { call: [<.hex6, { at: [fills, idx] }] }]
+                        - decl: [stroke_hex, string, { call: [<.hex6, { at: [strokes, idx] }] }]
+                        - set: [out, "${out}    classDef ${cls} fill:${fill_hex},stroke:${stroke_hex}\n"]
+                        - set: [class_no, { +: [class_no, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+
+            # ── groups, then ungrouped nodes, then edges ─────────────────────
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.groups.len] }
+                body:
+                  - decl: [group, Group, { at: [sheet.groups, idx] }]
+                  - if:
+                      condition: { eq: [group.parent, ""] }
+                      then:
+                        - set: [out, "${out}${ { call: [<.group_block, sheet, group, 1, class_of] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.group, ""] }
+                      then:
+                        - set: [out, "${out}${ { call: [<.node_line, node, 1, class_of] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.edges.len] }
+                body:
+                  - decl: [edge, Edge, { at: [sheet.edges, idx] }]
+                  - set: [out, "${out}${ { call: [<.edge_line, edge] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+
+            # ── one-off colours (§5.6) ──────────────────────────────────────
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - decl: [key, string, { call: [<.color_key, node] }]
+                  - if:
+                      condition: { neq: [key, ""] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [class_of.contains, key] }, 0] }
+                            then:
+                              - decl: [fill_hex, string, { call: [<.hex6, node.fill] }]
+                              - decl: [stroke_hex, string, { call: [<.hex6, node.stroke] }]
+                              - set: [out, "${out}    style ${node.ident} fill:${fill_hex},stroke:${stroke_hex}\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out

@@ -1,0 +1,10 @@
+dtype: flowchart
+dir: TD
+next_id: 4
+nodes:
+  - { id: n1, kind: stadium, x: 40,  y: 40,  w: 140, h: 56, text: "Start" }
+  - { id: n2, kind: diamond, x: 40,  y: 160, w: 160, h: 90, text: "valid?" }
+  - { id: n3, kind: rect,    x: 260, y: 170, w: 140, h: 60, text: "Session anlegen" }
+edges:
+  - { id: e1, from_id: n1, to_id: n2, kind: arrow }
+  - { id: e2, from_id: n2, to_id: n3, kind: arrow, text: "ja" }

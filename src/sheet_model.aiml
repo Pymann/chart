@@ -1,0 +1,14 @@
+# The sheet itself, in its own module: a file may declare at most three top-level
+# types (aiml spec/49 §14), and Node/Edge/Group already fill src/model.aiml.
+- import: "src/model.aiml"
+
+- model:
+    name: Sheet
+    description: "A whole drawing; the canonical document (spec §2)"
+    fields:
+      - [dtype, DiagramType, DiagramType.flowchart]
+      - [dir, Direction, Direction.TD]
+      - [nodes, list<Node>]
+      - [edges, list<Edge>]
+      - [groups, list<Group>]
+      - [next_id, i32, 1]             # monotonic; never reused, so ids stay diff-stable

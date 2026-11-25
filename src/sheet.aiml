@@ -1,0 +1,233 @@
+# Reading a *.chart.yaml into a Sheet (doc/spec/chart.md §4).
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: SheetIO
+    description: "Loads the canonical sheet; the only place a member name appears as text"
+    methods:
+      # Index of `key` in a mapping node, -1 when absent.
+      - def:
+          name: kv_index
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<yaml_node>], [key, string]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - decl: [total, i32, { call: [yaml.size, node] }]
+            - while:
+                condition: { lt: [idx, total] }
+                body:
+                  - decl: [key_text, string, { call: [yaml.key, node, idx] }]
+                  - if: { condition: { eq: [key_text, key] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
+      # Scalar value of `key`, or `fallback` when the key is absent.
+      - def:
+          name: kv_text
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<yaml_node>], [key, string], [fallback, string]]
+          return: string
+          body:
+            - decl: [idx, i32, { call: [<.kv_index, node, key] }]
+            - if: { condition: { lt: [idx, 0] }, then: [{ return: fallback }] }
+            - decl: [val_node, ref<yaml_node>, { call: [yaml.value, node, idx] }]
+            - return: { call: [yaml.scalar, val_node] }
+
+      - def:
+          name: kv_f32
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<yaml_node>], [key, string]]
+          return: f32
+          body:
+            - decl: [text, string, { call: [<.kv_text, node, key, ""] }]
+            - if: { condition: { eq: [text, ""] }, then: [{ return: 0.0 }] }
+            - return: { call: [text.parse_f32] }
+
+      - def:
+          name: kv_i32
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<yaml_node>], [key, string]]
+          return: i32
+          body:
+            - decl: [text, string, { call: [<.kv_text, node, key, ""] }]
+            - if: { condition: { eq: [text, ""] }, then: [{ return: 0 }] }
+            - return: { call: [text.parse_i32] }
+
+      # Member name -> NodeKind.  Returns -1 for an unknown word: spec §4 forbids
+      # defaulting it silently, because a sheet that lost a shape without saying so
+      # is the same failure class as treating the Mermaid as the document (§2).
+      - def:
+          name: node_kind
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "rect"] },       then: [{ return: NodeKind.rect }] }
+            - if: { condition: { eq: [word, "round"] },      then: [{ return: NodeKind.round }] }
+            - if: { condition: { eq: [word, "stadium"] },    then: [{ return: NodeKind.stadium }] }
+            - if: { condition: { eq: [word, "circle"] },     then: [{ return: NodeKind.circle }] }
+            - if: { condition: { eq: [word, "diamond"] },    then: [{ return: NodeKind.diamond }] }
+            - if: { condition: { eq: [word, "hexagon"] },    then: [{ return: NodeKind.hexagon }] }
+            - if: { condition: { eq: [word, "cylinder"] },   then: [{ return: NodeKind.cylinder }] }
+            - if: { condition: { eq: [word, "subroutine"] }, then: [{ return: NodeKind.subroutine }] }
+            - return: -1
+
+      - def:
+          name: edge_kind
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "arrow"] },         then: [{ return: EdgeKind.arrow }] }
+            - if: { condition: { eq: [word, "open"] },          then: [{ return: EdgeKind.open }] }
+            - if: { condition: { eq: [word, "dotted"] },        then: [{ return: EdgeKind.dotted }] }
+            - if: { condition: { eq: [word, "thick"] },         then: [{ return: EdgeKind.thick }] }
+            - if: { condition: { eq: [word, "bidirectional"] }, then: [{ return: EdgeKind.bidirectional }] }
+            - if: { condition: { eq: [word, "invisible"] },     then: [{ return: EdgeKind.invisible }] }
+            - return: -1
+
+      - def:
+          name: direction
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "TD"] }, then: [{ return: Direction.TD }] }
+            - if: { condition: { eq: [word, "LR"] }, then: [{ return: Direction.LR }] }
+            - if: { condition: { eq: [word, "BT"] }, then: [{ return: Direction.BT }] }
+            - if: { condition: { eq: [word, "RL"] }, then: [{ return: Direction.RL }] }
+            - return: -1
+
+      - def:
+          name: diagram_type
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "flowchart"] },     then: [{ return: DiagramType.flowchart }] }
+            - if: { condition: { eq: [word, "sequence"] },      then: [{ return: DiagramType.sequence }] }
+            - if: { condition: { eq: [word, "state"] },         then: [{ return: DiagramType.state }] }
+            - if: { condition: { eq: [word, "class_diagram"] }, then: [{ return: DiagramType.class_diagram }] }
+            - return: -1
+
+      # Load `path` into `sheet`.  1 on success, 0 on a reported failure.
+      - def:
+          name: load
+          static_off: ["same_arg", "str_cmp"]
+          args: [[path, string], [sheet, Sheet]]
+          return: i32
+          body:
+            - decl: [document, ptr<yaml_doc>, { call: [yaml.parse_file, path] }]
+            - decl: [error_text, string, { call: [yaml.error, document] }]
+            - if:
+                condition: { neq: [error_text, ""] }
+                then:
+                  - call: [log.error, "chart: ${path}: ${error_text}"]
+                  - call: [yaml.free, document]
+                  - return: 0
+            - decl: [root, ref<yaml_node>, { call: [yaml.root, document] }]
+
+            - decl: [dtype_word, string, { call: [<.kv_text, root, "dtype", "flowchart"] }]
+            - decl: [dtype_val, i32, { call: [<.diagram_type, dtype_word] }]
+            - if:
+                condition: { lt: [dtype_val, 0] }
+                then:
+                  - call: [log.error, "chart: ${path}: unknown dtype '${dtype_word}'"]
+                  - call: [yaml.free, document]
+                  - return: 0
+            - set: [sheet.dtype, dtype_val]
+
+            - decl: [dir_word, string, { call: [<.kv_text, root, "dir", "TD"] }]
+            - decl: [dir_val, i32, { call: [<.direction, dir_word] }]
+            - if:
+                condition: { lt: [dir_val, 0] }
+                then:
+                  - call: [log.error, "chart: ${path}: unknown dir '${dir_word}'"]
+                  - call: [yaml.free, document]
+                  - return: 0
+            - set: [sheet.dir, dir_val]
+            - set: [sheet.next_id, { call: [<.kv_i32, root, "next_id"] }]
+
+            # ── groups ──────────────────────────────────────────────────────
+            - decl: [groups_idx, i32, { call: [<.kv_index, root, "groups"] }]
+            - if:
+                condition: { ge: [groups_idx, 0] }
+                then:
+                  - decl: [groups_node, ref<yaml_node>, { call: [yaml.value, root, groups_idx] }]
+                  - decl: [gidx, i32, 0]
+                  - while:
+                      condition: { lt: [gidx, { call: [yaml.size, groups_node] }] }
+                      body:
+                        - decl: [item, ref<yaml_node>, { call: [yaml.item, groups_node, gidx] }]
+                        - decl: [group, Group]
+                        - set: [group.ident, { call: [<.kv_text, item, "id", ""] }]
+                        - set: [group.title, { call: [<.kv_text, item, "title", ""] }]
+                        - set: [group.parent, { call: [<.kv_text, item, "parent", ""] }]
+                        - call: [sheet.groups.push, group]
+                        - set: [gidx, { +: [gidx, 1] }]
+
+            # ── nodes ───────────────────────────────────────────────────────
+            - decl: [nodes_idx, i32, { call: [<.kv_index, root, "nodes"] }]
+            - if:
+                condition: { ge: [nodes_idx, 0] }
+                then:
+                  - decl: [nodes_node, ref<yaml_node>, { call: [yaml.value, root, nodes_idx] }]
+                  - decl: [nidx, i32, 0]
+                  - while:
+                      condition: { lt: [nidx, { call: [yaml.size, nodes_node] }] }
+                      body:
+                        - decl: [item, ref<yaml_node>, { call: [yaml.item, nodes_node, nidx] }]
+                        - decl: [node, Node]
+                        - set: [node.ident, { call: [<.kv_text, item, "id", ""] }]
+                        - decl: [kind_word, string, { call: [<.kv_text, item, "kind", "rect"] }]
+                        - decl: [kind_val, i32, { call: [<.node_kind, kind_word] }]
+                        - if:
+                            condition: { lt: [kind_val, 0] }
+                            then:
+                              - call: [log.error, "chart: ${path}: node '${node.ident}' has unknown kind '${kind_word}'"]
+                              - call: [yaml.free, document]
+                              - return: 0
+                        - set: [node.kind, kind_val]
+                        - set: [node.pos_x, { call: [<.kv_f32, item, "x"] }]
+                        - set: [node.pos_y, { call: [<.kv_f32, item, "y"] }]
+                        - set: [node.width, { call: [<.kv_f32, item, "w"] }]
+                        - set: [node.height, { call: [<.kv_f32, item, "h"] }]
+                        - set: [node.text, { call: [<.kv_text, item, "text", ""] }]
+                        - set: [node.fill, { call: [<.kv_i32, item, "fill"] }]
+                        - set: [node.stroke, { call: [<.kv_i32, item, "stroke"] }]
+                        - set: [node.group, { call: [<.kv_text, item, "group", ""] }]
+                        - call: [sheet.nodes.push, node]
+                        - set: [nidx, { +: [nidx, 1] }]
+
+            # ── edges ───────────────────────────────────────────────────────
+            - decl: [edges_idx, i32, { call: [<.kv_index, root, "edges"] }]
+            - if:
+                condition: { ge: [edges_idx, 0] }
+                then:
+                  - decl: [edges_node, ref<yaml_node>, { call: [yaml.value, root, edges_idx] }]
+                  - decl: [eidx, i32, 0]
+                  - while:
+                      condition: { lt: [eidx, { call: [yaml.size, edges_node] }] }
+                      body:
+                        - decl: [item, ref<yaml_node>, { call: [yaml.item, edges_node, eidx] }]
+                        - decl: [edge, Edge]
+                        - set: [edge.ident, { call: [<.kv_text, item, "id", ""] }]
+                        - set: [edge.from_id, { call: [<.kv_text, item, "from_id", ""] }]
+                        - set: [edge.to_id, { call: [<.kv_text, item, "to_id", ""] }]
+                        - decl: [ekind_word, string, { call: [<.kv_text, item, "kind", "arrow"] }]
+                        - decl: [ekind_val, i32, { call: [<.edge_kind, ekind_word] }]
+                        - if:
+                            condition: { lt: [ekind_val, 0] }
+                            then:
+                              - call: [log.error, "chart: ${path}: edge '${edge.ident}' has unknown kind '${ekind_word}'"]
+                              - call: [yaml.free, document]
+                              - return: 0
+                        - set: [edge.kind, ekind_val]
+                        - set: [edge.text, { call: [<.kv_text, item, "text", ""] }]
+                        - set: [edge.stroke, { call: [<.kv_i32, item, "stroke"] }]
+                        - call: [sheet.edges.push, edge]
+                        - set: [eidx, { +: [eidx, 1] }]
+
+            - call: [yaml.free, document]
+            - return: 1

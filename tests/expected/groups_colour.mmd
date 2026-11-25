@@ -1,0 +1,12 @@
+flowchart LR
+    classDef c1 fill:#2e4a7a,stroke:#7788aa
+    subgraph g1 ["Auth"]
+        n2["Pruefen"]:::c1
+        n3["Merken"]:::c1
+    end
+    n1(["In"])
+    n4(("Ende"))
+    n1 --> n2
+    n2 -.->|"cache"| n3
+    n3 ==> n4
+    style n4 fill:#40a0c0,stroke:#000000

@@ -1,0 +1,59 @@
+# Sheet model and the vocabularies that cross the file boundary (doc/spec/chart.md §3).
+#
+# The vocabularies are `wire: true`: their members are named in the *.chart.yaml on disk
+# and read back by a later build, so an unused member is the contract, not dead code
+# (aiml spec/49 §18.2a).
+
+- enum:
+    name: NodeKind
+    wire: true
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine]
+
+- enum:
+    name: EdgeKind
+    wire: true
+    values: [arrow, open, dotted, thick, bidirectional, invisible]
+
+- enum:
+    name: DiagramType
+    wire: true
+    values: [flowchart, sequence, state, class_diagram]
+
+- enum:
+    name: Direction
+    wire: true
+    values: [TD, LR, BT, RL]
+
+- model:
+    name: Node
+    description: "One box on the sheet (spec §3.1)"
+    fields:
+      - [ident, string, ""]           # stable for the sheet's lifetime, never reused
+      - [kind, NodeKind, NodeKind.rect]
+      - [pos_x, f32, 0.0]             # design coords, top-left anchor
+      - [pos_y, f32, 0.0]
+      - [width, f32, 120.0]
+      - [height, f32, 60.0]
+      - [text, string, ""]            # may contain "\n"
+      - [fill, i32, 0]                # 0xRRGGBBAA; 0 = inherit the theme
+      - [stroke, i32, 0]
+      - [group, string, ""]           # owning Group.id, "" = top level
+
+- model:
+    name: Edge
+    description: "One connection (spec §3.1)"
+    fields:
+      - [ident, string, ""]
+      - [from_id, string, ""]
+      - [to_id, string, ""]
+      - [kind, EdgeKind, EdgeKind.arrow]
+      - [text, string, ""]            # "" = no label
+      - [stroke, i32, 0]
+
+- model:
+    name: Group
+    description: "A subgraph (spec §3.1)"
+    fields:
+      - [ident, string, ""]
+      - [title, string, ""]
+      - [parent, string, ""]          # nesting; "" = top level

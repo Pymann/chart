@@ -1,0 +1,32 @@
+# chart -- a drawing surface that writes Mermaid (doc/spec/chart.md).
+#
+# Stage 0 is headless: it reads a sheet and projects it (spec §2).  The editor comes
+# later, so nothing here needs a display.
+- import: "src/runtime.aiml"
+
+- def:
+    name: usage
+    body:
+      - call: [log.error, "usage: chart --sheet FILE.chart.yaml --mermaid OUT.mmd"]
+
+- def:
+    name: main
+    static_off: ["str_cmp"]
+    return: i32
+    body:
+      - decl: [options, ChartOptions]
+      - call: [sys.arg_dump, options]
+      - if:
+          condition: { eq: [options.sheet, ""] }
+          then:
+            - call: [usage]
+            - return: 2
+      - if:
+          condition: { eq: [options.mermaid, ""] }
+          then:
+            - call: [usage]
+            - return: 2
+      - decl: [runtime, ptr<ChartRuntime>, { new: ChartRuntime }]
+      - decl: [code, i32, { call: [runtime.exporter.run, options] }]
+      - free: runtime
+      - return: code

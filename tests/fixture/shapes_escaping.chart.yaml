@@ -1,0 +1,13 @@
+dtype: flowchart
+dir: TD
+next_id: 4
+nodes:
+  # Brackets and a dash in a label: harmless only because every label is quoted (§5.2)
+  - { id: n1, kind: hexagon,    x: 0, y: 0,   w: 100, h: 50, text: "x[1]-y" }
+  # A real newline becomes <br/>, it does not split the label
+  - { id: n2, kind: cylinder,   x: 0, y: 80,  w: 100, h: 50, text: "line1\nline2" }
+  - { id: n3, kind: subroutine, x: 0, y: 160, w: 100, h: 50, text: "plain" }
+edges:
+  - { id: e1, from_id: n1, to_id: n2, kind: open }
+  # invisible has nowhere to put a label, so it loses it (§5.3)
+  - { id: e2, from_id: n2, to_id: n3, kind: invisible, text: "dropped" }

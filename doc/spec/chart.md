@@ -1,0 +1,522 @@
+# chart — Drawing Specification
+
+`chart` is a drawing surface whose document **is** a diagram. You sketch a box, type
+into it, pull an arrow to the next box, and the tool writes Mermaid. Shape recognition
+is geometric, not learned. Label text is **typed**, never handwritten.
+
+Written entirely in AIML. Mermaid emission reuses the proven id/label hygiene of
+`aidoc` (`test/aidoc/src/charts.aiml`).
+
+---
+
+## 1. Goal
+
+One surface, three jobs:
+
+1. **Draw** — freehand strokes become clean primitives (rect, rounded, diamond,
+   circle, hexagon, arrow) the moment the stroke ends (§7).
+2. **Label** — click a shape, type into it. A real editable field, not a guess (§6).
+3. **Export** — the sheet projects to Mermaid, continuously previewed and writable
+   to a `.mmd` file (§5).
+
+### 1.1 Non-goals (v1, normative)
+
+| Not in v1 | Why / what instead |
+|---|---|
+| Handwriting recognition | Labels are typed (§6). The feature is not deferred for cost reasons alone — a typed label is *exactly* right, a recognised one is 90% right, and a diagram with a wrong word in it is worse than no diagram. |
+| Mermaid **import** | Export is one-way (§2). A best-effort importer may come later; it can never be the document path. |
+| Diagram types beyond `flowchart` | `Sheet.dtype` (§3.1) exists so `sequence`/`state`/`class` can be added without a format break. Only `flowchart` is emitted. |
+| Auto-layout | Positions belong to the user. Mermaid re-lays out on render, and that is accepted (§5.7). |
+
+---
+
+## 2. The sheet is canonical; Mermaid is a projection
+
+**Normative.** The editable document is a `*.chart.yaml` sheet (§4). Mermaid is
+produced *from* the sheet and is **lossy**. Therefore:
+
+- Every edit changes the **sheet**. Nothing ever edits the Mermaid text.
+- Export is a **pure function** of the sheet: same sheet in, same bytes out.
+- The tool **never** reads its own Mermaid output back as the source of truth.
+
+The reason this rule is first, and not an implementation note: as soon as colour,
+grouping and geometry became element properties (§3), Mermaid stopped being able to
+hold the whole document. `style`/`classDef` carry colour; nothing carries coordinates,
+sizes or anchor sides. A tool that treated its Mermaid as its document would lose the
+drawing on every reopen — silently, and only for the user who had arranged it
+carefully.
+
+---
+
+## 3. Document model
+
+### 3.1 Models
+
+```aiml
+- model:
+    name: Sheet
+    description: "A whole drawing; the canonical document (spec §2)"
+    fields:
+      - [dtype, DiagramType, flowchart]   # only `flowchart` emits in v1
+      - [dir, Direction, TD]
+      - [nodes, list<Node>]
+      - [edges, list<Edge>]
+      - [groups, list<Group>]
+      - [next_id, i32, 1]              # monotonic; never reused, so ids stay stable (§5.1)
+
+- model:
+    name: Node
+    fields:
+      - [id, string, ""]               # "n7"; stable for the sheet's lifetime
+      - [kind, NodeKind, rect]
+      - [x, f32, 0.0]                  # design coords, top-left anchor
+      - [y, f32, 0.0]
+      - [w, f32, 120.0]
+      - [h, f32, 60.0]
+      - [text, string, ""]             # may contain "\n"
+      - [fill, i32, 0]                 # 0xRRGGBBAA; 0 = inherit theme (§5.6)
+      - [stroke, i32, 0]
+      - [group, string, ""]            # owning Group.id, "" = top level
+
+- model:
+    name: Edge
+    fields:
+      - [id, string, ""]
+      - [from_id, string, ""]          # Node.id
+      - [to_id, string, ""]
+      - [kind, EdgeKind, arrow]
+      - [text, string, ""]             # edge label, "" = none
+      - [stroke, i32, 0]
+
+- model:
+    name: Group
+    fields:
+      - [id, string, ""]
+      - [title, string, ""]
+      - [parent, string, ""]           # nesting; "" = top level
+```
+
+### 3.2 Vocabularies
+
+These words cross a file boundary (§4) — the sheet on disk names them and a later
+build reads them back. They are therefore `wire: true` (spec/49 §18.2a): the members
+*are* the contract, so an unused one must not warn.
+
+```aiml
+- enum:
+    name: NodeKind
+    wire: true
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine]
+
+- enum:
+    name: EdgeKind
+    wire: true
+    values: [arrow, open, dotted, thick, bidirectional, invisible]
+
+- enum:
+    name: DiagramType
+    wire: true
+    values: [flowchart, sequence, state, class]
+
+- enum:
+    name: Direction
+    wire: true
+    values: [TD, LR, BT, RL]
+```
+
+**Normative.** The model fields carry the **enum type**, not a string (§3.1). Only the
+YAML (de)serialiser converts, and only there may a member name appear as text. Note that
+`enums.value` takes a *literal* member (aiml spec/14), so string-to-enum is an explicit
+mapping in the loader, not reflection — and an unknown word is therefore reported rather
+than silently mapped to member 0. `static_off` is not to be used to silence a finding about them
+(see memory: static checks are findings, not formalities).
+
+---
+
+## 4. Native format
+
+A sheet is YAML, read with `yaml.parse_file` and written by hand — the same stack
+`aidoc` uses, no extra runtime.
+
+```yaml
+dtype: flowchart
+dir: TD
+next_id: 5
+groups:
+  - { id: g1, title: "Auth", parent: "" }
+nodes:
+  - { id: n1, kind: stadium, x: 40,  y: 40,  w: 140, h: 56, text: "Start" }
+  - { id: n2, kind: diamond, x: 40,  y: 160, w: 160, h: 90, text: "valid?", group: g1, fill: 0x2E4A7AFF }
+  - { id: n3, kind: rect,    x: 260, y: 170, w: 140, h: 60, text: "Session\nanlegen" }
+edges:
+  - { id: e1, from_id: n1, to_id: n2, kind: arrow }
+  - { id: e2, from_id: n2, to_id: n3, kind: arrow, text: "ja" }
+```
+
+**Normative.** An unknown `kind` on load is **not** silently defaulted: the loader
+reports the file, the element id and the unknown word, and loads the sheet with that
+element marked invalid. A sheet that lost a shape without saying so would be the same
+class of failure as §2.
+
+---
+
+## 5. Mermaid projection
+
+### 5.1 Ids
+
+`Node.id` is already identifier-safe (`n` + integer) and emitted verbatim. Ids come
+from `Sheet.next_id` and are **never reused** after a delete, so a diff between two
+exports stays readable.
+
+### 5.2 Node shapes
+
+| `NodeKind` | Mermaid |
+|---|---|
+| `rect` | `n1["text"]` |
+| `round` | `n1("text")` |
+| `stadium` | `n1(["text"])` |
+| `circle` | `n1(("text"))` |
+| `diamond` | `n1{"text"}` |
+| `hexagon` | `n1{{"text"}}` |
+| `cylinder` | `n1[("text")]` |
+| `subroutine` | `n1[["text"]]` |
+
+Labels are always quoted and escaped: `"` → `#quot;`, newline → `<br/>`. Quoting
+unconditionally avoids the whole class of bugs where a label containing `(`, `[` or
+`-` reshapes the node.
+
+### 5.3 Edges
+
+| `EdgeKind` | without label | with label |
+|---|---|---|
+| `arrow` | `-->` | `-->\|"text"\|` |
+| `open` | `---` | `---\|"text"\|` |
+| `dotted` | `-.->` | `-.->\|"text"\|` |
+| `thick` | `==>` | `==>\|"text"\|` |
+| `bidirectional` | `<-->` | `<-->\|"text"\|` |
+| `invisible` | `~~~` | (label dropped) |
+
+The pipe form carries the label, not the `-- text -->` form, so that **one** quoting rule
+covers every label in the file (§5.2). With the inline form a label containing `-` or `>`
+reshapes the arrow itself, and the failure is a changed diagram rather than an error.
+
+### 5.4 Direction
+
+`flowchart ${dir}` on the first line. The editor can **propose** a direction from the
+layout (dominant arrow axis: more |dy| than |dx| over all edges → `TD`, else `LR`), but
+the proposal only ever writes `Sheet.dir` through an explicit user action (§8) — never
+on export, because an export that changes the document violates §2.
+
+### 5.5 Groups
+
+Each `Group` becomes a `subgraph`, nested per `Group.parent`:
+
+```
+subgraph g1 ["Auth"]
+  n2
+end
+```
+
+A node is emitted **inside** its group's block and nowhere else. Edges are always
+emitted after all groups, at top level — Mermaid resolves them by id, and keeping them
+out of the blocks avoids accidentally pulling an endpoint into a subgraph.
+
+### 5.5a Output order (normative)
+
+Export is promised to be a pure function of the sheet (§2), so the order is fixed, not
+incidental:
+
+1. `flowchart <dir>`
+2. `classDef` lines, by class index
+3. `subgraph` blocks in sheet order, each with its member nodes and nested groups, `end`
+4. node declarations of ungrouped nodes, in sheet order
+5. edge lines, in sheet order
+6. `style` lines for one-off colours, in node order
+
+Every line after the header is indented by four spaces per nesting level. `classDef`
+precedes its uses: Mermaid does not require it, but a file whose classes are declared
+after the nodes that carry them reads as if the colour came from nowhere.
+
+### 5.6 Colour
+
+`fill`/`stroke` of `0` mean "inherit the theme" and emit nothing. Otherwise:
+
+- Collect the distinct `(fill, stroke)` pairs over all nodes.
+- A pair used by **two or more** nodes becomes a `classDef c1 fill:#...,stroke:#...`, and
+  each member's declaration carries `:::c1` (`n2{"valid?"}:::c1`) — on the node line, so
+  the colour is never read apart from the node it belongs to.
+- A pair used **once** becomes an inline `style n2 fill:#...,stroke:#...`.
+
+The alpha byte is dropped (Mermaid has no alpha in `style`); `0x...FF` is the normal
+case. A non-opaque alpha is **reported once** on export as a warning, not silently
+flattened.
+
+### 5.7 What is lost (normative list)
+
+`x`, `y`, `w`, `h`, alpha, anchor sides, group bounding boxes, `next_id`. This list is
+the justification for §2 and must be kept current when the model grows.
+
+---
+
+## 6. Typing into a shape
+
+A node's label is edited by a real widget, not a hand-rolled caret: AIML's
+`text_input` prefab child is editable, **single- or multi-line** (a field taller than
+~1.8 line heights wraps and scrolls vertically), and brings keyboard focus, mouse
+selection, Shift+arrows, `Ctrl+A/C/V/X` and UTF-8 handling (spec/44_6 §5e).
+
+Flow:
+
+1. A finished shape immediately enters edit mode — the usual next intent after drawing
+   a box is to say what it is.
+2. A `text_input` instance is positioned over the node's inner box in **design
+   coordinates** and focused with `.focus(child)`.
+3. `Enter` commits, `Shift+Enter` inserts a newline, `Esc` reverts to the value the
+   field had on entry.
+4. On commit the value is read with `.text_value(child)` — an owned copy, freed by the
+   receiving local (spec/61 §8) — and stored in `Node.text`.
+
+**Positioning.** The field is placed with design-space coordinates
+(`engine.mouse_design_x/y`, spec/44_0 §2.3), never with raw window pixels: on a scaled
+window a pixel-placed field lands far off the shape.
+
+**Auto-grow.** The node grows to fit its label, measured rather than estimated:
+`engine.text_width(line, font_size * scale)` per line, widest line wins, and
+`engine.text_height(font_size * scale)` times the line count for the height (aiml spec/44_6
+§5i). The size passed is the **final pixel size** — a prefab bakes one font per size, so a
+width measured at one size must never be scaled to another.
+
+### 6.1 The Mermaid pane
+
+The live Mermaid preview is a **`textbox`** child: read-only, wraps, has a native
+scrollbar and mouse-wheel scrolling, supports selection and `Ctrl+C`, and takes
+`set_color_runs` for keyword colouring (spec/44_6 §5f, §5g). Read-only is the right
+choice here and not a limitation — per §2 the pane is a view, so an editable one would
+be a lie.
+
+---
+
+## 7. Stroke recognition
+
+### 7.1 It is a pure function
+
+**Normative.**
+
+```
+recognize(points: list<vec2>) -> list<string>   # NodeKind/EdgeKind members, best first
+```
+
+No engine state, no frame, no window. This is what makes the recogniser testable
+headless (§9) — strokes recorded once as fixtures, replayed with no display. A
+recogniser entangled with the draw loop can only be checked by hand, and then it is
+tuned blind.
+
+### 7.2 Features
+
+Resample the stroke to 64 equidistant points, then:
+
+| Feature | Definition |
+|---|---|
+| `diag` | bounding-box diagonal |
+| `closed` | `dist(p_first, p_last) / path_len` |
+| `fill` | `abs(shoelace_area) / (w * h)` |
+| `corners` | Douglas–Peucker at `eps = 0.04 * diag`, kept where the turn exceeds 50° |
+| `turn` | sum of absolute turn angles |
+| `aspect` | `w / h` |
+
+### 7.3 Decision table
+
+Ordered; first match wins. `closed < 0.15` means the stroke returned to its start.
+
+| # | Condition | Result |
+|---|---|---|
+| 1 | `closed < 0.15`, `corners == 4`, `fill > 0.80`, corners near axis-aligned | `rect` |
+| 2 | `closed < 0.15`, `corners == 4`, `0.40 < fill < 0.65` | `diamond` |
+| 3 | `closed < 0.15`, `corners == 6`, `fill > 0.70` | `hexagon` |
+| 4 | `closed < 0.15`, `corners <= 1`, `fill > 0.65`, `0.85 < aspect < 1.18` | `circle` |
+| 5 | `closed < 0.15`, `corners <= 1`, `fill > 0.65` | `round` |
+| 6 | `closed >= 0.15`, `turn < 1.2 rad`, `path_len > 0.5 * diag` | `arrow` (§7.5) |
+| 7 | otherwise | no match; the stroke is discarded with a visible hint |
+
+The numbers are a starting point, owned by the fixture suite (§9): a threshold changes
+only together with the fixture that forced the change.
+
+### 7.4 Propose, then confirm
+
+**Normative.** The recogniser returns a **candidate list**, and the shape snaps to
+candidate 0 immediately. `Tab` cycles to the next candidate while the node is still
+fresh (before the first commit of its label).
+
+This single rule is what makes the whole geometric approach viable: it turns ~85%
+first-guess accuracy into 100% reachable output at the cost of one keystroke, and it
+removes any need for the recogniser to be clever about ambiguous strokes. A tool that
+guessed silently and offered no correction would be wrong 1 shape in 7, with no way out
+but redrawing.
+
+### 7.5 Arrows and attachment
+
+An `arrow` stroke attaches by endpoint:
+
+- Each endpoint hit-tests against node boxes grown by a tolerance of `12` design units.
+- Zero hits at an end → the stroke is discarded (a dangling edge has no Mermaid form).
+- More than one hit → the **nearest centre** wins, and the resolved edge is drawn
+  highlighted for one beat so a wrong pick is visible.
+- `from_id == to_id` is allowed (self-edge).
+
+Arrowheads are **not** recognised. Direction comes from the drawing direction
+(first point → last point), which is unambiguous and free. The head is drawn by the
+renderer, not detected.
+
+### 7.6 Straightening
+
+**Normative.** A recognised shape never keeps the stroke's wobble or its tilt. This is
+not cosmetic: a Mermaid node is always axis-aligned, so a tilt has no projection at all
+(§5.7) — straightening is the only faithful thing to do with it.
+
+For a **closed** shape:
+
+1. **Principal axis.** From the covariance of the 64 resampled points,
+   `theta = 0.5 * atan2(2 * Sxy, Sxx - Syy)`. This is the straight centre line of the
+   stroke — for a rectangle it runs along the long side.
+2. **Stability gate.** With eigenvalues `l0 >= l1`: if `l0 / l1 < 1.25` the shape is
+   near-square and `theta` is numerically meaningless (a square has no principal axis),
+   so `theta = 0`. Without this gate a hand-drawn square jitters through every angle
+   between two redraws.
+3. **Fold** `theta` into `[-45, 45]` degrees — a rect tilted 91 degrees is a rect tilted
+   1 degree with `w` and `h` swapped.
+4. **De-rotate** the points by `-theta` about their centroid and take the axis-aligned
+   bbox *in that frame*: this gives the true extents `w`, `h` and the centre `c`.
+5. Emit the node axis-aligned at `c` with size `w` x `h`. `theta` is **discarded**.
+
+Step 4 is why the raw bounding box is not used. A `w` x `h` rect drawn at angle `theta`
+has an axis-aligned bbox of `(w*cos + h*sin)` x `(w*sin + h*cos)` — the corners stick
+out. For a square at 10 degrees that is about **1.16x** in each axis, and the inflation
+grows with the tilt. Snapping to the raw bbox would therefore make every slightly
+crooked box bigger than the one the user drew, and make it bigger the more crooked it
+was. De-rotating first returns the size actually drawn.
+
+For an **open** stroke (arrow, line): least-squares fit through the points, endpoints
+projected onto that fit. If the fit direction is within 12 degrees of an axis, it snaps
+to exactly horizontal or vertical.
+
+#### 7.6.1 Tidy-up snaps
+
+Applied after straightening, in this order:
+
+| # | Snap | Rule |
+|---|---|---|
+| 1 | grid | centre and size to 10 design units |
+| 2 | size harmonisation | `w` (or `h`) within 12% of an existing node's `w` (or `h`) adopts it exactly |
+| 3 | alignment | centre within 8 units of another node's centre x (or y) adopts it exactly |
+| 4 | minimum | at least 60 x 36, then grown to fit the label (§6) |
+
+Snap 2 is the one that makes a hand-drawn sheet look machine-drawn: boxes a human means
+to be the same size never are.
+
+**Normative.** Each snap is individually switchable from the action bar (§8.1) and is a
+pure function on the sheet, so each is testable (§9). They are switchable because a
+diagram where everything snaps is occasionally the wrong diagram — a deliberately
+odd-sized node is a legitimate thing to want.
+
+---
+
+## 8. Chrome
+
+### 8.1 Action bar (left)
+
+Built like glbview's panel (`test/glbview/src/viewer.aiml`, its spec §4.3):
+`ui.begin` -> `ui.begin_grid` -> `ui.begin_cell`, then a column of `ui.button`s where
+each one sets a single integer `action` that one dispatch point consumes afterwards.
+Groups go into their own methods (glbview's `file_panel`, `clip_panel`, `shader_panel`)
+instead of one long body.
+
+| Group | Entries |
+|---|---|
+| file | new, open, save, export `.mmd` |
+| tool | select / draw / edge / erase — mutually exclusive, so `ui.radio` |
+| shape | the `NodeKind` palette as draggable stencils — the no-recognition path, always available |
+| snap | grid, straighten, harmonise sizes, align (§7.6.1 toggles) |
+| sheet | diagram type, direction, propose direction from layout (§5.4) |
+| view | zoom in / out, fit, show Mermaid pane |
+
+**Normative — the bar owns its area.**
+
+- The bar is a **scrollable cell** (aiml spec/44_3 §3.6) at a fixed fraction of the window
+  width, so a long shape palette never pushes a control out of reach. glbview uses 16%;
+  `chart` uses 18% to fit the palette.
+- The **wheel** scrolls the bar while the cursor is over it and zooms the canvas while
+  it is over the canvas — one wheel, two meanings, decided by position, exactly as in
+  glbview (its spec §4.4).
+- A press that **begins** over the bar never starts a stroke: the canvas tests
+  `mouse_pressed` against the canvas rect only. Without this rule a drag that starts on
+  a button also starts drawing, and the stroke then crawls out from under the panel.
+
+A toggle shows its state in its own caption (glbview's `switch_text`), not in a separate
+indicator next to it.
+
+### 8.2 Right-click menu
+
+The menu is **target-sensitive** — one menu per thing under the cursor:
+
+| Target | Entries |
+|---|---|
+| empty canvas | diagram type (`DiagramType`), direction (`Direction`), propose direction from layout (§5.4), theme, grid snap, export `.mmd`, save, open |
+| node | shape kind (`NodeKind`), fill, stroke, assign/remove group, edit label, delete |
+| edge | line kind (`EdgeKind`), set/clear label, flip direction, delete |
+| multi-selection | group into subgraph, same fill, align, delete |
+
+Enum-valued entries bind the enum, not a hand-written string list, so a new member
+appears in the menu without a second edit (`ui.spinbox` over `enums.*`).
+
+**Normative — the menu claims input.** While open, the menu takes pointer input over
+its own rect: nothing underneath is hovered or clickable, and the wheel scrolls the
+menu rather than the canvas. This is stated because the opposite has already happened
+in this codebase: an overlay that drew on top but claimed nothing let clicks fall
+straight through to the canvas, which here would mean drawing a stroke *through* the
+menu. `ui.spinbox` already shields this way (spec/44_3 §4.2) and is the model.
+
+---
+
+## 9. Tests
+
+Three headless suites plus one that needs a display.
+
+| Suite | Fixture | Expected | Needs display |
+|---|---|---|---|
+| recogniser | `tests/fixture/stroke_*.yaml` — recorded point lists | candidate list, first entry asserted | no |
+| straightening | the same stroke fixtures, incl. deliberately tilted ones | resulting `x`/`y`/`w`/`h` within 0.5 units | no |
+| emitter | `tests/fixture/sheet_*.chart.yaml` | `tests/expected/*.mmd`, byte-exact | no |
+| editor | scripted clicks/keys | screenshot + sheet state | **yes** |
+
+The straightening suite must contain, at minimum, the same rectangle recorded at 0, 5,
+10 and 20 degrees of tilt, all four asserting the **same** `w` x `h`. That is the
+property §7.6 exists for, and the raw-bbox mistake it rules out passes every other test
+in this file.
+
+**Normative.**
+
+- The recogniser, the straightening pass and the emitter are pure (§7.1, §7.6, §2), so
+  their suites run with no window and belong in `run_tests.sh`.
+- The editor suite does **not** go into that loop. A test that opens a window blocks
+  until the window closes, and `run_all_tests.sh` has no timeout — one blocking test
+  stops the whole suite. It runs separately, under `Xvfb` with XTEST-synthesised
+  clicks, and a display-less run skips it loudly rather than reporting success.
+- Byte-exact expected Mermaid is the point: §2 promises export is a pure function, and
+  only a byte comparison actually checks that promise.
+
+---
+
+## 10. Engine support this needs
+
+Two things were missing in AIML when this spec was written, and both are being added to
+the engine rather than worked around here — an approximation in a drawing tool is a
+diagram that is subtly wrong, which is worse than one that fails.
+
+| Need | Status |
+|---|---|
+| Measure text to size a node | `engine.text_width(text [, font_size])` / `engine.text_height([font_size])` — aiml spec/44_6 §5i. `text_width` existed but took no size, so it could only measure in the scene font; the optional size argument is the addition. |
+| Draw ink and edges | `ui.draw_line` / `ui.draw_polyline` — aiml spec/44_3 §4.6. Previously there was no 2D line primitive at all and the only route was raw `gl.draw_arrays_mode(vao, gl.LINES, n)`, a second pipeline with its own ordering. |
+
+`chart` therefore requires an AIML that has both. Until that lands, stage 0 (§README) is
+unaffected: it needs neither, since stencils carry their own geometry and a Mermaid export
+measures nothing.

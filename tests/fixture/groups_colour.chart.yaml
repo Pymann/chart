@@ -1,0 +1,18 @@
+# Colours are decimal because they are i32 (spec §3.1); the hex is in the comment.
+# All chosen with R < 0x80 so the i32 stays positive and the fixture stays readable.
+dtype: flowchart
+dir: LR
+next_id: 6
+groups:
+  - { id: g1, title: "Auth", parent: "" }
+nodes:
+  - { id: n1, kind: stadium, x: 20,  y: 20,  w: 120, h: 50, text: "In" }
+  # fill 0x2E4A7AFF, stroke 0x7788AAFF -- shared, so these two become a classDef
+  - { id: n2, kind: rect, x: 180, y: 20,  w: 120, h: 50, text: "Pruefen", group: g1, fill: 776633087, stroke: 2005445375 }
+  - { id: n3, kind: rect, x: 180, y: 100, w: 120, h: 50, text: "Merken",  group: g1, fill: 776633087, stroke: 2005445375 }
+  # fill 0x40A0C0FF, stroke 0x000000FF -- used once, so it stays an inline style
+  - { id: n4, kind: circle, x: 340, y: 20, w: 80, h: 80, text: "Ende", fill: 1084276991, stroke: 255 }
+edges:
+  - { id: e1, from_id: n1, to_id: n2, kind: arrow }
+  - { id: e2, from_id: n2, to_id: n3, kind: dotted, text: "cache" }
+  - { id: e3, from_id: n3, to_id: n4, kind: thick }
