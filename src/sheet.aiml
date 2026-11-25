@@ -115,7 +115,7 @@
       - def:
           name: load
           static_off: ["same_arg", "str_cmp"]
-          args: [[path, string], [sheet, Sheet]]
+          args: [[path, string], [sheet, ref<Sheet>]]
           return: i32
           body:
             - decl: [document, ptr<yaml_doc>, { call: [yaml.parse_file, path] }]

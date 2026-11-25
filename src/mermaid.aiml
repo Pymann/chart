@@ -127,7 +127,7 @@
       - def:
           name: group_block
           static_off: ["same_arg", "str_cmp"]
-          args: [[sheet, Sheet], [group, Group], [depth, i32], [class_of, map<string:string>]]
+          args: [[sheet, ref<Sheet>], [group, Group], [depth, i32], [class_of, map<string:string>]]
           return: string
           body:
             - decl: [pad, string, ""]
@@ -165,7 +165,7 @@
       - def:
           name: emit
           static_off: ["same_arg", "str_cmp"]
-          args: [[sheet, Sheet]]
+          args: [[sheet, ref<Sheet>]]
           return: string
           body:
             - if:
