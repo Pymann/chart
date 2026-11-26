@@ -172,6 +172,7 @@
                   - if: { condition: { eq: [chr, "["] }, then: [{ set: [opens, 1] }] }
                   - if: { condition: { eq: [chr, "("] }, then: [{ set: [opens, 1] }] }
                   - if: { condition: { eq: [chr, "{"] }, then: [{ set: [opens, 1] }] }
+                  - if: { condition: { eq: [chr, ">"] }, then: [{ set: [opens, 1] }] }
                   - if:
                       condition: { eq: [opens, 1] }
                       then:
@@ -192,18 +193,43 @@
             - decl: [rest, string, { call: [raw.substr, cut, { -: [raw.len, cut] }] }]
             # longest opener first: "[[" before "[", or a subroutine reads as a rect
             - decl: [open_len, i32, 1]
-            - if: { condition: { eq: [{ call: [rest.starts_with, "[["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.subroutine] }, { set: [open_len, 2] }] }
-            - if: { condition: { eq: [{ call: [rest.starts_with, "[("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.cylinder] }, { set: [open_len, 2] }] }
-            - if: { condition: { eq: [{ call: [rest.starts_with, "(("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.circle] }, { set: [open_len, 2] }] }
-            - if: { condition: { eq: [{ call: [rest.starts_with, "(["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.stadium] }, { set: [open_len, 2] }] }
-            - if: { condition: { eq: [{ call: [rest.starts_with, "{{"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.hexagon] }, { set: [open_len, 2] }] }
+            - decl: [shut_len, i32, 1]
+            - decl: [slash, i32, { call: [rest.ends_with, "/]"] }]
+            - if: { condition: { eq: [{ call: [rest.starts_with, "((("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.double_circle] }, { set: [open_len, 3] }, { set: [shut_len, 3] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "[["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.subroutine] }, { set: [open_len, 2] }, { set: [shut_len, 2] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "[("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.cylinder] }, { set: [open_len, 2] }, { set: [shut_len, 2] }] }
+            - if:
+                condition: { "&&": [{ eq: [{ call: [rest.starts_with, "(("] }, 1] }, { neq: [open_len, 3] }] }
+                then: [{ set: [<.ref_kind, NodeKind.circle] }, { set: [open_len, 2] }, { set: [shut_len, 2] }]
+            - if: { condition: { eq: [{ call: [rest.starts_with, "(["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.stadium] }, { set: [open_len, 2] }, { set: [shut_len, 2] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "{{"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.hexagon] }, { set: [open_len, 2] }, { set: [shut_len, 2] }] }
+            # `[/x/]` and `[/x\]` share an opener: the CLOSER decides
+            - if:
+                condition: { eq: [{ call: [rest.starts_with, "[/"] }, 1] }
+                then:
+                  - set: [open_len, 2]
+                  - set: [shut_len, 2]
+                  - if:
+                      condition: { eq: [slash, 1] }
+                      then: [{ set: [<.ref_kind, NodeKind.parallelogram] }]
+                      else: [{ set: [<.ref_kind, NodeKind.trapezoid] }]
+            - if:
+                condition: { eq: [{ call: [rest.starts_with, "[\\"] }, 1] }
+                then:
+                  - set: [open_len, 2]
+                  - set: [shut_len, 2]
+                  - if:
+                      condition: { eq: [slash, 1] }
+                      then: [{ set: [<.ref_kind, NodeKind.trapezoid_alt] }]
+                      else: [{ set: [<.ref_kind, NodeKind.parallelogram_alt] }]
             - if:
                 condition: { eq: [open_len, 1] }
                 then:
                   - if: { condition: { eq: [{ call: [rest.starts_with, "["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.rect] }] }
                   - if: { condition: { eq: [{ call: [rest.starts_with, "("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.round] }] }
                   - if: { condition: { eq: [{ call: [rest.starts_with, "{"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.diamond] }] }
-            - decl: [inner, string, { call: [rest.substr, open_len, { -: [rest.len, { "*": [open_len, 2] }] }] }]
+                  - if: { condition: { eq: [{ call: [rest.starts_with, ">"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.asymmetric] }] }
+            - decl: [inner, string, { call: [rest.substr, open_len, { -: [rest.len, { +: [open_len, shut_len] }] }] }]
             - set: [<.ref_text, { call: [<.unquote, inner] }]
 
       - def:
@@ -379,53 +405,91 @@
           static_off: ["same_arg", "str_cmp"]
           args: [[sheet, ref<Sheet>], [line, string], [cut, i32]]
           body:
-            - decl: [begins, i32, <.link_from]
-            - decl: [after, i32, <.link_to]
-            - decl: [token, string, { call: [line.substr, begins, { -: [after, begins] }] }]
-            - call: [<.decode_link, token]
-            - decl: [left, string, { call: [line.substr, 0, begins] }]
-            - decl: [right, string, { call: [line.substr, after, { -: [line.len, after] }] }]
-            - decl: [label, string, ""]
-            # `a -->|"text"| b`
-            - decl: [tail, string, { call: [right.trim] }]
-            - if:
-                condition: { eq: [{ call: [tail.starts_with, "|"] }, 1] }
-                then:
-                  - decl: [rest, string, { call: [tail.substr, 1, { -: [tail.len, 1] }] }]
-                  - decl: [shut, i32, { call: [rest.index_of, "|"] }]
+            # Mermaid chains: `a --> b --> c` is two edges on one line.  Reading only
+            # the first link made "b --> c" the TARGET's name -- a node called
+            # "b --" appeared on the sheet, which is how this was found.
+            - decl: [rest, string, line]
+            - decl: [carry, string, ""]
+            - decl: [going, i32, 1]
+            - while:
+                condition: { eq: [going, 1] }
+                body:
+                  - decl: [found_at, i32, { call: [<.link_at, rest] }]
                   - if:
-                      condition: { ge: [shut, 0] }
-                      then:
-                        - set: [label, { call: [<.unquote, { call: [rest.substr, 0, shut] }] }]
-                        - decl: [after_bar, i32, { +: [shut, 1] }]
-                        - set: [tail, { call: [rest.substr, after_bar, { -: [rest.len, after_bar] }] }]
-            # `a -- text --> b`
-            - decl: [head, string, { call: [left.trim] }]
-            - decl: [dash, i32, { call: [head.index_of, " -- "] }]
-            - if:
-                condition: { ge: [dash, 0] }
-                then:
-                  - decl: [after_dash, i32, { +: [dash, 4] }]
-                  - set: [label, { call: [<.unquote, { call: [head.substr, after_dash, { -: [head.len, after_dash] }] }] }]
-                  - set: [head, { call: [head.substr, 0, dash] }]
-            - call: [<.split_ref, head]
-            - decl: [src, string, <.ref_id]
-            - call: [<.take_ref, sheet]
-            - call: [<.split_ref, tail]
-            - decl: [dst, string, <.ref_id]
-            - call: [<.take_ref, sheet]
-            - if: { condition: { eq: [src, ""] }, then: [{ return: null }] }
-            - if: { condition: { eq: [dst, ""] }, then: [{ return: null }] }
-            - decl: [edge, Edge]
-            - set: [edge.ident, "e${sheet.next_id}"]
-            - set: [edge.from_id, src]
-            - set: [edge.to_id, dst]
-            - set: [edge.line, <.got_line]
-            - set: [edge.head, <.got_head]
-            - set: [edge.tail, <.got_tail]
-            - set: [edge.text, label]
-            - call: [sheet.edges.push, edge]
-            - set: [sheet.next_id, { +: [sheet.next_id, 1] }]
+                      condition: { lt: [found_at, 0] }
+                      then: [{ set: [going, 0] }]
+                      else:
+                        - decl: [begins, i32, <.link_from]
+                        - decl: [after, i32, <.link_to]
+                        - decl: [token, string, { call: [rest.substr, begins, { -: [after, begins] }] }]
+                        - call: [<.decode_link, token]
+                        - decl: [left, string, { call: [rest.substr, 0, begins] }]
+                        - decl: [right, string, { call: [rest.substr, after, { -: [rest.len, after] }] }]
+                        - decl: [label, string, ""]
+                        # `a -->|"text"| b`
+                        - decl: [tail, string, { call: [right.trim] }]
+                        - if:
+                            condition: { eq: [{ call: [tail.starts_with, "|"] }, 1] }
+                            then:
+                              - decl: [bar_rest, string, { call: [tail.substr, 1, { -: [tail.len, 1] }] }]
+                              - decl: [shut, i32, { call: [bar_rest.index_of, "|"] }]
+                              - if:
+                                  condition: { ge: [shut, 0] }
+                                  then:
+                                    - decl: [label_raw, string, { call: [bar_rest.substr, 0, shut] }]
+                                    - set: [label, { call: [<.unquote, label_raw] }]
+                                    - decl: [after_bar, i32, { +: [shut, 1] }]
+                                    - set: [tail, { call: [bar_rest.substr, after_bar, { -: [bar_rest.len, after_bar] }] }]
+                        # `a -- text --> b`
+                        - decl: [head, string, { call: [left.trim] }]
+                        - decl: [dash, i32, { call: [head.index_of, " -- "] }]
+                        - if:
+                            condition: { ge: [dash, 0] }
+                            then:
+                              - decl: [after_dash, i32, { +: [dash, 4] }]
+                              - decl: [inline_raw, string, { call: [head.substr, after_dash, { -: [head.len, after_dash] }] }]
+                              - set: [label, { call: [<.unquote, inline_raw] }]
+                              - set: [head, { call: [head.substr, 0, dash] }]
+                        # the source: carried over from the previous link of the chain
+                        - decl: [src, string, carry]
+                        - if:
+                            condition: { eq: [src, ""] }
+                            then:
+                              - call: [<.split_ref, head]
+                              - set: [src, <.ref_id]
+                              - call: [<.take_ref, sheet]
+                        # the target ends where the NEXT link begins
+                        - decl: [target, string, tail]
+                        - decl: [next_at, i32, { call: [<.link_at, tail] }]
+                        - decl: [leftover, string, ""]
+                        - if:
+                            condition: { ge: [next_at, 0] }
+                            then:
+                              - decl: [stop, i32, <.link_from]
+                              - set: [target, { call: [tail.substr, 0, stop] }]
+                              - set: [leftover, tail]
+                        - call: [<.split_ref, target]
+                        - decl: [dst, string, <.ref_id]
+                        - call: [<.take_ref, sheet]
+                        - if:
+                            condition: { "&&": [{ neq: [src, ""] }, { neq: [dst, ""] }] }
+                            then:
+                              - decl: [edge, Edge]
+                              - set: [edge.ident, "e${sheet.next_id}"]
+                              - set: [edge.from_id, src]
+                              - set: [edge.to_id, dst]
+                              - set: [edge.line, <.got_line]
+                              - set: [edge.head, <.got_head]
+                              - set: [edge.tail, <.got_tail]
+                              - set: [edge.text, label]
+                              - call: [sheet.edges.push, edge]
+                              - set: [sheet.next_id, { +: [sheet.next_id, 1] }]
+                        - if:
+                            condition: { eq: [leftover, ""] }
+                            then: [{ set: [going, 0] }]
+                            else:
+                              - set: [carry, dst]
+                              - set: [rest, leftover]
 
       - def:
           name: read_subgraph

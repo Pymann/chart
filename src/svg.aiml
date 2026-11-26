@@ -159,6 +159,75 @@
                         - set: [out, "${out}${ { call: [<.label_svg, cap, node.text, \"#4a5a6a\"] } }"]
                   - return: out
 
+            # the slanted family: one polygon, the leans decide which (§5.2)
+            - decl: [slant_top, f32, 0.0]
+            - decl: [slant_low, f32, 0.0]
+            - decl: [slanted, i32, 0]
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid] }, then: [{ set: [slanted, 1] }, { set: [slant_top, 0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid_alt] }, then: [{ set: [slanted, 1] }, { set: [slant_low, 0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram] }, then: [{ set: [slanted, 1] }, { set: [slant_top, 0.18] }, { set: [slant_low, -0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram_alt] }, then: [{ set: [slanted, 1] }, { set: [slant_top, -0.18] }, { set: [slant_low, 0.18] }] }
+            - if:
+                condition: { eq: [slanted, 1] }
+                then:
+                  - decl: [right_x, f32, { +: [node.pos_x, node.width] }]
+                  - decl: [low_y, f32, { +: [node.pos_y, node.height] }]
+                  - decl: [top_in, f32, { "*": [node.width, { call: [math.abs, slant_top] }] }]
+                  - decl: [low_in, f32, { "*": [node.width, { call: [math.abs, slant_low] }] }]
+                  - decl: [top_l, f32, { +: [node.pos_x, top_in] }]
+                  - decl: [top_r, f32, { -: [right_x, top_in] }]
+                  - decl: [low_l, f32, { +: [node.pos_x, low_in] }]
+                  - decl: [low_r, f32, { -: [right_x, low_in] }]
+                  - if: { condition: { lt: [slant_top, 0.0] }, then: [{ set: [top_l, node.pos_x] }, { set: [top_r, { -: [right_x, { "*": [top_in, 2.0] }] }] }] }
+                  - if: { condition: { lt: [slant_low, 0.0] }, then: [{ set: [low_l, node.pos_x] }, { set: [low_r, { -: [right_x, { "*": [low_in, 2.0] }] }] }] }
+                  - decl: [pts, string, "${ { call: [<.num, top_l] } },${pos_y} ${ { call: [<.num, top_r] } },${pos_y} ${ { call: [<.num, low_r] } },${ { call: [<.num, low_y] } } ${ { call: [<.num, low_l] } },${ { call: [<.num, low_y] } }"]
+                  - set: [out, "  <polygon points=\"${pts}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+            - if:
+                condition: { eq: [node.kind, NodeKind.asymmetric] }
+                then:
+                  - decl: [right_a, f32, { +: [node.pos_x, node.width] }]
+                  - decl: [low_a, f32, { +: [node.pos_y, node.height] }]
+                  - decl: [notch, f32, { "*": [node.width, 0.16] }]
+                  - decl: [in_x, f32, { +: [node.pos_x, notch] }]
+                  - decl: [mid_a, f32, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+                  - decl: [pts_a, string, "${ { call: [<.num, in_x] } },${pos_y} ${ { call: [<.num, right_a] } },${pos_y} ${ { call: [<.num, right_a] } },${ { call: [<.num, low_a] } } ${ { call: [<.num, in_x] } },${ { call: [<.num, low_a] } } ${pos_x},${ { call: [<.num, mid_a] } }"]
+                  - set: [out, "  <polygon points=\"${pts_a}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+            - if:
+                condition: { eq: [node.kind, NodeKind.double_circle] }
+                then:
+                  - decl: [ring_x, string, { call: [<.num, { /: [node.width, 2.0] }] }]
+                  - decl: [ring_y, string, { call: [<.num, { /: [node.height, 2.0] }] }]
+                  - decl: [in_rx, string, { call: [<.num, { -: [{ /: [node.width, 2.0] }, 6.0] }] }]
+                  - decl: [in_ry, string, { call: [<.num, { -: [{ /: [node.height, 2.0] }, 6.0] }] }]
+                  - decl: [ring_cx, string, { call: [<.num, mid_x] }]
+                  - decl: [ring_cy, string, { call: [<.num, mid_y] }]
+                  - set: [out, "  <ellipse cx=\"${ring_cx}\" cy=\"${ring_cy}\" rx=\"${ring_x}\" ry=\"${ring_y}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <ellipse cx=\"${ring_cx}\" cy=\"${ring_cy}\" rx=\"${in_rx}\" ry=\"${in_ry}\" fill=\"none\" stroke=\"${line}\"/>\n"]
+                  - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+            - if:
+                condition: { eq: [node.kind, NodeKind.actor] }
+                then:
+                  - decl: [head_r, f32, { /: [node.height, 7.0] }]
+                  - decl: [neck, f32, { +: [node.pos_y, { "*": [head_r, 2.0] }] }]
+                  - decl: [hip, f32, { +: [node.pos_y, { "*": [node.height, 0.62] }] }]
+                  - decl: [low_f, f32, { +: [node.pos_y, node.height] }]
+                  - decl: [span, f32, { "*": [node.width, 0.30] }]
+                  - decl: [arm_y, f32, { +: [neck, { "*": [node.height, 0.12] }] }]
+                  - decl: [cen, string, { call: [<.num, mid_x] }]
+                  - set: [out, "  <circle cx=\"${cen}\" cy=\"${ { call: [<.num, { +: [node.pos_y, head_r] }] } }\" r=\"${ { call: [<.num, head_r] } }\" fill=\"none\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <line x1=\"${cen}\" y1=\"${ { call: [<.num, neck] } }\" x2=\"${cen}\" y2=\"${ { call: [<.num, hip] } }\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <line x1=\"${ { call: [<.num, { -: [mid_x, span] }] } }\" y1=\"${ { call: [<.num, arm_y] } }\" x2=\"${ { call: [<.num, { +: [mid_x, span] }] } }\" y2=\"${ { call: [<.num, arm_y] } }\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <line x1=\"${cen}\" y1=\"${ { call: [<.num, hip] } }\" x2=\"${ { call: [<.num, { -: [mid_x, span] }] } }\" y2=\"${ { call: [<.num, low_f] } }\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <line x1=\"${cen}\" y1=\"${ { call: [<.num, hip] } }\" x2=\"${ { call: [<.num, { +: [mid_x, span] }] } }\" y2=\"${ { call: [<.num, low_f] } }\" stroke=\"${line}\"/>\n"]
+                  - decl: [name_box, Node]
+                  - set: [name_box.pos_x, node.pos_x]
+                  - set: [name_box.pos_y, { +: [node.pos_y, node.height] }]
+                  - set: [name_box.width, node.width]
+                  - set: [name_box.height, 22.0]
+                  - return: "${out}${ { call: [<.label_svg, name_box, node.text, ink] } }"
+
             - if:
                 condition: { eq: [node.kind, NodeKind.diamond] }
                 then:

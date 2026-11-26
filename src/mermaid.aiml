@@ -74,6 +74,15 @@
             - if: { condition: { eq: [node.kind, NodeKind.hexagon] },    then: [{ return: "${node.ident}{{\"${label}\"}}" }] }
             - if: { condition: { eq: [node.kind, NodeKind.cylinder] },   then: [{ return: "${node.ident}[(\"${label}\")]" }] }
             - if: { condition: { eq: [node.kind, NodeKind.subroutine] }, then: [{ return: "${node.ident}[[\"${label}\"]]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.asymmetric] }, then: [{ return: "${node.ident}>\"${label}\"]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid] }, then: [{ return: "${node.ident}[/\"${label}\"\\]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid_alt] }, then: [{ return: "${node.ident}[\\\"${label}\"/]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram] }, then: [{ return: "${node.ident}[/\"${label}\"/]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram_alt] }, then: [{ return: "${node.ident}[\\\"${label}\"\\]" }] }
+            - if: { condition: { eq: [node.kind, NodeKind.double_circle] }, then: [{ return: "${node.ident}(((\"${label}\")))" }] }
+            # Mermaid has no actor (§5.7): a stadium is the nearest, and a drawn actor
+            # must not vanish on export
+            - if: { condition: { eq: [node.kind, NodeKind.actor] }, then: [{ return: "${node.ident}([\"${label}\"])" }] }
             - return: "${node.ident}[\"${label}\"]"
 
       # One node line at `depth`, with its colour class appended when it has one.

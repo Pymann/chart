@@ -126,6 +126,61 @@
                         - call: [<.draw_label, cap, label, live]
                   - return: null
 
+            # the slanted family and the stick figure (§5.2)
+            - decl: [slant_top, f32, 0.0]
+            - decl: [slant_low, f32, 0.0]
+            - decl: [slanted, i32, 0]
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid] }, then: [{ set: [slanted, 1] }, { set: [slant_top, 0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid_alt] }, then: [{ set: [slanted, 1] }, { set: [slant_low, 0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram] }, then: [{ set: [slanted, 1] }, { set: [slant_top, 0.18] }, { set: [slant_low, -0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram_alt] }, then: [{ set: [slanted, 1] }, { set: [slant_top, -0.18] }, { set: [slant_low, 0.18] }] }
+            - if:
+                condition: { eq: [slanted, 1] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.slanted, box, slant_top, slant_low]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.asymmetric] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.asymmetric, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.actor] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.actor, box]
+                  - decl: [name_box, Shape]
+                  - set: [name_box.pos_x, box.pos_x]
+                  - set: [name_box.pos_y, { +: [box.pos_y, box.height] }]
+                  - set: [name_box.width, box.width]
+                  - set: [name_box.height, { "*": [22.0, scale] }]
+                  - set: [name_box.tint, { call: [<.pen.ink_for, 0xF2F5F9FF] }]
+                  - call: [<.draw_label, name_box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.double_circle] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.ellipse, box]
+                  - decl: [inner, Shape]
+                  - decl: [gap_in, f32, { "*": [6.0, scale] }]
+                  - set: [inner.pos_x, { +: [box.pos_x, gap_in] }]
+                  - set: [inner.pos_y, { +: [box.pos_y, gap_in] }]
+                  - set: [inner.width, { -: [box.width, { "*": [gap_in, 2.0] }] }]
+                  - set: [inner.height, { -: [box.height, { "*": [gap_in, 2.0] }] }]
+                  - set: [inner.tint, stroke]
+                  - set: [inner.thick, box.thick]
+                  - call: [<.pen.ellipse, inner]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+
             - if:
                 condition: { eq: [node.kind, NodeKind.diamond] }
                 then:

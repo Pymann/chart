@@ -111,6 +111,12 @@ build reads them back. They are therefore `wire: true` (spec/49 §18.2a): the me
 *are* the contract, so an unused one must not warn. A new member is **appended**, never
 inserted: the position is the value on disk.
 
+`actor` is a stick figure. Mermaid has **no** use-case diagram; people draw one as a
+flowchart, with a figure for the actor, an ellipse for the use case and a `subgraph` for
+the system boundary. chart carries the figure as a shape of its own and exports it to
+Mermaid as a `stadium` (§5.7) -- there is nothing closer, and a drawn actor must not
+vanish on export.
+
 `NodeKind.text` is the odd one and is listed last for that reason. It is **prose on the
 slide**, not a box in the graph: drawn with no frame and no fill, left-aligned, and
 skipped by the Mermaid projection (§5.7) because Mermaid has no frameless text. It
@@ -120,7 +126,8 @@ exists so a Markdown file can be read in whole (§18.4) instead of only its diag
 - enum:
     name: NodeKind
     wire: true
-    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text]
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text,
+             asymmetric, trapezoid, trapezoid_alt, parallelogram, parallelogram_alt, double_circle, actor]
 
 # An edge is TWO independent things, and one enum for both was a modelling error:
 # "dotted" and "bidirectional" are not alternatives -- `<-.->` is both at once, and
@@ -222,6 +229,14 @@ exports stays readable.
 | `hexagon` | `n1{{"text"}}` |
 | `cylinder` | `n1[("text")]` |
 | `subroutine` | `n1[["text"]]` |
+| `asymmetric` | `n1>"text"]` |
+| `trapezoid` | `n1[/"text"\]` |
+| `trapezoid_alt` | `n1[\"text"/]` |
+| `parallelogram` | `n1[/"text"/]` |
+| `parallelogram_alt` | `n1[\"text"\]` |
+| `double_circle` | `n1((("text")))` |
+| `actor` | `n1(["text"])` — a stadium, §5.7: Mermaid has no actor |
+| `text` | — not projected at all (§5.7) |
 
 Labels are always quoted and escaped: `"` → `#quot;`, newline → `<br/>`. Quoting
 unconditionally avoids the whole class of bugs where a label containing `(`, `[` or

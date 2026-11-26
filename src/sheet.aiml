@@ -71,6 +71,13 @@
             - if: { condition: { eq: [word, "hexagon"] },    then: [{ return: NodeKind.hexagon }] }
             - if: { condition: { eq: [word, "cylinder"] },   then: [{ return: NodeKind.cylinder }] }
             - if: { condition: { eq: [word, "text"] },       then: [{ return: NodeKind.text }] }
+            - if: { condition: { eq: [word, "asymmetric"] },        then: [{ return: NodeKind.asymmetric }] }
+            - if: { condition: { eq: [word, "trapezoid"] },         then: [{ return: NodeKind.trapezoid }] }
+            - if: { condition: { eq: [word, "trapezoid_alt"] },     then: [{ return: NodeKind.trapezoid_alt }] }
+            - if: { condition: { eq: [word, "parallelogram"] },     then: [{ return: NodeKind.parallelogram }] }
+            - if: { condition: { eq: [word, "parallelogram_alt"] }, then: [{ return: NodeKind.parallelogram_alt }] }
+            - if: { condition: { eq: [word, "double_circle"] },     then: [{ return: NodeKind.double_circle }] }
+            - if: { condition: { eq: [word, "actor"] },             then: [{ return: NodeKind.actor }] }
             - if: { condition: { eq: [word, "subroutine"] }, then: [{ return: NodeKind.subroutine }] }
             - if: { condition: { eq: [word, "image"] },      then: [{ return: NodeKind.image }] }
             - return: -1

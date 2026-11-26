@@ -198,6 +198,70 @@
                   - set: [line_y, { +: [line_y, line_h] }]
                   - set: [idx, { +: [idx, 1] }]
 
+      # The shapes that are polygons (spec §5.2).  `lean` is how far the slanted side
+      # is pushed in, as a fraction of the width, and the sign flips the direction --
+      # a trapezoid and its mirror are one routine with a different sign.
+      - def:
+          name: slanted
+          args: [[box, ref<Shape>], [top_lean, f32], [low_lean, f32]]
+          body:
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [low, f32, { +: [box.pos_y, box.height] }]
+            - decl: [top_in, f32, { "*": [box.width, { call: [math.abs, top_lean] }] }]
+            - decl: [low_in, f32, { "*": [box.width, { call: [math.abs, low_lean] }] }]
+            - decl: [top_l, f32, { +: [box.pos_x, top_in] }]
+            - decl: [top_r, f32, { -: [right, top_in] }]
+            - decl: [low_l, f32, { +: [box.pos_x, low_in] }]
+            - decl: [low_r, f32, { -: [right, low_in] }]
+            - if: { condition: { lt: [top_lean, 0.0] }, then: [{ set: [top_l, box.pos_x] }, { set: [top_r, { -: [right, { "*": [top_in, 2.0] }] }] }] }
+            - if: { condition: { lt: [low_lean, 0.0] }, then: [{ set: [low_l, box.pos_x] }, { set: [low_r, { -: [right, { "*": [low_in, 2.0] }] }] }] }
+            - call: [ui.draw_line, top_l, box.pos_y, top_r, box.pos_y, box.thick, box.tint]
+            - call: [ui.draw_line, top_r, box.pos_y, low_r, low, box.thick, box.tint]
+            - call: [ui.draw_line, low_r, low, low_l, low, box.thick, box.tint]
+            - call: [ui.draw_line, low_l, low, top_l, box.pos_y, box.thick, box.tint]
+
+      # `>text]`: a rect whose left side points inward (spec §5.2).
+      - def:
+          name: asymmetric
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [low, f32, { +: [box.pos_y, box.height] }]
+            - decl: [notch, f32, { "*": [box.width, 0.16] }]
+            - decl: [mid_y, f32, { +: [box.pos_y, { /: [box.height, 2.0] }] }]
+            - decl: [left_in, f32, { +: [box.pos_x, notch] }]
+            - call: [ui.draw_line, left_in, box.pos_y, right, box.pos_y, box.thick, box.tint]
+            - call: [ui.draw_line, right, box.pos_y, right, low, box.thick, box.tint]
+            - call: [ui.draw_line, right, low, left_in, low, box.thick, box.tint]
+            - call: [ui.draw_line, left_in, low, box.pos_x, mid_y, box.thick, box.tint]
+            - call: [ui.draw_line, box.pos_x, mid_y, left_in, box.pos_y, box.thick, box.tint]
+
+      # A stick figure (spec §3.2): head, body, arms, legs.  Use-case drawings need
+      # it and Mermaid has nothing like it, so chart draws it itself.
+      - def:
+          name: actor
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [mid_x, f32, { +: [box.pos_x, { /: [box.width, 2.0] }] }]
+            - decl: [head_r, f32, { /: [box.height, 7.0] }]
+            - decl: [head, Shape]
+            - set: [head.pos_x, { -: [mid_x, head_r] }]
+            - set: [head.pos_y, box.pos_y]
+            - set: [head.width, { "*": [head_r, 2.0] }]
+            - set: [head.height, { "*": [head_r, 2.0] }]
+            - set: [head.tint, box.tint]
+            - set: [head.thick, box.thick]
+            - call: [<.ellipse, head]
+            - decl: [neck, f32, { +: [box.pos_y, { "*": [head_r, 2.0] }] }]
+            - decl: [hip, f32, { +: [box.pos_y, { "*": [box.height, 0.62] }] }]
+            - decl: [low, f32, { +: [box.pos_y, box.height] }]
+            - decl: [span, f32, { "*": [box.width, 0.30] }]
+            - decl: [arm_y, f32, { +: [neck, { "*": [box.height, 0.12] }] }]
+            - call: [ui.draw_line, mid_x, neck, mid_x, hip, box.thick, box.tint]
+            - call: [ui.draw_line, { -: [mid_x, span] }, arm_y, { +: [mid_x, span] }, arm_y, box.thick, box.tint]
+            - call: [ui.draw_line, mid_x, hip, { -: [mid_x, span] }, low, box.thick, box.tint]
+            - call: [ui.draw_line, mid_x, hip, { +: [mid_x, span] }, low, box.thick, box.tint]
+
       # One end cap of a segment (spec §5.3).  `at_head` 1 = at `to`, 0 = at `from`;
       # the direction is taken from the segment itself, so a tail cap is the head's
       # mirror and neither can drift from the line it belongs to.

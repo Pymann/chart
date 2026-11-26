@@ -1,0 +1,22 @@
+# Ein Use-Case-Bild: Akteur, Anwendungsfaelle, Systemgrenze, Generalisierung.
+dtype: flowchart
+dir: LR
+next_id: 9
+groups:
+  - { id: g1, title: "Scanner", parent: "" }
+nodes:
+  - { id: n1, kind: actor,  x: 60,  y: 220, w: 120, h: 150, text: "Entwickler" }
+  - { id: n2, kind: actor,  x: 60,  y: 440, w: 120, h: 150, text: "CI" }
+  - { id: n3, kind: stadium, x: 320, y: 150, w: 260, h: 90, text: "Regeln pruefen", group: g1 }
+  - { id: n4, kind: stadium, x: 320, y: 290, w: 260, h: 90, text: "Metriken messen", group: g1 }
+  - { id: n5, kind: stadium, x: 660, y: 290, w: 260, h: 90, text: "Bericht schreiben", group: g1 }
+  - { id: n6, kind: trapezoid, x: 660, y: 150, w: 260, h: 90, text: "Regelsatz laden" }
+  - { id: n7, kind: double_circle, x: 1000, y: 290, w: 150, h: 150, text: "Ende" }
+edges:
+  - { id: e1, from_id: n1, to_id: n3, head: none }
+  - { id: e2, from_id: n1, to_id: n4, head: none }
+  - { id: e3, from_id: n2, to_id: n4, head: none }
+  - { id: e4, from_id: n3, to_id: n6, line: dotted, head: arrow, text: "include" }
+  - { id: e5, from_id: n4, to_id: n5, head: arrow }
+  - { id: e6, from_id: n2, to_id: n1, head: hollow, text: "ist ein" }
+  - { id: e7, from_id: n5, to_id: n7, head: circle }

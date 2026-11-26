@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" font-family="DejaVu Sans, Helvetica, Arial, sans-serif" font-size="15">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <circle cx="120" cy="241.4" r="21.4" fill="none" stroke="#3a4a5a"/>
+  <line x1="120" y1="262.9" x2="120" y2="313" stroke="#3a4a5a"/>
+  <line x1="84" y1="280.9" x2="156" y2="280.9" stroke="#3a4a5a"/>
+  <line x1="120" y1="313" x2="84" y2="370" stroke="#3a4a5a"/>
+  <line x1="120" y1="313" x2="156" y2="370" stroke="#3a4a5a"/>
+  <text x="120" y="386" fill="#1a2430" text-anchor="middle">Entwickler</text>
+  <circle cx="120" cy="461.4" r="21.4" fill="none" stroke="#3a4a5a"/>
+  <line x1="120" y1="482.9" x2="120" y2="533" stroke="#3a4a5a"/>
+  <line x1="84" y1="500.9" x2="156" y2="500.9" stroke="#3a4a5a"/>
+  <line x1="120" y1="533" x2="84" y2="590" stroke="#3a4a5a"/>
+  <line x1="120" y1="533" x2="156" y2="590" stroke="#3a4a5a"/>
+  <text x="120" y="606" fill="#1a2430" text-anchor="middle">CI</text>
+  <ellipse cx="450" cy="195" rx="130" ry="45" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="450" y="200" fill="#1a2430" text-anchor="middle">Regeln pruefen</text>
+  <ellipse cx="450" cy="335" rx="130" ry="45" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="450" y="340" fill="#1a2430" text-anchor="middle">Metriken messen</text>
+  <ellipse cx="790" cy="335" rx="130" ry="45" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="790" y="340" fill="#1a2430" text-anchor="middle">Bericht schreiben</text>
+  <polygon points="706.8,150 873.2,150 920,240 660,240" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="790" y="200" fill="#1a2430" text-anchor="middle">Regelsatz laden</text>
+  <ellipse cx="1075" cy="365" rx="75" ry="75" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <ellipse cx="1075" cy="365" rx="69" ry="69" fill="none" stroke="#3a4a5a"/>
+  <text x="1075" y="370" fill="#1a2430" text-anchor="middle">Ende</text>
+  <line x1="180" y1="276.8" x2="352.2" y2="224.6" stroke="#55687a" stroke-width="2"/>
+  <line x1="180" y1="302.3" x2="327.3" y2="320.1" stroke="#55687a" stroke-width="2"/>
+  <line x1="180" y1="482.3" x2="380.3" y2="373" stroke="#55687a" stroke-width="2"/>
+  <line x1="580" y1="195" x2="660" y2="195" stroke="#55687a" stroke-width="2" stroke-dasharray="7 6"/>
+  <polygon points="660,195 645.3,188.6 645.3,201.4" fill="#55687a"/>
+  <text x="620" y="195" text-anchor="middle" font-size="13" fill="none" stroke="#ffffff" stroke-width="3">include</text>
+  <text x="620" y="195" text-anchor="middle" font-size="13" fill="#33404d">include</text>
+  <line x1="580" y1="335" x2="660" y2="335" stroke="#55687a" stroke-width="2"/>
+  <polygon points="660,335 645.3,328.6 645.3,341.4" fill="#55687a"/>
+  <line x1="120" y1="440" x2="120" y2="370" stroke="#55687a" stroke-width="2"/>
+  <polygon points="120,370 113.6,384.7 126.4,384.7" fill="#ffffff" stroke="#55687a" stroke-width="2"/>
+  <text x="120" y="405" text-anchor="middle" font-size="13" fill="none" stroke="#ffffff" stroke-width="3">ist ein</text>
+  <text x="120" y="405" text-anchor="middle" font-size="13" fill="#33404d">ist ein</text>
+  <line x1="914.4" y1="348.1" x2="1000" y2="357.1" stroke="#55687a" stroke-width="2"/>
+  <circle cx="993" cy="356.4" r="7" fill="#ffffff" stroke="#55687a" stroke-width="2"/>
+</svg>

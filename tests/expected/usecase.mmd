@@ -1,0 +1,17 @@
+flowchart LR
+    subgraph g1 ["Scanner"]
+        n3(["Regeln pruefen"])
+        n4(["Metriken messen"])
+        n5(["Bericht schreiben"])
+    end
+    n1(["Entwickler"])
+    n2(["CI"])
+    n6[/"Regelsatz laden"\]
+    n7((("Ende")))
+    n1 --- n3
+    n1 --- n4
+    n2 --- n4
+    n3 -.->|"include"| n6
+    n4 --> n5
+    n2 -->|"ist ein"| n1
+    n5 --o n7

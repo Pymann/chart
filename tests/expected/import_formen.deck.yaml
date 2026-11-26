@@ -1,0 +1,19 @@
+title: ""
+slides:
+  - title: ""
+    dtype: flowchart
+    dir: LR
+    next_id: 6
+    nodes:
+      - { id: a, kind: asymmetric, x: 60, y: 90, w: 210, h: 76, text: "asymmetrisch" }
+      - { id: b, kind: trapezoid, x: 382, y: 90, w: 210, h: 76, text: "Trapez" }
+      - { id: c, kind: trapezoid_alt, x: 704, y: 90, w: 210, h: 76, text: "Trapez andersrum" }
+      - { id: d, kind: parallelogram, x: 60, y: 236, w: 210, h: 76, text: "Parallelogramm" }
+      - { id: e, kind: parallelogram_alt, x: 382, y: 236, w: 210, h: 76, text: "Parallelogramm andersrum" }
+      - { id: f, kind: double_circle, x: 704, y: 236, w: 210, h: 76, text: "Doppelkreis" }
+    edges:
+      - { id: e1, from_id: a, to_id: b }
+      - { id: e2, from_id: b, to_id: c }
+      - { id: e3, from_id: c, to_id: d }
+      - { id: e4, from_id: d, to_id: e }
+      - { id: e5, from_id: e, to_id: f }
