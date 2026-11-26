@@ -834,6 +834,7 @@
                             then:
                               - set: [<.sel, ""]
                               - set: [<.sel_edge, near_edge]
+                              - call: [<.drop_ink]
                               - return: null
                         - set: [<.sel, ""]
                         - set: [<.sel_edge, ""]
@@ -881,6 +882,7 @@
                                   condition: { eq: [{ call: [<.grip.on_text, slide, hit, slide_x, slide_y, scale] }, 1] }
                                   then: [{ call: [<.begin_edit, hit] }]
                         - set: [<.sel, hit]
+                        - call: [<.drop_ink]
                         - set: [<.sel_edge, ""]
                         - set: [<.drag_id, hit]
                         - decl: [grab, ref<Node>]
@@ -909,6 +911,7 @@
                       condition: { neq: [on_node, ""] }
                       then:
                         - set: [<.sel, on_node]
+                        - call: [<.drop_ink]
                         - set: [<.sel_edge, ""]
                         - call: [<.menu.open_at, 1, on_node, mouse_x, mouse_y]
                         - return: null
@@ -918,6 +921,7 @@
                       then:
                         - set: [<.sel, ""]
                         - set: [<.sel_edge, on_edge]
+                        - call: [<.drop_ink]
                         - call: [<.menu.open_at, 2, on_edge, mouse_x, mouse_y]
                         - return: null
 
@@ -1248,6 +1252,16 @@
                         - set: [<.status, "Farbe gesetzt"]
                         - return: null
                   - set: [pos, { +: [pos, 1] }]
+
+      # Picking something up ends the drawing (§7.5a): ink that produced nothing is
+      # litter once the author has moved on to arranging.
+      - def:
+          name: drop_ink
+          body:
+            - if: { condition: { eq: [<.ink.count, 0] }, then: [{ return: null }] }
+            - call: [<.ink.clear]
+            - set: [<.read_at, 0]
+            - set: [<.status, "Zeichnung verworfen -- Element gewaehlt"]
 
       - def:
           name: touch

@@ -443,6 +443,13 @@ needs the group, so the group is the unit.
 waiting only for a pause makes a deliberate pause unavoidable. Both are offered, and the
 pause is generous enough to draw two strokes without racing.
 
+**Picking something up ends the drawing** (normative). Selecting a node or an edge
+discards whatever ink is still standing. The ink survives a pause because the author may
+still be drawing; it does not survive a different intent. Strokes that meant nothing and
+were already read keep nothing on the page, but a group that produced nothing stays
+visible until it is read — and if the author has moved on to arranging, that leftover is
+no longer a drawing in progress, it is litter over the slide they are now working on.
+
 #### Reading a group (normative, first match wins)
 
 | | The group | Becomes |
