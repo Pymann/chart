@@ -27,6 +27,10 @@
       # otherwise depends on reading a status line in an 18% wide bar, and the one
       # number that matters there is gone again by the time it is read.
       - [diag, i32, 0]
+      # How long the ink waits before it is read, in milliseconds (spec §7.5a).
+      # Guessed at 1000 and too short in practice: repositioning the pen between two
+      # dashes takes longer than that, and the group was read half-drawn.
+      - [settle, i32, 1600]
 
 - class:
     name: Exporter

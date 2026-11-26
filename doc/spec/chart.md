@@ -356,11 +356,19 @@ Ordered; first match wins. `closed < 0.15` means the stroke returned to its star
 
 | # | Condition | Result |
 |---|---|---|
-| 1 | `closed < 0.15`, `corners == 4`, `fill > 0.80`, corners near axis-aligned | `rect` |
-| 2 | `closed < 0.15`, `corners == 4`, `0.40 < fill < 0.65` | `diamond` |
-| 3 | `closed < 0.15`, `corners == 6`, `fill > 0.70` | `hexagon` |
-| 4 | `closed < 0.15`, `corners <= 1`, `fill > 0.65`, `0.85 < aspect < 1.18` | `circle` |
-| 5 | `closed < 0.15`, `corners <= 1`, `fill > 0.65` | `round` |
+| 1 | `closed < 0.15`, `fill > 0.80` | `rect` |
+| 2 | `closed < 0.15`, `0.36 < fill < 0.68` | `diamond` |
+| 3 | `closed < 0.15`, `0.68 ≤ fill ≤ 0.80`, `corners >= 5` | `hexagon` |
+| 4 | `closed < 0.15`, `0.68 ≤ fill ≤ 0.80`, `0.85 < aspect < 1.18` | `circle` |
+| 5 | `closed < 0.15`, `0.68 ≤ fill ≤ 0.80` | `round` |
+
+**Area decides, not the corner count.** A corner drawn by hand spreads over several
+samples and each one turns only a little, so a corner count built from adjacent samples
+finds none at all — a diamond then has no corners, fails every rule and falls through to
+`rect`. The filled fraction of the bounding box does not care how the corner was sampled:
+a diamond fills half, a circle π/4, a rectangle nearly all. Only hexagon and circle (0.75
+against 0.785) are too close to separate by area, and there the corners decide — measured
+over a window of ±3 samples, not between neighbours.
 | 6 | `closed >= 0.15`, `turn < 1.2 rad`, `path_len > 0.5 * diag` | `arrow` (§7.5) |
 | 7 | otherwise | no match; the stroke is discarded with a visible hint |
 
@@ -404,7 +412,7 @@ A stroke is **not** interpreted when the pen lifts. It stays on the slide as ink
 further strokes join it. The ink is read when either happens:
 
 - the **right mouse button** is pressed, or
-- **one second** passes with nothing drawn.
+- the **settling time** passes with nothing drawn (`--settle`, 1.6 s by default).
 
 Then the whole group is interpreted at once and replaced by what it meant.
 
@@ -424,15 +432,37 @@ pause is generous enough to draw two strokes without racing.
 |---|---|---|
 | 1 | one closed stroke, nothing else | that shape (§7.3) |
 | 2 | one closed stroke, the others inside it | that shape, modified: two near-vertical strokes near its left and right edges → `subroutine`; one near-horizontal stroke in its top quarter → `cylinder` |
-| 3 | no closed stroke, all strokes along one line | one connector between the nodes at the ends of the overall line (§7.5). **More than one stroke → `dotted`**; one stroke → `arrow` when a head was drawn, else `open` |
+| 3 | no closed stroke, all strokes along one line | one connector between the nodes at the ends of the overall line (§7.5). Which kind it is depends on the **lengths**, not the count — see below |
 | 4 | anything else | each stroke read on its own, by the rules above |
+
+#### Dashes, or a line with heads?
+
+Both are several strokes, so counting them cannot tell them apart — a double arrow is
+three strokes exactly like a dotted line is. The **lengths** can: dashes are all a
+similar fraction of the whole, while a line with heads has one stroke carrying most of it.
+
+- longest stroke **> 40 %** of the total length → that stroke is the line; every short
+  stroke whose middle sits near one of the group's ends is a head there. Both ends →
+  `bidirectional`, one → `arrow`, none → `open`.
+- otherwise → `dotted`.
+
+The 40 % is measured, not chosen: three equal dashes put the longest at 33 % of the
+total, while a line with two heads a third of its length sits at 60 %. An earlier 50 %
+threshold failed on a real double arrow at 184 against a half-sum of 183.5 — a tie on
+half a unit, decided the wrong way.
+
+The group's **ends** are the two extreme points along its own direction, not the first
+and last sample. Stroke order then does not matter, which is what lets the first head be
+drawn before the line.
 
 Rule 3 is the whole reason the ink waits: a dotted line is **drawn** dotted, and nothing
 else about it says so.
 
-**Normative — the ink is never half-read.** Either the group is interpreted and the ink is
-gone, or it stays. A group that lost a stroke on the way would leave the author to
-discover which one.
+**Normative — reading never destroys work.** The ink is cleared only when the reading
+produced something. A group that yielded nothing stays on the slide, so drawing a head
+and then taking a moment over the line does not cost the head; the **right button** is
+the explicit discard. Unchanged ink is not read twice — the same verdict every settling
+period is noise, not information.
 
 ### 7.6 Straightening
 
@@ -728,7 +758,7 @@ switches on click.
 
 - A **stencil** click arms a kind; the next canvas click places that node at the cursor in
   the default size and goes straight into label editing (§6).
-- **Drag** a node to move it; drag a handle to resize. Both snap per §7.6.1 when the
+- **Drag** a node to move it; drag the blue halo of the selected node to resize it (§15.1a). Both snap per §7.6.1 when the
   snaps are on.
 - **Click** selects, `Shift+click` adds, a drag on empty canvas is a rubber band,
   `Delete` removes the selection.
@@ -746,6 +776,44 @@ switches on click.
   dangling edge has no Mermaid form (§7.5).
 - An edge is **selected** by clicking near its line, and the bar then sets its kind or
   deletes it. Without that, a wrong arrow could only be fixed in the file.
+
+### 15.1a Handles and the pointer (normative)
+
+**One gesture per pixel.** The rim of an *unselected* node starts a connector (§15.1);
+the blue halo of a *selected* node resizes it. The halo only exists once the node is
+selected, so the two gestures never compete for the same pixel and neither needs a tool
+or a modifier.
+
+**The handle band is 12 sheet units** wide, measured on the sheet and not on the screen,
+so it scales with the zoom exactly as the node does. A band in window pixels would cover
+half a node at a small zoom and a hairline at a large one.
+
+**Resizing pins the opposite edge.** The left handle moves `pos_x` and changes `width`;
+the right one changes `width` alone; top and bottom do the same on the other axis. A
+corner carries both axes at once. A node never shrinks below `40 x 30` sheet units: at
+the minimum the dragged edge stops and the opposite one stays where it was, so a node
+cannot be collapsed to nothing and lost.
+
+**Pointer shapes** (aiml spec/44_0 §2.5):
+
+| Where the pointer is | Shape |
+|---|---|
+| Inside a node — a drag would move it | `crosshair` |
+| On the halo's left or right edge, or on any corner | `resize_ew` |
+| On the halo's top or bottom edge | `resize_ns` |
+| Over a label that is open for typing | `text` |
+| Anywhere else, the action bar included | `arrow` |
+
+A corner gets `resize_ew` because the engine offers six shapes and none of them is
+diagonal. That is a stated compromise, not an oversight: the corner does resize both
+axes, and a cursor that merely names one of them is better than no feedback that the
+pointer has reached a handle.
+
+**`Delete` removes the selection**: the selected edge if one is selected, otherwise the
+selected node **and every edge that touches it**. Deleting a node but keeping its edges
+leaves the sheet pointing at something that is gone, and §5 would then project an edge
+whose endpoint is never declared — invalid Mermaid produced from a sheet that looked
+fine on screen.
 
 ### 15.2 What the canvas owes the rest of the spec
 

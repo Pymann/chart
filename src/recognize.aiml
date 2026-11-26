@@ -21,6 +21,7 @@
       - [corners, i32, 0]
       # open strokes: where the line really ends, and whether a head was drawn
       - [has_head, i32, 0]
+      - [has_tail, i32, 0]   # a head drawn at the START as well
       - [tip_x, f32, 0.0]
       - [tip_y, f32, 0.0]
 
@@ -80,12 +81,16 @@
             - while:
                 condition: { lt: [idx, { -: [count, 1] }] }
                 body:
-                  - decl: [prv_x, f32, { call: [pts.get, { "*": [{ -: [idx, 1] }, 2] }] }]
-                  - decl: [prv_y, f32, { call: [pts.get, { +: [{ "*": [{ -: [idx, 1] }, 2] }, 1] }] }]
+                  - decl: [back, i32, { -: [idx, 3] }]
+                  - if: { condition: { lt: [back, 0] }, then: [{ set: [back, 0] }] }
+                  - decl: [fwd, i32, { +: [idx, 3] }]
+                  - if: { condition: { ge: [fwd, count] }, then: [{ set: [fwd, { -: [count, 1] }] }] }
+                  - decl: [prv_x, f32, { call: [pts.get, { "*": [back, 2] }] }]
+                  - decl: [prv_y, f32, { call: [pts.get, { +: [{ "*": [back, 2] }, 1] }] }]
                   - decl: [cur_x, f32, { call: [pts.get, { "*": [idx, 2] }] }]
                   - decl: [cur_y, f32, { call: [pts.get, { +: [{ "*": [idx, 2] }, 1] }] }]
-                  - decl: [nxt_x, f32, { call: [pts.get, { "*": [{ +: [idx, 1] }, 2] }] }]
-                  - decl: [nxt_y, f32, { call: [pts.get, { +: [{ "*": [{ +: [idx, 1] }, 2] }, 1] }] }]
+                  - decl: [nxt_x, f32, { call: [pts.get, { "*": [fwd, 2] }] }]
+                  - decl: [nxt_y, f32, { call: [pts.get, { +: [{ "*": [fwd, 2] }, 1] }] }]
                   - decl: [ang_a, f32, { call: [math.atan2, { -: [cur_y, prv_y] }, { -: [cur_x, prv_x] }] }]
                   - decl: [ang_b, f32, { call: [math.atan2, { -: [nxt_y, cur_y] }, { -: [nxt_x, cur_x] }] }]
                   - decl: [diff, f32, { -: [ang_b, ang_a] }]
@@ -101,7 +106,7 @@
                             condition: { gt: [mag, 0.87] }
                             then:
                               - set: [corners, { +: [corners, 1] }]
-                              - set: [cooldown, 3]
+                              - set: [cooldown, 5]
                   - set: [idx, { +: [idx, 1] }]
             - set: [out.turn, total]
             - set: [out.corners, corners]
@@ -211,6 +216,7 @@
           args: [[pts, buffer<f32>], [count, i32], [out, ref<Guess>]]
           body:
             - set: [out.has_head, 0]
+            - set: [out.has_tail, 0]
             - if: { condition: { lt: [count, 3] }, then: [{ return: null }] }
             - decl: [first_x, f32, { call: [pts.get, 0] }]
             - decl: [first_y, f32, { call: [pts.get, 1] }]
@@ -227,6 +233,7 @@
             - decl: [best, f32, -1000000.0]
             - decl: [best_x, f32, last_x]
             - decl: [best_y, f32, last_y]
+            - decl: [least, f32, 1000000.0]
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, count] }
@@ -240,6 +247,7 @@
                         - set: [best, along]
                         - set: [best_x, spot_x]
                         - set: [best_y, spot_y]
+                  - if: { condition: { lt: [along, least] }, then: [{ set: [least, along] }] }
                   - set: [idx, { +: [idx, 1] }]
             - decl: [end_along, f32, { +: [{ "*": [{ -: [last_x, first_x] }, dir_x] }, { "*": [{ -: [last_y, first_y] }, dir_y] }] }]
             - decl: [back, f32, { -: [best, end_along] }]
@@ -252,6 +260,11 @@
                   - set: [out.has_head, 1]
                   - set: [out.tip_x, best_x]
                   - set: [out.tip_y, best_y]
+            # the same measurement mirrored: a head at the start means the pen ran
+            # BEHIND the first point before setting off
+            - if:
+                condition: { gt: [{ -: [0.0, least] }, need] }
+                then: [{ set: [out.has_tail, 1] }]
 
       # §7.3: the decision table.  Ordered; first match wins.
       - def:
@@ -281,17 +294,19 @@
                 then: [{ return: 0 }]
 
             - if:
-                condition: { "&&": [{ eq: [out.corners, 4] }, { gt: [out.fill, 0.80] }] }
+                condition: { gt: [out.fill, 0.80] }
                 then: [{ set: [out.kind, NodeKind.rect] }, { set: [out.found, 1] }, { return: 1 }]
             - if:
-                condition: { "&&": [{ eq: [out.corners, 4] }, { "&&": [{ gt: [out.fill, 0.38] }, { lt: [out.fill, 0.68] }] }] }
+                condition: { "&&": [{ gt: [out.fill, 0.36] }, { lt: [out.fill, 0.68] }] }
                 then: [{ set: [out.kind, NodeKind.diamond] }, { set: [out.found, 1] }, { return: 1 }]
             - if:
-                condition: { "&&": [{ ge: [out.corners, 5] }, { "&&": [{ le: [out.corners, 7] }, { gt: [out.fill, 0.70] }] }] }
-                then: [{ set: [out.kind, NodeKind.hexagon] }, { set: [out.found, 1] }, { return: 1 }]
-            - if:
-                condition: { "&&": [{ le: [out.corners, 1] }, { gt: [out.fill, 0.62] }] }
+                condition: { "&&": [{ ge: [out.fill, 0.68] }, { le: [out.fill, 0.80] }] }
                 then:
+                  # a regular hexagon fills 0.75 of its box and a circle 0.785 -- too
+                  # close to separate by area, so here the corners do decide
+                  - if:
+                      condition: { ge: [out.corners, 5] }
+                      then: [{ set: [out.kind, NodeKind.hexagon] }, { set: [out.found, 1] }, { return: 1 }]
                   - decl: [ratio, f32, { /: [out.width, out.height] }]
                   - if:
                       condition: { "&&": [{ gt: [ratio, 0.85] }, { lt: [ratio, 1.18] }] }

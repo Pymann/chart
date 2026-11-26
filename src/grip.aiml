@@ -1,0 +1,214 @@
+# The resize handle on a selected node, and the shape of the pointer
+# (doc/spec/chart.md §15.1a).
+#
+# Its own class for the same reason as pen.aiml: none of this touches editor state --
+# it reads a sheet and a point -- and one file may not pass 1499 lines (aiml spec/49 §3).
+
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: Grip
+    description: "Resize handles on the selected node, and the pointer's shape"
+    members:
+      - [hor, i32]          # -1 left edge, +1 right edge, 0 neither
+      - [ver, i32]          # -1 top edge, +1 bottom edge, 0 neither
+      - [held, string]      # node being resized, "" = no resize running
+      - [org_x, f32]
+      - [org_y, f32]
+      - [org_w, f32]
+      - [org_h, f32]
+      - [grab_x, f32]
+      - [grab_y, f32]
+    methods:
+      # Does the point sit on the selected node's halo?  Sets hor/ver as a side
+      # effect, which is why nothing else may call it while a resize runs.
+      - def:
+          name: sense
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - set: [<.hor, 0]
+            - set: [<.ver, 0]
+            - if: { condition: { eq: [ident, ""] }, then: [{ return: 0 }] }
+            - decl: [band, f32, 12.0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - decl: [left, f32, node.pos_x]
+                        - decl: [right, f32, { +: [node.pos_x, node.width] }]
+                        - decl: [top, f32, node.pos_y]
+                        - decl: [bottom, f32, { +: [node.pos_y, node.height] }]
+                        # outside the inflated box there is no halo to be on
+                        - if: { condition: { lt: [at_x, { -: [left, band] }] }, then: [{ return: 0 }] }
+                        - if: { condition: { gt: [at_x, { +: [right, band] }] }, then: [{ return: 0 }] }
+                        - if: { condition: { lt: [at_y, { -: [top, band] }] }, then: [{ return: 0 }] }
+                        - if: { condition: { gt: [at_y, { +: [bottom, band] }] }, then: [{ return: 0 }] }
+                        - decl: [gap_l, f32, { call: [math.abs, { -: [at_x, left] }] }]
+                        - decl: [gap_r, f32, { call: [math.abs, { -: [at_x, right] }] }]
+                        - decl: [gap_t, f32, { call: [math.abs, { -: [at_y, top] }] }]
+                        - decl: [gap_b, f32, { call: [math.abs, { -: [at_y, bottom] }] }]
+                        # the nearer of the two opposite edges wins, so a narrow node
+                        # does not answer "left and right at once"
+                        - if:
+                            condition: { "&&": [{ lt: [gap_l, band] }, { le: [gap_l, gap_r] }] }
+                            then: [{ set: [<.hor, -1] }]
+                        - if:
+                            condition: { "&&": [{ eq: [<.hor, 0] }, { lt: [gap_r, band] }] }
+                            then: [{ set: [<.hor, 1] }]
+                        - if:
+                            condition: { "&&": [{ lt: [gap_t, band] }, { le: [gap_t, gap_b] }] }
+                            then: [{ set: [<.ver, -1] }]
+                        - if:
+                            condition: { "&&": [{ eq: [<.ver, 0] }, { lt: [gap_b, band] }] }
+                            then: [{ set: [<.ver, 1] }]
+                        - if:
+                            condition: { "&&": [{ eq: [<.hor, 0] }, { eq: [<.ver, 0] }] }
+                            then: [{ return: 0 }]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0
+
+      - def:
+          name: active
+          static_off: ["str_cmp"]
+          return: i32
+          body:
+            - if: { condition: { eq: [<.held, ""] }, then: [{ return: 0 }] }
+            - return: 1
+
+      # A press on the halo captures the rect as it was: every later frame measures
+      # against the press, so a resize cannot drift by accumulating rounding.
+      - def:
+          name: start
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [{ call: [<.sense, slide, ident, at_x, at_y] }, 0] }, then: [{ return: 0 }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - set: [<.org_x, node.pos_x]
+                        - set: [<.org_y, node.pos_y]
+                        - set: [<.org_w, node.width]
+                        - set: [<.org_h, node.height]
+                        - set: [<.grab_x, at_x]
+                        - set: [<.grab_y, at_y]
+                        - set: [<.held, ident]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0
+
+      - def:
+          name: drag
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [at_x, f32], [at_y, f32]]
+          body:
+            - if: { condition: { eq: [<.held, ""] }, then: [{ return: null }] }
+            - decl: [run_x, f32, { -: [at_x, <.grab_x] }]
+            - decl: [run_y, f32, { -: [at_y, <.grab_y] }]
+            - decl: [new_x, f32, <.org_x]
+            - decl: [new_y, f32, <.org_y]
+            - decl: [new_w, f32, <.org_w]
+            - decl: [new_h, f32, <.org_h]
+            - if:
+                condition: { eq: [<.hor, -1] }
+                then:
+                  - set: [new_x, { +: [<.org_x, run_x] }]
+                  - set: [new_w, { -: [<.org_w, run_x] }]
+            - if: { condition: { eq: [<.hor, 1] }, then: [{ set: [new_w, { +: [<.org_w, run_x] }] }] }
+            - if:
+                condition: { eq: [<.ver, -1] }
+                then:
+                  - set: [new_y, { +: [<.org_y, run_y] }]
+                  - set: [new_h, { -: [<.org_h, run_y] }]
+            - if: { condition: { eq: [<.ver, 1] }, then: [{ set: [new_h, { +: [<.org_h, run_y] }] }] }
+            # §15.1a: at the minimum the dragged edge stops, the opposite one stays put
+            - if:
+                condition: { lt: [new_w, 40.0] }
+                then:
+                  - set: [new_w, 40.0]
+                  - if: { condition: { eq: [<.hor, -1] }, then: [{ set: [new_x, { -: [{ +: [<.org_x, <.org_w] }, 40.0] }] }] }
+            - if:
+                condition: { lt: [new_h, 30.0] }
+                then:
+                  - set: [new_h, 30.0]
+                  - if: { condition: { eq: [<.ver, -1] }, then: [{ set: [new_y, { -: [{ +: [<.org_y, <.org_h] }, 30.0] }] }] }
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                  - if:
+                      condition: { eq: [node.ident, <.held] }
+                      then:
+                        - set: [node.pos_x, new_x]
+                        - set: [node.pos_y, new_y]
+                        - set: [node.width, new_w]
+                        - set: [node.height, new_h]
+                        - return: null
+                  - set: [pos, { +: [pos, 1] }]
+
+      - def:
+          name: stop
+          body:
+            - set: [<.held, ""]
+
+      # The pointer names what a drag from here would do (§15.1a).  Called every
+      # frame; input.set_cursor is a no-op when the shape has not changed.
+      - def:
+          name: point
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32]]
+          body:
+            - decl: [name, string, "arrow"]
+            - decl: [on_grip, i32, 0]
+            - if:
+                condition: { neq: [<.held, ""] }
+                then: [{ set: [on_grip, 1] }]
+                else: [{ set: [on_grip, { call: [<.sense, slide, ident, at_x, at_y] }] }]
+            - if:
+                condition: { eq: [on_grip, 1] }
+                then:
+                  - if: { condition: { neq: [<.hor, 0] }, then: [{ set: [name, "resize_ew"] }], else: [{ set: [name, "resize_ns"] }] }
+                  - call: [input.set_cursor, name]
+                  - return: null
+            - if:
+                condition: { eq: [{ call: [<.inside, slide, at_x, at_y] }, 1] }
+                then: [{ set: [name, "crosshair"] }]
+            - call: [input.set_cursor, name]
+
+      # Its own point-in-rect test rather than the editor's node_at: the grip must not
+      # reach back into the editor, or the two classes stop being separable.
+      - def:
+          name: inside
+          args: [[slide, ref<Sheet>], [at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - decl: [in_x, i32, 0]
+                  - decl: [in_y, i32, 0]
+                  - if:
+                      condition: { "&&": [{ ge: [at_x, node.pos_x] }, { le: [at_x, { +: [node.pos_x, node.width] }] }] }
+                      then: [{ set: [in_x, 1] }]
+                  - if:
+                      condition: { "&&": [{ ge: [at_y, node.pos_y] }, { le: [at_y, { +: [node.pos_y, node.height] }] }] }
+                      then: [{ set: [in_y, 1] }]
+                  - if: { condition: { "&&": [{ eq: [in_x, 1] }, { eq: [in_y, 1] }] }, then: [{ return: 1 }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0

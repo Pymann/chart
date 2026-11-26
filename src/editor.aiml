@@ -6,6 +6,7 @@
 - import: "src/runtime.aiml"
 - import: "src/ink.aiml"
 - import: "src/pen.aiml"
+- import: "src/grip.aiml"
 
 - class:
     name: Editor
@@ -17,6 +18,7 @@
       - [exporter, ref<Exporter>]
       - [ink, ref<Ink>]
       - [pen, ref<Pen>]
+      - [grip, ref<Grip>]
       - [deck, Deck]
       - [deck_path, string]
       - [armed, i32]                    # NodeKind to place on the next canvas click, -1 = none
@@ -35,6 +37,8 @@
       - [last_scale, f32]               # slide scale of the last frame, for auto-grow
       - [diag, string]                  # --diag: Klickprotokoll
       - [diag_on, i32]                  # --diag 1
+      - [settle, f64]                   # seconds the ink waits (spec §7.5a)
+      - [read_at, i32]                  # ink size when it was last read
       - [bar_hov, i32]                  # DIAGNOSE: sieht die Leiste den Zeiger?
       - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [textures, map<string:gl_texture>]
@@ -223,6 +227,14 @@
                               - decl: [head, f32, { "*": [16.0, scale] }]
                               - call: [ui.draw_line, tip_x, tip_y, { +: [tip_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { +: [tip_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, 2.0, 0x55687AFF]
                               - call: [ui.draw_line, tip_x, tip_y, { +: [tip_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { +: [tip_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, thick, tint]
+                              # a double-headed edge is drawn with both heads --
+                              # otherwise it is recognised, exported and stored as
+                              # bidirectional while looking one-sided on the slide
+                              - if:
+                                  condition: { eq: [edge.kind, EdgeKind.bidirectional] }
+                                  then:
+                                    - call: [ui.draw_line, tail_x, tail_y, { -: [tail_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { -: [tail_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, thick, tint]
+                                    - call: [ui.draw_line, tail_x, tail_y, { -: [tail_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { -: [tail_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, thick, tint]
                               - if:
                                   condition: { neq: [edge.text, ""] }
                                   then:
@@ -541,6 +553,19 @@
                       then:
                         - decl: [cur_del, i32, <.deck.current]
                         - decl: [slide_del, ref<Sheet>, { at: [<.deck.slides, cur_del] }]
+                        # its edges go with it: a kept edge names an endpoint that is
+                        # gone, and §5 would project Mermaid that never declares it.
+                        # Backwards, so a removal does not skip the next edge.
+                        - decl: [cut, i32, { -: [slide_del.edges.len, 1] }]
+                        - while:
+                            condition: { ge: [cut, 0] }
+                            body:
+                              - decl: [edge_c, ref<Edge>, { at: [slide_del.edges, cut] }]
+                              - decl: [touches, i32, 0]
+                              - if: { condition: { eq: [edge_c.from_id, <.sel] }, then: [{ set: [touches, 1] }] }
+                              - if: { condition: { eq: [edge_c.to_id, <.sel] }, then: [{ set: [touches, 1] }] }
+                              - if: { condition: { eq: [touches, 1] }, then: [{ call: [slide_del.edges.remove, cut] }] }
+                              - set: [cut, { -: [cut, 1] }]
                         - decl: [pos, i32, 0]
                         - while:
                             condition: { lt: [pos, slide_del.nodes.len] }
@@ -704,6 +729,15 @@
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
             - decl: [over_canvas, i32, 1]
             - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ set: [over_canvas, 0] }] }
+            # ── the pointer says what a drag from here would do (spec §15.1a) ─
+            - if:
+                condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
+                then: [{ call: [input.set_cursor, "arrow"] }]
+                else:
+                  - if:
+                      condition: { eq: [<.editing, 1] }
+                      then: [{ call: [input.set_cursor, "text"] }]
+                      else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y] }]
             # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
             # meine bisherige Diagnose hing an PRESSED.
             - decl: [down_now, i32, { call: [input.mouse_pressed, 0] }]
@@ -725,6 +759,16 @@
                   # A press anywhere commits an open label first (spec §6): the next
                   # stroke must not silently discard what was just typed.
                   - if: { condition: { eq: [<.editing, 1] }, then: [{ call: [<.commit_label] }] }
+                  # the blue halo resizes (spec §15.1a).  Only with no explicit tool
+                  # or the freehand default: an armed stencil still places.
+                  - if:
+                      condition: { "||": [{ eq: [<.armed, -1] }, { eq: [<.armed, 101] }] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [<.grip.start, slide, <.sel, slide_x, slide_y] }, 1] }
+                            then:
+                              - set: [<.status, "Groesse ziehen"]
+                              - return: null
                   # freehand (spec §7): press starts the stroke
                   - if:
                       condition: { eq: [<.armed, 101] }
@@ -836,11 +880,22 @@
                 then:
                   - decl: [now, f64, { call: [engine.time] }]
                   - decl: [idle, f64, { -: [now, <.ink.last] }]
+                  # Re-reading unchanged ink would repeat the same verdict every
+                  # settle period -- and did, three times over in the log.
+                  - decl: [fresh_ink, i32, 0]
+                  - if: { condition: { neq: [<.ink.count, <.read_at] }, then: [{ set: [fresh_ink, 1] }] }
                   - if:
-                      condition: { "||": [{ call: [input.mouse_pressed, 1] }, { gt: [idle, 1.0] }] }
+                      condition: { "||": [{ call: [input.mouse_pressed, 1] }, { "&&": [{ eq: [fresh_ink, 1] }, { gt: [idle, <.settle] }] }] }
                       then:
-                        - call: [<.read_ink, slide]
-                        - call: [<.ink.clear]
+                        - set: [<.read_at, <.ink.count]
+                        - decl: [made, i32, { call: [<.read_ink, slide] }]
+                        # A group that produced nothing is KEPT: drawing a head first
+                        # and then taking a moment over the line must not cost the
+                        # head. The right button is the explicit discard.
+                        - if:
+                            condition: { "||": [{ gt: [made, 0] }, { call: [input.mouse_pressed, 1] }] }
+                            then: [{ call: [<.ink.clear] }, { set: [<.read_at, 0] }]
+                            else: [{ set: [<.ink.last, { call: [engine.time] }] }]
                         - return: null
 
             # ── freehand: collect while held (spec §7.5a) ─────────────────────
@@ -887,6 +942,16 @@
                   - set: [<.drag_id, ""]
                   - return: null
 
+            # ── resize by the halo (spec §15.1a) ─────────────────────────────
+            - if:
+                condition: { eq: [{ call: [<.grip.active] }, 1] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [input.mouse_button, 0] }, 0] }
+                      then: [{ call: [<.grip.stop] }, { return: null }]
+                  - call: [<.grip.drag, slide, slide_x, slide_y]
+                  - return: null
+
             # ── drag a node ──────────────────────────────────────────────────
             - if:
                 condition: { eq: [{ call: [input.mouse_button, 0] }, 0] }
@@ -907,6 +972,67 @@
                               - set: [pos, slide.nodes.len]
                         - set: [pos, { +: [pos, 1] }]
 
+      - def:
+          name: log_ink
+          static_off: ["same_arg", "str_cmp"]
+          args: [[what, string], [shape, ref<Guess>], [total, i32]]
+          body:
+            - if: { condition: { eq: [<.diag_on, 0] }, then: [{ return: null }] }
+            # The percentages are computed first: a `"*"` inside a double-quoted
+            # scalar ends that scalar, and the parser then reports a flow error
+            # 130 characters further along.
+            - decl: [closed_pct, i32, { cast: [{ "*": [shape.closed, 100.0] }, i32] }]
+            - decl: [fill_pct, i32, { cast: [{ "*": [shape.fill, 100.0] }, i32] }]
+            - set: [<.diag, "${<.diag}TINTE striche=${total} punkte=${<.ink.count} geschlossen=${closed_pct}% fuellung=${fill_pct}% ecken=${shape.corners} kopf=${shape.has_head} fuss=${shape.has_tail} -> ${what}\n"]
+            - call: [<.exporter.write_file, "diag.log", <.diag]
+
+      # The two ends of the whole group: project every point on the group's own
+      # direction and take the extremes. Taking "first point of the first stroke" and
+      # "tip of the last" assumes the strokes were drawn in order and none overshot --
+      # neither holds for dashes.
+      - def:
+          name: group_ends
+          args: [[ends, ref<Guess>]]
+          body:
+            - if: { condition: { lt: [<.ink.count, 2] }, then: [{ return: null }] }
+            - call: [<.ink.points.seek, 0]
+            - decl: [from_x, f32, { call: [<.ink.points.read, f32] }]
+            - decl: [from_y, f32, { call: [<.ink.points.read, f32] }]
+            - call: [<.ink.points.seek, { "*": [{ -: [<.ink.count, 1] }, 8] }]
+            - decl: [to_x, f32, { call: [<.ink.points.read, f32] }]
+            - decl: [to_y, f32, { call: [<.ink.points.read, f32] }]
+            - decl: [dir_x, f32, { -: [to_x, from_x] }]
+            - decl: [dir_y, f32, { -: [to_y, from_y] }]
+            - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [dir_x, dir_x] }, { "*": [dir_y, dir_y] }] }] }]
+            - if: { condition: { lt: [span, 1.0] }, then: [{ return: null }] }
+            - set: [dir_x, { /: [dir_x, span] }]
+            - set: [dir_y, { /: [dir_y, span] }]
+            - decl: [least, f32, 1000000.0]
+            - decl: [most, f32, -1000000.0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.ink.count] }
+                body:
+                  - call: [<.ink.points.seek, { "*": [idx, 8] }]
+                  - decl: [spot_x, f32, { call: [<.ink.points.read, f32] }]
+                  - decl: [spot_y, f32, { call: [<.ink.points.read, f32] }]
+                  - decl: [along, f32, { +: [{ "*": [spot_x, dir_x] }, { "*": [spot_y, dir_y] }] }]
+                  - if:
+                      condition: { lt: [along, least] }
+                      then: [{ set: [least, along] }, { set: [ends.pos_x, spot_x] }, { set: [ends.pos_y, spot_y] }]
+                  - if:
+                      condition: { gt: [along, most] }
+                      then: [{ set: [most, along] }, { set: [ends.tip_x, spot_x] }, { set: [ends.tip_y, spot_y] }]
+                  - set: [idx, { +: [idx, 1] }]
+
+      - def:
+          name: stroke_span
+          args: [[which, i32]]
+          return: f32
+          body:
+            - decl: [count, i32, { call: [<.ink.copy, which] }]
+            - return: { call: [<.ink.recognizer.path_length, <.ink.scratch, count] }
+
       # ── reading the ink (spec §7.5a) ────────────────────────────────────────
       # Four rules, first match wins.  The group is the unit: a dotted line, a
       # subroutine and a cylinder are each DRAWN with the pen lifted in between, and
@@ -915,9 +1041,10 @@
           name: read_ink
           static_off: ["same_arg", "str_cmp"]
           args: [[slide, ref<Sheet>]]
+          return: i32
           body:
             - decl: [total, i32, <.ink.starts.len]
-            - if: { condition: { eq: [total, 0] }, then: [{ return: null }] }
+            - if: { condition: { eq: [total, 0] }, then: [{ return: 0 }] }
             - decl: [shape, Guess]
             - decl: [closed_count, i32, 0]
             - decl: [first_closed, i32, -1]
@@ -933,34 +1060,83 @@
                         - if: { condition: { lt: [first_closed, 0] }, then: [{ set: [first_closed, idx] }] }
                   - set: [idx, { +: [idx, 1] }]
 
-            # Rule 3: nothing closed -- one connector along the whole ink.  Several
-            # strokes along one line is how a dotted line is drawn, and nothing else
-            # about it says so.
+            # Rule 3: nothing closed -- one connector along the whole ink.
             - if:
                 condition: { eq: [closed_count, 0] }
                 then:
-                  - decl: [first_n, i32, { call: [<.ink.copy, 0] }]
-                  - call: [<.ink.scratch.seek, 0]
-                  - decl: [head_x, f32, { call: [<.ink.scratch.read, f32] }]
-                  - decl: [head_y, f32, { call: [<.ink.scratch.read, f32] }]
-                  - decl: [last_n, i32, { call: [<.ink.copy, { -: [total, 1] }] }]
-                  - call: [<.ink.recognizer.stroke_end, <.ink.scratch, last_n, shape]
-                  - decl: [src, string, { call: [<.node_near, slide, head_x, head_y, 12.0] }]
-                  - decl: [dst, string, { call: [<.node_near, slide, shape.tip_x, shape.tip_y, 12.0] }]
+                  - decl: [ends, Guess]
+                  - call: [<.group_ends, ends]
+                  # Which is it: dashes, or a line with heads drawn on it? A head is a
+                  # SHORT stroke beside a long one. Counting strokes cannot tell the
+                  # two apart, and a double arrow is three strokes just like a dotted
+                  # line is.
+                  - decl: [longest, f32, 0.0]
+                  - decl: [sum_span, f32, 0.0]
+                  - decl: [line_at, i32, 0]
+                  - set: [idx, 0]
+                  - while:
+                      condition: { lt: [idx, total] }
+                      body:
+                        - decl: [one, f32, { call: [<.stroke_span, idx] }]
+                        - set: [sum_span, { +: [sum_span, one] }]
+                        - if:
+                            condition: { gt: [one, longest] }
+                            then: [{ set: [longest, one] }, { set: [line_at, idx] }]
+                        - set: [idx, { +: [idx, 1] }]
+                  - decl: [line_n, i32, { call: [<.ink.copy, line_at] }]
+                  - call: [<.ink.recognizer.stroke_end, <.ink.scratch, line_n, shape]
                   - decl: [kind, i32, EdgeKind.open]
                   - decl: [word, string, "Linie"]
                   - if:
-                      condition: { gt: [total, 1] }
-                      then: [{ set: [kind, EdgeKind.dotted] }, { set: [word, "gepunktete Linie"] }]
+                      condition: { "&&": [{ gt: [total, 1] }, { lt: [longest, { "*": [sum_span, 0.40] }] }] }
+                      then:
+                        # every stroke a similar fraction of the whole: dashes
+                        - set: [kind, EdgeKind.dotted]
+                        - set: [word, "gepunktete Linie"]
                       else:
+                        # one long stroke carries the line; a short stroke whose middle
+                        # sits near an end is the head drawn there
+                        - decl: [head_at_end, i32, shape.has_head]
+                        - decl: [head_at_start, i32, shape.has_tail]
+                        - set: [idx, 0]
+                        - while:
+                            condition: { lt: [idx, total] }
+                            body:
+                              - if:
+                                  condition: { neq: [idx, line_at] }
+                                  then:
+                                    - decl: [mark, Guess]
+                                    - decl: [mark_n, i32, { call: [<.ink.copy, idx] }]
+                                    - decl: [skip, i32, { call: [<.ink.recognizer.guess, <.ink.scratch, mark_n, mark] }]
+                                    - decl: [mid_x, f32, { +: [mark.pos_x, { /: [mark.width, 2.0] }] }]
+                                    - decl: [mid_y, f32, { +: [mark.pos_y, { /: [mark.height, 2.0] }] }]
+                                    - decl: [to_start, f32, { call: [math.sqrt, { +: [{ "*": [{ -: [mid_x, ends.pos_x] }, { -: [mid_x, ends.pos_x] }] }, { "*": [{ -: [mid_y, ends.pos_y] }, { -: [mid_y, ends.pos_y] }] }] }] }]
+                                    - decl: [to_end, f32, { call: [math.sqrt, { +: [{ "*": [{ -: [mid_x, ends.tip_x] }, { -: [mid_x, ends.tip_x] }] }, { "*": [{ -: [mid_y, ends.tip_y] }, { -: [mid_y, ends.tip_y] }] }] }] }]
+                                    - if: { condition: { lt: [to_start, 70.0] }, then: [{ set: [head_at_start, 1] }] }
+                                    - if: { condition: { lt: [to_end, 70.0] }, then: [{ set: [head_at_end, 1] }] }
+                              - set: [idx, { +: [idx, 1] }]
                         - if:
-                            condition: { eq: [shape.has_head, 1] }
-                            then: [{ set: [kind, EdgeKind.arrow] }, { set: [word, "Pfeil"] }]
+                            condition: { "&&": [{ eq: [head_at_end, 1] }, { eq: [head_at_start, 1] }] }
+                            then: [{ set: [kind, EdgeKind.bidirectional] }, { set: [word, "Doppelpfeil"] }]
+                            else:
+                              - if:
+                                  condition: { "||": [{ eq: [head_at_end, 1] }, { eq: [head_at_start, 1] }] }
+                                  then: [{ set: [kind, EdgeKind.arrow] }, { set: [word, "Pfeil"] }]
+                        - set: [shape.has_head, head_at_end]
+                        - set: [shape.has_tail, head_at_start]
+                  # 40 units, not 12: a line is begun beside a shape, not on it
+                  - decl: [src, string, { call: [<.node_near, slide, ends.pos_x, ends.pos_y, 40.0] }]
+                  - decl: [dst, string, { call: [<.node_near, slide, ends.tip_x, ends.tip_y, 40.0] }]
+                  - decl: [made_it, i32, { call: [<.make_edge, slide, src, dst, kind] }]
                   - if:
-                      condition: { eq: [{ call: [<.make_edge, slide, src, dst, kind] }, 1] }
+                      condition: { eq: [made_it, 1] }
                       then: [{ set: [<.status, "${word} erkannt"] }]
-                      else: [{ set: [<.status, "offene Striche, kein Knoten an den Enden"] }]
-                  - return: null
+                      else: [{ set: [<.status, "${word}: kein Knoten an den Enden"] }]
+                  - decl: [long_i, i32, { cast: [longest, i32] }]
+                  - decl: [sum_i, i32, { cast: [sum_span, i32] }]
+                  - decl: [note, string, "${word} von ${src} nach ${dst} laengster=${long_i} summe=${sum_i}"]
+                  - call: [<.log_ink, note, shape, total]
+                  - return: made_it
 
             # Rules 1 and 2: one closed outline, the rest read as marks inside it.
             - if:
@@ -1005,8 +1181,9 @@
                             then: [{ set: [shape.kind, NodeKind.cylinder] }, { set: [word, "Zylinder"] }]
                   - decl: [made, string, { call: [<.make_node, slide, shape] }]
                   - set: [<.status, "${word} erkannt"]
+                  - call: [<.log_ink, word, shape, total]
                   - call: [<.begin_edit, made]
-                  - return: null
+                  - return: 1
 
             # Rule 4: several outlines -- each stroke on its own.
             - set: [idx, 0]
@@ -1022,6 +1199,8 @@
                         - set: [built, { +: [built, 1] }]
                   - set: [idx, { +: [idx, 1] }]
             - set: [<.status, "${built} Formen erkannt"]
+            - call: [<.log_ink, "${built} Formen (Regel 4)", shape, total]
+            - return: built
 
       - def:
           name: make_node
@@ -1258,6 +1437,7 @@
                 then: [{ return: 1 }]
             - call: [<.ink.setup]
             - set: [<.diag_on, opts.diag]
+            - set: [<.settle, { /: [{ cast: [opts.settle, f64] }, 1000.0] }]
             - set: [<.presenting, opts.present]
             - set: [<.show_notes, opts.notes]
             - set: [<.deck.current, { -: [opts.start, 1] }]
@@ -1392,6 +1572,8 @@
         sees: [recognizer]
       - class: Pen
         instance: pen
+      - class: Grip
+        instance: grip
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip]
