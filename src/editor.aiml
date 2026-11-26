@@ -1054,8 +1054,15 @@
                         - if:
                             condition: { "&&": [{ eq: [evt.type, "text"] }, { eq: [holding, 0] }] }
                             then: [{ call: [<.label.insert, evt.char_] }]
+                        # A held key repeats while typing (aiml spec/44_0: `key_repeat`
+                        # is its own event, so the one-press-one-event rule stays
+                        # exact).  Slide navigation deliberately does NOT repeat --
+                        # holding Right would race through the deck.
+                        - decl: [is_key, i32, 0]
+                        - if: { condition: { eq: [evt.type, "key_down"] }, then: [{ set: [is_key, 1] }] }
+                        - if: { condition: { eq: [evt.type, "key_repeat"] }, then: [{ set: [is_key, 1] }] }
                         - if:
-                            condition: { eq: [evt.type, "key_down"] }
+                            condition: { eq: [is_key, 1] }
                             then:
                               - decl: [verdict, i32, { call: [<.label.key, evt.key] }]
                               - if: { condition: { eq: [verdict, 2] }, then: [{ call: [<.commit_label] }] }
