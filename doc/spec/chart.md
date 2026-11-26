@@ -794,15 +794,30 @@ corner carries both axes at once. A node never shrinks below `40 x 30` sheet uni
 the minimum the dragged edge stops and the opposite one stays where it was, so a node
 cannot be collapsed to nothing and lost.
 
+**Every shape but the arrow belongs to the selected node.** A resize or move shape on
+an unselected node would promise a gesture that a press there does not perform: the
+press selects first. The pointer may only offer what the next click actually does.
+
 **Pointer shapes** (aiml spec/44_0 §2.5):
 
 | Where the pointer is | Shape |
 |---|---|
-| Inside a node — a drag would move it | `crosshair` |
 | On the halo's left or right edge, or on any corner | `resize_ew` |
 | On the halo's top or bottom edge | `resize_ns` |
-| Over a label that is open for typing | `text` |
-| Anywhere else, the action bar included | `arrow` |
+| On the selected node's **letters** — a click starts typing | `text` |
+| Elsewhere inside the **selected** node — a drag moves it | `crosshair` |
+| Anywhere else, an unselected node included, the action bar included | `arrow` |
+
+**Typing starts by clicking the letters** of the selected node, not by clicking it
+anywhere: the middle of a node is how it is moved, and a click there must not put a
+caret in. The target is measured with the same two calls `text_block` draws with
+(`ui.measure_text`, `ui.text_height`), so the target *is* the text rather than a guess
+about where the text went. An empty label keeps a caret-sized spot in the middle --
+otherwise a node placed and then left empty could never be typed into again.
+
+**The caret starts at the end** of the existing text: opening a label is for adding to
+it, and a click that silently replaced a label would destroy work with one gesture and
+no warning.
 
 A corner gets `resize_ew` because the engine offers six shapes and none of them is
 diagonal. That is a stated compromise, not an oversight: the corner does resize both

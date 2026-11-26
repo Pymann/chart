@@ -167,10 +167,14 @@
 
       # The pointer names what a drag from here would do (§15.1a).  Called every
       # frame; input.set_cursor is a no-op when the shape has not changed.
+      #
+      # Every shape but the arrow belongs to the SELECTED node: a shape on an
+      # unselected one would promise a gesture that a press there does not perform
+      # -- the press would select first.
       - def:
           name: point
           static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32]]
+          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32], [zoom, f32]]
           body:
             - decl: [name, string, "arrow"]
             - decl: [on_grip, i32, 0]
@@ -185,30 +189,89 @@
                   - call: [input.set_cursor, name]
                   - return: null
             - if:
-                condition: { eq: [{ call: [<.inside, slide, at_x, at_y] }, 1] }
+                condition: { eq: [{ call: [<.on_text, slide, ident, at_x, at_y, zoom] }, 1] }
+                then:
+                  - call: [input.set_cursor, "text"]
+                  - return: null
+            - if:
+                condition: { eq: [{ call: [<.inside, slide, ident, at_x, at_y] }, 1] }
                 then: [{ set: [name, "crosshair"] }]
             - call: [input.set_cursor, name]
 
-      # Its own point-in-rect test rather than the editor's node_at: the grip must not
-      # reach back into the editor, or the two classes stop being separable.
+      # Is the point on the node's own letters?  Measured with the same two calls
+      # text_block draws with, so the target IS the text and not a guess about it.
+      # Those measurements are window pixels at an unscaled font, hence /zoom.
       - def:
-          name: inside
-          args: [[slide, ref<Sheet>], [at_x, f32], [at_y, f32]]
+          name: on_text
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32], [zoom, f32]]
           return: i32
           body:
+            - if: { condition: { eq: [ident, ""] }, then: [{ return: 0 }] }
+            - if: { condition: { lt: [zoom, 0.01] }, then: [{ return: 0 }] }
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, slide.nodes.len] }
                 body:
                   - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
-                  - decl: [in_x, i32, 0]
-                  - decl: [in_y, i32, 0]
                   - if:
-                      condition: { "&&": [{ ge: [at_x, node.pos_x] }, { le: [at_x, { +: [node.pos_x, node.width] }] }] }
-                      then: [{ set: [in_x, 1] }]
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - decl: [lines, list<string>, { call: [node.text.split, "\n"] }]
+                        - decl: [widest, f32, 0.0]
+                        - decl: [row, i32, 0]
+                        - while:
+                            condition: { lt: [row, lines.len] }
+                            body:
+                              - decl: [line, string, { at: [lines, row] }]
+                              - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                              - if: { condition: { gt: [line_w, widest] }, then: [{ set: [widest, line_w] }] }
+                              - set: [row, { +: [row, 1] }]
+                        # an empty label has no letters to aim at, so it keeps a
+                        # caret-sized spot in the middle -- otherwise a node placed
+                        # and then left empty could never be typed into again
+                        - if: { condition: { lt: [widest, 80.0] }, then: [{ set: [widest, 80.0] }] }
+                        - decl: [rows, f32, { cast: [lines.len, f32] }]
+                        - if: { condition: { lt: [rows, 1.0] }, then: [{ set: [rows, 1.0] }] }
+                        - decl: [tall, f32, { "*": [{ call: [ui.text_height] }, rows] }]
+                        - decl: [pad, f32, 4.0]
+                        - decl: [half_w, f32, { +: [{ /: [{ /: [widest, zoom] }, 2.0] }, pad] }]
+                        - decl: [half_h, f32, { +: [{ /: [{ /: [tall, zoom] }, 2.0] }, pad] }]
+                        - decl: [mid_x, f32, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+                        - decl: [mid_y, f32, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+                        - if: { condition: { gt: [{ call: [math.abs, { -: [at_x, mid_x] }] }, half_w] }, then: [{ return: 0 }] }
+                        - if: { condition: { gt: [{ call: [math.abs, { -: [at_y, mid_y] }] }, half_h] }, then: [{ return: 0 }] }
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0
+
+      # Its own point-in-rect test rather than the editor's node_at: the grip must not
+      # reach back into the editor, or the two classes stop being separable.  Only the
+      # named node counts -- see `point`.
+      - def:
+          name: inside
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [ident, ""] }, then: [{ return: 0 }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ ge: [at_y, node.pos_y] }, { le: [at_y, { +: [node.pos_y, node.height] }] }] }
-                      then: [{ set: [in_y, 1] }]
-                  - if: { condition: { "&&": [{ eq: [in_x, 1] }, { eq: [in_y, 1] }] }, then: [{ return: 1 }] }
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - decl: [in_x, i32, 0]
+                        - decl: [in_y, i32, 0]
+                        - if:
+                            condition: { "&&": [{ ge: [at_x, node.pos_x] }, { le: [at_x, { +: [node.pos_x, node.width] }] }] }
+                            then: [{ set: [in_x, 1] }]
+                        - if:
+                            condition: { "&&": [{ ge: [at_y, node.pos_y] }, { le: [at_y, { +: [node.pos_y, node.height] }] }] }
+                            then: [{ set: [in_y, 1] }]
+                        - if: { condition: { "&&": [{ eq: [in_x, 1] }, { eq: [in_y, 1] }] }, then: [{ return: 1 }] }
+                        - return: 0
                   - set: [idx, { +: [idx, 1] }]
             - return: 0

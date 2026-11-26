@@ -733,11 +733,7 @@
             - if:
                 condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
                 then: [{ call: [input.set_cursor, "arrow"] }]
-                else:
-                  - if:
-                      condition: { eq: [<.editing, 1] }
-                      then: [{ call: [input.set_cursor, "text"] }]
-                      else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y] }]
+                else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y, scale] }]
             # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
             # meine bisherige Diagnose hing an PRESSED.
             - decl: [down_now, i32, { call: [input.mouse_pressed, 0] }]
@@ -851,11 +847,16 @@
                               - call: [<.ink.begin_stroke, slide_x, slide_y]
                               - set: [<.status, "Rand gezogen -- auf ein Ziel loslassen"]
                               - return: null
-                        # a click on the ALREADY selected node opens its label -- the
-                        # second click is the intent, and it needs no double-click clock
+                        # typing starts by clicking the LETTERS of the already
+                        # selected node (§15.1a): a click anywhere inside it used to
+                        # open the label, so moving a node by its middle put the
+                        # caret in instead
                         - if:
                             condition: { eq: [hit, <.sel] }
-                            then: [{ call: [<.begin_edit, hit] }]
+                            then:
+                              - if:
+                                  condition: { eq: [{ call: [<.grip.on_text, slide, hit, slide_x, slide_y, scale] }, 1] }
+                                  then: [{ call: [<.begin_edit, hit] }]
                         - set: [<.sel, hit]
                         - set: [<.sel_edge, ""]
                         - set: [<.drag_id, hit]
