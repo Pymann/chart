@@ -1,0 +1,164 @@
+# The right-click menu (doc/spec/chart.md §8.2), and with it colour.
+#
+# Colour is a PALETTE, not a picker (§8.2, normative): ten swatches plus "inherit".
+# §5.6 folds a colour pair used twice into one `classDef`; a free picker would give
+# every box its own near-identical shade and one `style` line each, and the export
+# would stop being readable.
+- import: "src/pen.aiml"
+
+- class:
+    name: Menu
+    description: "Target-sensitive right-click menu with the colour palette (spec §8.2)"
+    members:
+      - [shown, i32]          # 1 = open; while open it claims the pointer (§8.2)
+      - [kind, i32]           # 1 = node, 2 = edge
+      - [ident, string]       # what the menu acts on
+      - [spot_x, f32]         # top-left in WINDOW pixels, like every ui.draw_* call
+      - [spot_y, f32]
+      - [deed, i32]           # what was picked: 0 none, 1 fill, 2 stroke, 3 delete
+      - [tone, i32]           # the colour that goes with deed 1 or 2
+    methods:
+      # Ten colours and "inherit the theme" (0).  Fixed, and fixed in ONE place: the
+      # palette the menu offers has to be the palette the export can fold.
+      - def:
+          name: swatch
+          args: [[slot, i32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [slot, 0] }, then: [{ return: 0 }] }
+            - if: { condition: { eq: [slot, 1] }, then: [{ return: 0xF2F5F9FF }] }
+            - if: { condition: { eq: [slot, 2] }, then: [{ return: 0xFFFFFFFF }] }
+            - if: { condition: { eq: [slot, 3] }, then: [{ return: 0x2E4A7AFF }] }
+            - if: { condition: { eq: [slot, 4] }, then: [{ return: 0x40A0C0FF }] }
+            - if: { condition: { eq: [slot, 5] }, then: [{ return: 0x3E8E5AFF }] }
+            - if: { condition: { eq: [slot, 6] }, then: [{ return: 0xC9A227FF }] }
+            - if: { condition: { eq: [slot, 7] }, then: [{ return: 0xC0504DFF }] }
+            - if: { condition: { eq: [slot, 8] }, then: [{ return: 0x7E57C2FF }] }
+            - if: { condition: { eq: [slot, 9] }, then: [{ return: 0x546E7AFF }] }
+            - return: 0x1A2430FF
+
+      - def:
+          name: open_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[kind, i32], [ident, string], [at_x, f32], [at_y, f32]]
+          body:
+            - set: [<.shown, 1]
+            - set: [<.kind, kind]
+            - set: [<.ident, ident]
+            - set: [<.spot_x, at_x]
+            - set: [<.spot_y, at_y]
+            - set: [<.deed, 0]
+
+      - def:
+          name: close
+          body:
+            - set: [<.shown, 0]
+            - set: [<.deed, 0]
+            - set: [<.ident, ""]
+
+      - def:
+          name: wide
+          return: f32
+          body:
+            - return: 286.0
+
+      - def:
+          name: tall
+          return: f32
+          body:
+            - if: { condition: { eq: [<.kind, 2] }, then: [{ return: 108.0 }] }
+            - return: 152.0
+
+      - def:
+          name: draw
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.shown, 0] }, then: [{ return: null }] }
+            - decl: [box_w, f32, { call: [<.wide] }]
+            - decl: [box_h, f32, { call: [<.tall] }]
+            - call: [ui.draw_rect, <.spot_x, <.spot_y, box_w, box_h, 0x1E2A36FF]
+            - call: [ui.draw_rect, <.spot_x, <.spot_y, box_w, 2.0, 0x2F80EDFF]
+            - decl: [head, string, "Kante"]
+            - if: { condition: { eq: [<.kind, 1] }, then: [{ set: [head, "Knoten"] }] }
+            - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [<.spot_y, 18.0] }, "${head}  ${<.ident}", 0xD8E2ECFF]
+            - decl: [row_y, f32, { +: [<.spot_y, 34.0] }]
+            - if:
+                condition: { eq: [<.kind, 1] }
+                then:
+                  - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [row_y, 12.0] }, "Fuellung", 0x8FA3B4FF]
+                  - call: [<.draw_row, { +: [row_y, 18.0] }]
+                  - set: [row_y, { +: [row_y, 48.0] }]
+            - decl: [line_label, string, "Linie"]
+            - if: { condition: { eq: [<.kind, 1] }, then: [{ set: [line_label, "Rahmen"] }] }
+            - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [row_y, 12.0] }, line_label, 0x8FA3B4FF]
+            - call: [<.draw_row, { +: [row_y, 18.0] }]
+            - decl: [last_y, f32, { +: [{ +: [<.spot_y, box_h] }, -22.0] }]
+            - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [last_y, 14.0] }, "Entfernen", 0xE8A0A0FF]
+
+      # One row of eleven swatches.  The first is "inherit", drawn hollow, because an
+      # empty square is the honest picture of "no colour of its own".
+      - def:
+          name: draw_row
+          args: [[row_y, f32]]
+          body:
+            - decl: [slot, i32, 0]
+            - while:
+                condition: { lt: [slot, 11] }
+                body:
+                  - decl: [left, f32, { +: [{ +: [<.spot_x, 10.0] }, { "*": [{ cast: [slot, f32] }, 24.0] }] }]
+                  - decl: [paint, i32, { call: [<.swatch, slot] }]
+                  - if:
+                      condition: { eq: [paint, 0] }
+                      then:
+                        - call: [ui.draw_rect, left, row_y, 20.0, 20.0, 0x33414EFF]
+                        - call: [ui.draw_text, { +: [left, 5.0] }, { +: [row_y, 15.0] }, "-", 0xC8D4DEFF]
+                      else: [{ call: [ui.draw_rect, left, row_y, 20.0, 20.0, paint] }]
+                  - set: [slot, { +: [slot, 1] }]
+
+      # Did this press land in the menu?  Returns 1 when the menu consumed it --
+      # §8.2 is normative about that: an overlay that draws on top but claims nothing
+      # lets the click fall through, which here would draw a stroke THROUGH the menu.
+      - def:
+          name: press
+          args: [[at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - set: [<.deed, 0]
+            - if: { condition: { eq: [<.shown, 0] }, then: [{ return: 0 }] }
+            - decl: [box_w, f32, { call: [<.wide] }]
+            - decl: [box_h, f32, { call: [<.tall] }]
+            - decl: [inside, i32, 1]
+            - if: { condition: { lt: [at_x, <.spot_x] }, then: [{ set: [inside, 0] }] }
+            - if: { condition: { gt: [at_x, { +: [<.spot_x, box_w] }] }, then: [{ set: [inside, 0] }] }
+            - if: { condition: { lt: [at_y, <.spot_y] }, then: [{ set: [inside, 0] }] }
+            - if: { condition: { gt: [at_y, { +: [<.spot_y, box_h] }] }, then: [{ set: [inside, 0] }] }
+            - if:
+                condition: { eq: [inside, 0] }
+                then:
+                  - call: [<.close]
+                  - return: 0
+            - decl: [slot, i32, { cast: [{ /: [{ -: [at_x, { +: [<.spot_x, 10.0] }] }, 24.0] }, i32] }]
+            - if: { condition: { lt: [slot, 0] }, then: [{ set: [slot, 0] }] }
+            - if: { condition: { gt: [slot, 10] }, then: [{ set: [slot, 10] }] }
+            - decl: [fill_y, f32, { +: [<.spot_y, 52.0] }]
+            - decl: [line_y, f32, { +: [<.spot_y, 52.0] }]
+            - if: { condition: { eq: [<.kind, 1] }, then: [{ set: [line_y, { +: [<.spot_y, 100.0] }] }] }
+            - decl: [low_y, f32, { -: [{ +: [<.spot_y, box_h] }, 22.0] }]
+            - if:
+                condition: { "&&": [{ eq: [<.kind, 1] }, { "&&": [{ ge: [at_y, fill_y] }, { lt: [at_y, { +: [fill_y, 22.0] }] }] }] }
+                then:
+                  - set: [<.deed, 1]
+                  - set: [<.tone, { call: [<.swatch, slot] }]
+                  - return: 1
+            - if:
+                condition: { "&&": [{ ge: [at_y, line_y] }, { lt: [at_y, { +: [line_y, 22.0] }] }] }
+                then:
+                  - set: [<.deed, 2]
+                  - set: [<.tone, { call: [<.swatch, slot] }]
+                  - return: 1
+            - if:
+                condition: { ge: [at_y, low_y] }
+                then:
+                  - set: [<.deed, 3]
+                  - return: 1
+            - return: 1

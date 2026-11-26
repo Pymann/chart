@@ -553,6 +553,13 @@ indicator next to it.
 
 ### 8.2 Right-click menu
 
+**The right button has two jobs, and §7.5a has the first claim.** While unread ink is
+standing on the canvas, the right button *reads* it — that is what the button was given
+to the author for, and taking it away mid-stroke would be the worse surprise. With no
+ink waiting, the same click opens the menu below. This is written down because the two
+sections contradicted each other for a while, and a reader of either one alone would
+have implemented the opposite.
+
 The menu is **target-sensitive** — one menu per thing under the cursor:
 
 | Target | Entries |
@@ -564,6 +571,13 @@ The menu is **target-sensitive** — one menu per thing under the cursor:
 
 Enum-valued entries bind the enum, not a hand-written string list, so a new member
 appears in the menu without a second edit (`ui.spinbox` over `enums.*`).
+
+**Colour is a palette, not a colour picker** (normative): ten fixed swatches plus
+"inherit the theme" (`0`). A sheet whose colours come from a small set stays legible
+when it is exported — §5.6 turns a pair used twice into one `classDef`, and a free
+picker would give every box its own near-identical shade and one `style` line each.
+The author who truly wants `#8a4f2b` writes it in the file; the surface offers the set
+that keeps diagrams readable.
 
 **Normative — the menu claims input.** While open, the menu takes pointer input over
 its own rect: nothing underneath is hovered or clickable, and the wheel scrolls the
@@ -987,8 +1001,12 @@ instead of pretending.
 
 - An import **invents the layout**. The nodes get positions chart computed, not positions
   anyone chose. Importing a diagram that was exported from a sheet does **not** restore
-  that sheet, and must never be sold as a round trip: `sheet -> mmd -> sheet` keeps the
-  structure and loses the arrangement, every time.
+  that sheet: `sheet -> mmd -> sheet` keeps the structure and loses the arrangement,
+  every time.
+- The other direction **is** exact and is tested as such: `mmd -> sheet -> mmd` gives the
+  same bytes back for every file chart wrote, colour included. That is the honest shape
+  of the promise -- what Mermaid can carry survives a round trip, what it cannot was
+  never in the file to begin with.
 - Therefore an import **never writes over the source sheet**. It produces a new sheet,
   and chart refuses to import onto a path that already exists unless asked twice.
 - An import is **deterministic**: the same Mermaid gives the same sheet, byte for byte.
@@ -1012,7 +1030,9 @@ instead of pretending.
 | `a -->\|"label"\| b`, `a -- label --> b` | the edge's `text` |
 | `subgraph id ["title"] … end` | a `Group`, and every node inside carries its id |
 | `<br/>` inside a label | a newline |
-| `classDef`, `style`, `click`, `linkStyle` | not read yet; they are reported as unread, never silently skipped |
+| `classDef NAME fill:#rrggbb,stroke:#rrggbb` + `node:::NAME` | the node's `fill`/`stroke` (§5.6) |
+| `style NODE fill:#rrggbb,stroke:#rrggbb` | the same, for a colour used once |
+| `click`, `linkStyle`, `direction` | reported as unread, never silently skipped |
 
 A node named only in an edge (`a --> b` with no declaration for `b`) is created as a
 `rect` with its id as the label: Mermaid allows it, so refusing it would reject valid
@@ -1032,6 +1052,9 @@ files over a formality.
 - Inside a layer, nodes keep **declaration order** — the order of the file is the only
   ordering information Mermaid carries, and inventing a better one would make the result
   depend on chart's mood rather than on the input.
+- A `classDef` may be declared after the nodes that use it, so colour is applied once the
+  whole file is read. Guessing from the order would lose colour on a file Mermaid itself
+  accepts.
 - Spacing is fixed: a node is `210 x 76`, with `40` between neighbours and `70` between
   layers, and each layer is centred on the page. Fixed numbers, because §18.1 promises
   the same bytes for the same input.

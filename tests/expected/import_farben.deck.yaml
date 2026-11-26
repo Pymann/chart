@@ -1,0 +1,17 @@
+title: ""
+slides:
+  - title: ""
+    dtype: flowchart
+    dir: LR
+    next_id: 4
+    groups:
+      - { id: g1, title: "Auth", parent: "" }
+    nodes:
+      - { id: n2, kind: rect, x: 382, y: 90, w: 210, h: 76, text: "Pruefen", fill: 776633087, stroke: 2005445375, group: g1 }
+      - { id: n3, kind: rect, x: 704, y: 90, w: 210, h: 76, text: "Merken", fill: 776633087, stroke: 2005445375, group: g1 }
+      - { id: n1, kind: stadium, x: 60, y: 90, w: 210, h: 76, text: "In" }
+      - { id: n4, kind: circle, x: 60, y: 236, w: 210, h: 76, text: "Ende", fill: 1084276991, stroke: 255 }
+    edges:
+      - { id: e1, from_id: n1, to_id: n2, kind: arrow }
+      - { id: e2, from_id: n2, to_id: n3, kind: dotted, text: "cache" }
+      - { id: e3, from_id: n3, to_id: n4, kind: thick }

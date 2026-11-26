@@ -9,6 +9,7 @@
 - import: "src/grip.aiml"
 - import: "src/files.aiml"
 - import: "src/reader.aiml"
+- import: "src/menu.aiml"
 
 - class:
     name: Editor
@@ -22,6 +23,7 @@
       - [pen, ref<Pen>]
       - [grip, ref<Grip>]
       - [files, ref<Files>]
+      - [menu, ref<Menu>]
       - [dirty, i32]                   # unsaved changes (spec §16.2)
       - [deck, Deck]
       - [deck_path, string]
@@ -741,6 +743,18 @@
                 else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y, scale] }]
             # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
             # meine bisherige Diagnose hing an PRESSED.
+            # §8.2: while the menu is open it owns the pointer.  An overlay that
+            # draws on top but claims nothing lets the click through -- here that
+            # would draw a stroke THROUGH the menu.
+            - if:
+                condition: { eq: [<.menu.shown, 1] }
+                then:
+                  - if:
+                      condition: { call: [input.mouse_pressed, 0] }
+                      then:
+                        - decl: [took, i32, { call: [<.menu.press, mouse_x, mouse_y] }]
+                        - if: { condition: { eq: [took, 1] }, then: [{ call: [<.menu_deed] }] }
+                  - return: null
             - decl: [down_now, i32, { call: [input.mouse_pressed, 0] }]
             - decl: [up_now, i32, { call: [input.mouse_released, 0] }]
             - decl: [held, i32, { call: [input.mouse_button, 0] }]
@@ -879,6 +893,29 @@
                                     - set: [pos2, slide.nodes.len]
                               - set: [pos2, { +: [pos2, 1] }]
                   - return: null
+
+            # §8.2: with no ink waiting, the right button opens the menu on whatever
+            # is under the cursor.  With ink waiting, §7.5a has the first claim --
+            # that button was given to the author to read the ink.
+            - if:
+                condition: { "&&": [{ call: [input.mouse_pressed, 1] }, { "&&": [{ eq: [<.ink.count, 0] }, { eq: [over_canvas, 1] }] }] }
+                then:
+                  - decl: [on_node, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                  - if:
+                      condition: { neq: [on_node, ""] }
+                      then:
+                        - set: [<.sel, on_node]
+                        - set: [<.sel_edge, ""]
+                        - call: [<.menu.open_at, 1, on_node, mouse_x, mouse_y]
+                        - return: null
+                  - decl: [on_edge, string, { call: [<.edge_at, slide, slide_x, slide_y, 14.0] }]
+                  - if:
+                      condition: { neq: [on_edge, ""] }
+                      then:
+                        - set: [<.sel, ""]
+                        - set: [<.sel_edge, on_edge]
+                        - call: [<.menu.open_at, 2, on_edge, mouse_x, mouse_y]
+                        - return: null
 
             # ── the ink is read on the right button, or after one second ──────
             - if:
@@ -1033,7 +1070,12 @@
           args: [[key, string]]
           body:
             - if: { condition: { eq: [key, "F5"] }, then: [{ set: [<.presenting, 1] }, { set: [<.sel, ""] }, { return: null }] }
-            - if: { condition: { eq: [key, "Escape"] }, then: [{ set: [<.presenting, 0] }, { return: null }] }
+            - if:
+                condition: { eq: [key, "Escape"] }
+                then:
+                  - if: { condition: { eq: [<.menu.shown, 1] }, then: [{ call: [<.menu.close] }, { return: null }] }
+                  - set: [<.presenting, 0]
+                  - return: null
             - decl: [forward, i32, 0]
             - if: { condition: { eq: [key, "Right"] }, then: [{ set: [forward, 1] }] }
             - if: { condition: { eq: [key, "Space"] }, then: [{ set: [forward, 1] }] }
@@ -1116,6 +1158,53 @@
                         - set: [<.status, "Bild: ${kept}"]
                         - return: null
                   - set: [idx, { +: [idx, 1] }]
+
+      # Carry out what the menu picked.  The menu knows the target and the colour;
+      # the sheet is changed here, because the sheet belongs to the editor.
+      - def:
+          name: menu_deed
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.menu.deed, 0] }, then: [{ return: null }] }
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [deed, i32, <.menu.deed]
+            - decl: [tone, i32, <.menu.tone]
+            - decl: [kind, i32, <.menu.kind]
+            - decl: [ident, string, <.menu.ident]
+            - call: [<.menu.close]
+            - if: { condition: { eq: [deed, 3] }, then: [{ call: [<.dispatch, 20] }, { call: [<.touch] }, { return: null }] }
+            - if:
+                condition: { eq: [kind, 2] }
+                then:
+                  - decl: [pos_e, i32, 0]
+                  - while:
+                      condition: { lt: [pos_e, slide.edges.len] }
+                      body:
+                        - decl: [edge, ref<Edge>, { at: [slide.edges, pos_e] }]
+                        - if:
+                            condition: { eq: [edge.ident, ident] }
+                            then:
+                              - set: [edge.stroke, tone]
+                              - call: [<.touch]
+                              - set: [<.status, "Kantenfarbe gesetzt"]
+                              - return: null
+                        - set: [pos_e, { +: [pos_e, 1] }]
+                  - return: null
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - if: { condition: { eq: [deed, 1] }, then: [{ set: [node.fill, tone] }] }
+                        - if: { condition: { eq: [deed, 2] }, then: [{ set: [node.stroke, tone] }] }
+                        - call: [<.touch]
+                        - set: [<.status, "Farbe gesetzt"]
+                        - return: null
+                  - set: [pos, { +: [pos, 1] }]
 
       - def:
           name: touch
@@ -1311,6 +1400,7 @@
                         - decl: [cvs_x, f32, { "*": [win_w, 0.18] }]
                         - decl: [cvs_w, f32, { "*": [win_w, 0.82] }]
                         - call: [<.draw_slide, cvs_x, 0.0, cvs_w, win_h, 0.88]
+                        - call: [<.menu.draw]
                         - call: [<.canvas_input, cvs_x, 0.0, cvs_w, win_h, 0.88]
                         - call: [ui.end_cell]
                         - call: [ui.end_grid]
@@ -1327,38 +1417,11 @@
                             then:
                               - if:
                                   condition: { neq: [shot_path, ""] }
-                                  then: [{ call: [<.capture, shot_path, isize.x, isize.y] }]
+                                  then: [{ call: [<.exporter.capture, shot_path, isize.x, isize.y] }]
                               - call: [engine.swap, win]
                               - return: 0
                   - call: [engine.swap, win]
             - return: 0
-
-      # The final frame as a PNG (same path glbview uses: read_rgba8 + encode_png).
-      - def:
-          name: capture
-          static_off: ["same_arg", "str_cmp"]
-          args: [[file_path, string], [width, i32], [height, i32]]
-          body:
-            - decl: [pixels, buffer<u8>, { call: [gl.read_rgba8, 0, 0, width, height] }]
-            - decl: [png, buffer]
-            - call: [png.alloc, { +: [{ "*": [{ "*": [width, height] }, 5] }, 1024] }]
-            - decl: [written, i32, { call: [png.encode_png, pixels, width, height] }]
-            - if:
-                condition: { le: [written, 0] }
-                then:
-                  - call: [log.error, "chart: ${file_path}: cannot encode the capture"]
-                  - return: null
-            - decl: [out_file, file_handle, { call: [io.open, file_path, "wb"] }]
-            - if:
-                condition: { eq: [out_file, null] }
-                then:
-                  - call: [log.error, "chart: ${file_path}: cannot write the capture"]
-                  - return: null
-            - decl: [stored, i32, { call: [png.write_to, out_file] }]
-            - call: [io.close, out_file]
-            - if:
-                condition: { le: [stored, 0] }
-                then: [{ call: [log.error, "chart: ${file_path}: short write on the capture"] }]
 
 - classgroup:
     name: ChartRuntime
@@ -1391,6 +1454,8 @@
         instance: pen
       - class: Grip
         instance: grip
+      - class: Menu
+        instance: menu
       - class: FileBrowser
         instance: browse
       - class: Files
@@ -1404,4 +1469,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu]

@@ -128,6 +128,23 @@ for fixture in tests/fixture/mmd/*.mmd; do
     fi
 done
 
+# Every file chart EXPORTS must read back and export identically (spec §18.1).
+# This is the one direction that is exact, so it is the one worth pinning.
+for original in tests/expected/*.mmd; do
+    [ -e "$original" ] || continue
+    name=$(basename "$original" .mmd)
+    total=$((total + 1))
+    rm -f "tests/out/rt_$name.deck.yaml" "tests/out/rt_$name.mmd"
+    if "$BIN" --import "$original" --out "tests/out/rt_$name.deck.yaml" >/dev/null 2>&1 \
+       && "$BIN" --deck "tests/out/rt_$name.deck.yaml" --mermaid "tests/out/rt_$name.mmd" >/dev/null 2>&1 \
+       && diff -u "$original" "tests/out/rt_$name.mmd"; then
+        echo "[  OK  ] $name (mmd -> sheet -> mmd)"
+    else
+        echo "[ FAIL ] $name -- the round trip changed the file"
+        failed=$((failed + 1))
+    fi
+done
+
 # An import must refuse to write over a sheet that already exists (§18.1): the
 # layout it invents would replace one somebody arranged.
 total=$((total + 1))

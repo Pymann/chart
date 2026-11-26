@@ -107,6 +107,33 @@
             - decl: [index_page, string, { call: [<.markdown.index_md, deck] }]
             - return: { call: [<.write_file, "${dir_path}/README.md", index_page] }
 
+      # The final frame as a PNG (same path glbview uses: read_rgba8 + encode_png).
+      - def:
+          name: capture
+          static_off: ["same_arg", "str_cmp"]
+          args: [[file_path, string], [width, i32], [height, i32]]
+          body:
+            - decl: [pixels, buffer<u8>, { call: [gl.read_rgba8, 0, 0, width, height] }]
+            - decl: [png, buffer]
+            - call: [png.alloc, { +: [{ "*": [{ "*": [width, height] }, 5] }, 1024] }]
+            - decl: [written, i32, { call: [png.encode_png, pixels, width, height] }]
+            - if:
+                condition: { le: [written, 0] }
+                then:
+                  - call: [log.error, "chart: ${file_path}: cannot encode the capture"]
+                  - return: null
+            - decl: [out_file, file_handle, { call: [io.open, file_path, "wb"] }]
+            - if:
+                condition: { eq: [out_file, null] }
+                then:
+                  - call: [log.error, "chart: ${file_path}: cannot write the capture"]
+                  - return: null
+            - decl: [stored, i32, { call: [png.write_to, out_file] }]
+            - call: [io.close, out_file]
+            - if:
+                condition: { le: [stored, 0] }
+                then: [{ call: [log.error, "chart: ${file_path}: short write on the capture"] }]
+
       # One SVG per slide, named exactly as the Markdown export names its files
       # (spec §17.1), so a directory holding both lines up slide by slide.
       - def:

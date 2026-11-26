@@ -16,6 +16,12 @@
       - [ref_shown, i32]            # 1 = the line declared a shape, 0 = only named it
       - [group_now, string]         # the subgraph being read, "" = top level
       - [unread, string]            # every line chart did not understand
+      - [ref_class, string]         # the `:::klasse` on the reference last read
+      - [class_names, list<string>]  # classDef: the name ...
+      - [class_fill, list<i32>]      # ... and the two colours it carries
+      - [class_line, list<i32>]
+      - [waiting_id, list<string>]   # nodes that named a class ...
+      - [waiting_class, list<string>] # ... before it was necessarily declared
     methods:
       - def:
           name: unquote
@@ -35,6 +41,104 @@
             - set: [out, { call: [out.replace, "#quot;", "\""] }]
             - return: out
 
+      # "#2e4a7a" -> 0x2E4A7AFF.  Mermaid has no alpha (§5.6), so an imported colour
+      # is always opaque -- which is also what the export assumed when it dropped the
+      # alpha byte on the way out.
+      - def:
+          name: hex_colour
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          return: i32
+          body:
+            - decl: [raw, string, { call: [text.trim] }]
+            - if: { condition: { eq: [{ call: [raw.starts_with, "#"] }, 1] }, then: [{ set: [raw, { call: [raw.substr, 1, { -: [raw.len, 1] }] }] }] }
+            - if: { condition: { neq: [raw.len, 6] }, then: [{ return: 0 }] }
+            - decl: [digits, string, "0123456789abcdef"]
+            - decl: [low, string, { call: [raw.lower] }]
+            - decl: [value, i32, 0]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, 6] }
+                body:
+                  - decl: [chr, string, { call: [low.substr, pos, 1] }]
+                  - decl: [worth, i32, { call: [digits.index_of, chr] }]
+                  - if: { condition: { lt: [worth, 0] }, then: [{ return: 0 }] }
+                  - set: [value, { +: [{ "*": [value, 16] }, worth] }]
+                  - set: [pos, { +: [pos, 1] }]
+            # shifted into 0xRRGGBBAA with a full alpha byte
+            - return: { bor: [{ shl: [value, 8] }, 255] }
+
+      # The value of `fill:` or `stroke:` in a classDef/style line.
+      - def:
+          name: attr_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[line, string], [key, string]]
+          return: string
+          body:
+            - decl: [found_at, i32, { call: [line.index_of, "${key}:"] }]
+            - if: { condition: { lt: [found_at, 0] }, then: [{ return: "" }] }
+            - decl: [from, i32, { +: [found_at, { +: [key.len, 1] }] }]
+            - decl: [rest, string, { call: [line.substr, from, { -: [line.len, from] }] }]
+            - decl: [comma, i32, { call: [rest.index_of, ","] }]
+            - if: { condition: { ge: [comma, 0] }, then: [{ set: [rest, { call: [rest.substr, 0, comma] }] }] }
+            - decl: [space, i32, { call: [rest.index_of, " "] }]
+            - if: { condition: { ge: [space, 0] }, then: [{ set: [rest, { call: [rest.substr, 0, space] }] }] }
+            - return: { call: [rest.trim] }
+
+      - def:
+          name: read_classdef
+          static_off: ["same_arg", "str_cmp"]
+          args: [[line, string]]
+          body:
+            - decl: [rest, string, { call: [line.substr, 9, { -: [line.len, 9] }] }]
+            - decl: [body_text, string, { call: [rest.trim] }]
+            - decl: [space, i32, { call: [body_text.index_of, " "] }]
+            - if: { condition: { lt: [space, 0] }, then: [{ return: null }] }
+            - decl: [name, string, { call: [body_text.substr, 0, space] }]
+            - call: [<.class_names.push, name]
+            - call: [<.class_fill.push, { call: [<.hex_colour, { call: [<.attr_of, body_text, "fill"] }] }]
+            - call: [<.class_line.push, { call: [<.hex_colour, { call: [<.attr_of, body_text, "stroke"] }] }]
+
+      - def:
+          name: read_style
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [line, string]]
+          body:
+            - decl: [rest, string, { call: [line.substr, 5, { -: [line.len, 5] }] }]
+            - decl: [body_text, string, { call: [rest.trim] }]
+            - decl: [space, i32, { call: [body_text.index_of, " "] }]
+            - if: { condition: { lt: [space, 0] }, then: [{ return: null }] }
+            - decl: [ident, string, { call: [body_text.substr, 0, space] }]
+            - decl: [slot, i32, { call: [<.node_slot, sheet, ident] }]
+            - if: { condition: { lt: [slot, 0] }, then: [{ return: null }] }
+            - decl: [node, ref<Node>, { at: [sheet.nodes, slot] }]
+            - set: [node.fill, { call: [<.hex_colour, { call: [<.attr_of, body_text, "fill"] }] }]
+            - set: [node.stroke, { call: [<.hex_colour, { call: [<.attr_of, body_text, "stroke"] }] }]
+
+      # classDef may be declared after the nodes that use it, so the pairing waits
+      # until the file is read -- guessing from the order would lose colour on a file
+      # Mermaid itself accepts.
+      - def:
+          name: paint_classes
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          body:
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, <.waiting_id.len] }
+                body:
+                  - decl: [ident, string, { at: [<.waiting_id, pos] }]
+                  - decl: [wanted, string, { at: [<.waiting_class, pos] }]
+                  - decl: [slot, i32, { call: [<.node_slot, sheet, ident] }]
+                  - decl: [known, i32, { call: [<.class_names.index_of, wanted] }]
+                  - if:
+                      condition: { "&&": [{ ge: [slot, 0] }, { ge: [known, 0] }] }
+                      then:
+                        - decl: [node, ref<Node>, { at: [sheet.nodes, slot] }]
+                        - set: [node.fill, { at: [<.class_fill, known] }]
+                        - set: [node.stroke, { at: [<.class_line, known] }]
+                  - set: [pos, { +: [pos, 1] }]
+
       # id + shape + label out of one reference, e.g. `pruef{"ok?"}` or a bare `a1`.
       - def:
           name: split_ref
@@ -43,6 +147,15 @@
           body:
             - decl: [raw, string, { call: [text.trim] }]
             - set: [<.ref_shown, 0]
+            - set: [<.ref_class, ""]
+            - decl: [marked, i32, { call: [raw.index_of, ":::"] }]
+            - if:
+                condition: { ge: [marked, 0] }
+                then:
+                  - decl: [after_mark, i32, { +: [marked, 3] }]
+                  - decl: [class_text, string, { call: [raw.substr, after_mark, { -: [raw.len, after_mark] }] }]
+                  - set: [<.ref_class, { call: [class_text.trim] }]
+                  - set: [raw, { call: [raw.substr, 0, marked] }]
             - set: [<.ref_kind, NodeKind.rect]
             - decl: [cut, i32, -1]
             - decl: [pos, i32, 0]
@@ -122,6 +235,11 @@
                   - set: [known.text, <.ref_text]
                   - if: { condition: { neq: [<.group_now, ""] }, then: [{ set: [known.group, <.group_now] }] }
                   - return: null
+            - if:
+                condition: { neq: [<.ref_class, ""] }
+                then:
+                  - call: [<.waiting_id.push, <.ref_id]
+                  - call: [<.waiting_class.push, <.ref_class]
             - decl: [fresh, Node]
             - set: [fresh.ident, <.ref_id]
             - set: [fresh.kind, <.ref_kind]
@@ -234,6 +352,11 @@
           body:
             - set: [<.unread, ""]
             - set: [<.group_now, ""]
+            - call: [<.class_names.clear]
+            - call: [<.class_fill.clear]
+            - call: [<.class_line.clear]
+            - call: [<.waiting_id.clear]
+            - call: [<.waiting_class.clear]
             - set: [sheet.next_id, 1]
             - decl: [lines, list<string>, { call: [text.split, "\n"] }]
             - decl: [row, i32, 0]
@@ -289,8 +412,16 @@
                       condition: { eq: [done, 0] }
                       then:
                         - decl: [known, i32, 0]
-                        - if: { condition: { eq: [{ call: [line.starts_with, "classDef"] }, 1] }, then: [{ set: [known, 1] }] }
-                        - if: { condition: { eq: [{ call: [line.starts_with, "style"] }, 1] }, then: [{ set: [known, 1] }] }
+                        - if:
+                            condition: { eq: [{ call: [line.starts_with, "classDef"] }, 1] }
+                            then:
+                              - call: [<.read_classdef, line]
+                              - set: [done, 1]
+                        - if:
+                            condition: { "&&": [{ eq: [done, 0] }, { eq: [{ call: [line.starts_with, "style"] }, 1] }] }
+                            then:
+                              - call: [<.read_style, sheet, line]
+                              - set: [done, 1]
                         - if: { condition: { eq: [{ call: [line.starts_with, "linkStyle"] }, 1] }, then: [{ set: [known, 1] }] }
                         - if: { condition: { eq: [{ call: [line.starts_with, "click"] }, 1] }, then: [{ set: [known, 1] }] }
                         - if: { condition: { eq: [{ call: [line.starts_with, "direction"] }, 1] }, then: [{ set: [known, 1] }] }
@@ -312,6 +443,7 @@
                 then:
                   - call: [log.error, "chart: kein 'flowchart'/'graph' in der Datei -- das ist kein Mermaid-Flussdiagramm"]
                   - return: 0
+            - call: [<.paint_classes, sheet]
             - call: [<.lay_out, sheet]
             - return: 1
 
