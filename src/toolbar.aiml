@@ -1,0 +1,157 @@
+# The tool strip (doc/spec/chart.md §8.0): the diagram type, then the shapes.
+#
+# The type sits first because it is the one choice that changes what every other
+# control in the strip means.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: ToolBar
+    description: "Diagram type and the shape palette (spec §8.0)"
+    members:
+      - [deed, i32]               # the action a click produced, 0 = none
+      - [type_open, i32]          # the type dropdown is open
+      - [hot, i32]
+    methods:
+      - def:
+          name: height
+          return: f32
+          body:
+            - return: 46.0
+
+      - def:
+          name: type_width
+          return: f32
+          body:
+            - return: 190.0
+
+      - def:
+          name: shapes
+          return: list<string>
+          body:
+            - decl: [out, list<string>, ["Kasten", "Rund", "Kapsel", "Kreis", "Raute", "Sechseck",
+                                         "Zylinder", "Unterprog.", "Bild", "Text",
+                                         "Asym.", "Trapez", "Trapez2", "Parall.", "Parall2",
+                                         "Doppelkr.", "Akteur"]]
+            - return: out
+
+      - def:
+          name: type_words
+          return: list<string>
+          body:
+            - decl: [out, list<string>, ["Flussdiagramm", "Sequenz", "Zustand", "Klassen"]]
+            - return: out
+
+      - def:
+          name: shape_x
+          args: [[which, i32]]
+          return: f32
+          body:
+            - return: { +: [{ +: [{ call: [<.type_width] }, 16.0] }, { "*": [{ cast: [which, f32] }, 86.0] }] }
+
+      - def:
+          name: draw
+          static_off: ["same_arg", "str_cmp"]
+          args: [[win_w, f32], [top, f32], [dtype, i32], [at_x, f32], [at_y, f32]]
+          body:
+            - decl: [tall, f32, { call: [<.height] }]
+            - call: [ui.draw_rect, 0.0, top, win_w, tall, 0x1E2A36FF]
+            - call: [ui.draw_rect, 0.0, { -: [{ +: [top, tall] }, 1.0] }, win_w, 1.0, 0x2A3744FF]
+            # the diagram type, first (§8.0)
+            - decl: [words, list<string>, { call: [<.type_words] }]
+            - decl: [word, string, "Flussdiagramm"]
+            - if: { condition: { lt: [dtype, words.len] }, then: [{ set: [word, { at: [words, dtype] }] }] }
+            - call: [ui.draw_rect, 8.0, { +: [top, 8.0] }, { call: [<.type_width] }, { -: [tall, 16.0] }, 0x24354AFF]
+            - call: [ui.draw_text, 18.0, { +: [top, 14.0] }, "${word}  v", 0xD8E2ECFF]
+            - decl: [names, list<string>, { call: [<.shapes] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, names.len] }
+                body:
+                  - decl: [name, string, { at: [names, idx] }]
+                  - decl: [left, f32, { call: [<.shape_x, idx] }]
+                  - if:
+                      condition: { lt: [left, { -: [win_w, 80.0] }] }
+                      then:
+                        - decl: [over, i32, 0]
+                        - if:
+                            condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, 80.0] }] }] }
+                            then:
+                              - if:
+                                  condition: { "&&": [{ ge: [at_y, top] }, { lt: [at_y, { +: [top, tall] }] }] }
+                                  then: [{ set: [over, 1] }]
+                        - decl: [paint, i32, 0x24354AFF]
+                        - if: { condition: { eq: [over, 1] }, then: [{ set: [paint, 0x2F4A68FF] }] }
+                        - call: [ui.draw_rect, left, { +: [top, 8.0] }, 80.0, { -: [tall, 16.0] }, paint]
+                        - call: [ui.draw_text, { +: [left, 8.0] }, { +: [top, 14.0] }, name, 0xD8E2ECFF]
+                  - set: [idx, { +: [idx, 1] }]
+            - if: { condition: { eq: [<.type_open, 1] }, then: [{ call: [<.draw_types, top, at_x, at_y] }] }
+
+      - def:
+          name: draw_types
+          static_off: ["same_arg", "str_cmp"]
+          args: [[top, f32], [at_x, f32], [at_y, f32]]
+          body:
+            - decl: [words, list<string>, { call: [<.type_words] }]
+            - decl: [first, f32, { +: [top, { call: [<.height] }] }]
+            - call: [ui.draw_rect, 8.0, first, { call: [<.type_width] }, { +: [{ "*": [{ cast: [words.len, f32] }, 24.0] }, 8.0] }, 0x1E2A36FF]
+            - call: [ui.draw_rect, 8.0, first, { call: [<.type_width] }, 2.0, 0x2F80EDFF]
+            - set: [<.hot, -1]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, words.len] }
+                body:
+                  - decl: [word, string, { at: [words, idx] }]
+                  - decl: [row_y, f32, { +: [{ +: [first, 4.0] }, { "*": [{ cast: [idx, f32] }, 24.0] }] }]
+                  - decl: [over, i32, 0]
+                  - if:
+                      condition: { "&&": [{ ge: [at_x, 8.0] }, { lt: [at_x, { +: [8.0, { call: [<.type_width] }] }] }] }
+                      then:
+                        - if:
+                            condition: { "&&": [{ ge: [at_y, row_y] }, { lt: [at_y, { +: [row_y, 24.0] }] }] }
+                            then: [{ set: [over, 1] }, { set: [<.hot, idx] }]
+                  - if: { condition: { eq: [over, 1] }, then: [{ call: [ui.draw_rect, 8.0, row_y, { call: [<.type_width] }, 24.0, 0x2F4A68FF] }] }
+                  - call: [ui.draw_text, 18.0, { +: [row_y, 4.0] }, word, 0xD8E2ECFF]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # Returns 1 when the press was ours.  Actions: 110+n for a shape -- NOT 10+n
+      # like the left bar, because that range ends at 18 and 20..30 are already the
+      # selection and slide actions; 70+n picks a diagram type.
+      - def:
+          name: press
+          static_off: ["same_arg", "str_cmp"]
+          args: [[at_x, f32], [at_y, f32], [top, f32]]
+          return: i32
+          body:
+            - set: [<.deed, 0]
+            - decl: [tall, f32, { call: [<.height] }]
+            - if:
+                condition: { eq: [<.type_open, 1] }
+                then:
+                  - if:
+                      condition: { ge: [<.hot, 0] }
+                      then:
+                        - set: [<.deed, { +: [70, <.hot] }]
+                        - set: [<.type_open, 0]
+                        - return: 1
+                  - set: [<.type_open, 0]
+                  - return: 1
+            - if: { condition: { lt: [at_y, top] }, then: [{ return: 0 }] }
+            - if: { condition: { ge: [at_y, { +: [top, tall] }] }, then: [{ return: 0 }] }
+            - if:
+                condition: { lt: [at_x, { +: [8.0, { call: [<.type_width] }] }] }
+                then:
+                  - set: [<.type_open, 1]
+                  - return: 1
+            - decl: [names, list<string>, { call: [<.shapes] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, names.len] }
+                body:
+                  - decl: [left, f32, { call: [<.shape_x, idx] }]
+                  - if:
+                      condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, 80.0] }] }] }
+                      then:
+                        - set: [<.deed, { +: [110, idx] }]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 1

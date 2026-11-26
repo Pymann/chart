@@ -1,0 +1,210 @@
+# The menu strip (doc/spec/chart.md §8.0).
+#
+# Drawn, not built from ui.button: a dropdown has to appear OVER the canvas, and a
+# widget in a grid cell cannot leave its cell.  Same approach as the right-click menu
+# (§8.2), including the rule that an open dropdown claims the pointer -- an overlay
+# that draws on top but claims nothing lets the click through to the drawing below.
+- import: "src/pen.aiml"
+
+- class:
+    name: TopBar
+    description: "Datei / Bearbeiten / Ansicht / Einstellungen with dropdowns (spec §8.0)"
+    members:
+      - [shown, i32]              # 1 = a dropdown is open (a member starts at 0,
+                                  #     so "nothing open" has to be the zero)
+      - [open_at, i32]            # which one, when shown
+      - [hot, i32]                # the entry under the pointer, -1 = none (set in draw)
+      - [deed, i32]               # the action a click produced, 0 = none
+      - [strip_h, f32]
+    methods:
+      - def:
+          name: height
+          return: f32
+          body:
+            - return: 28.0
+
+      - def:
+          name: titles
+          return: list<string>
+          body:
+            - decl: [out, list<string>, ["Datei", "Bearbeiten", "Ansicht", "Einstellungen"]]
+            - return: out
+
+      # Each menu is a list of "Label|action" pairs: one place decides what an entry
+      # says AND what it does, so the two cannot drift apart.
+      - def:
+          name: entries_of
+          args: [[menu, i32]]
+          return: list<string>
+          body:
+            - if:
+                condition: { eq: [menu, 0] }
+                then:
+                  - decl: [file_menu, list<string>, ["Oeffnen...|60", "Speichern|1", "Speichern unter...|61",
+                                                     "-|0",
+                                                     "Markdown...|2", "Mermaid...|3", "SVG...|65", "HTML...|66", "PowerPoint...|67"]]
+                  - return: file_menu
+            - if:
+                condition: { eq: [menu, 1] }
+                then:
+                  - decl: [edit_menu, list<string>, ["Beschriften|26", "Bild waehlen...|68", "Entfernen|20",
+                                                     "-|0",
+                                                     "Ueberschrift...|24", "Neue Folie|23"]]
+                  - return: edit_menu
+            - if:
+                condition: { eq: [menu, 2] }
+                then:
+                  - decl: [view_menu, list<string>, ["< Zurueck|21", "Weiter >|22", "-|0", "Praesentieren|30"]]
+                  - return: view_menu
+            - decl: [opt_menu, list<string>, ["frei zeichnen|101", "Pfeil ziehen|100"]]
+            - return: opt_menu
+
+      - def:
+          name: label_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[entry, string]]
+          return: string
+          body:
+            - decl: [bar, i32, { call: [entry.index_of, "|"] }]
+            - if: { condition: { lt: [bar, 0] }, then: [{ return: entry }] }
+            - return: { call: [entry.substr, 0, bar] }
+
+      - def:
+          name: action_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[entry, string]]
+          return: i32
+          body:
+            - decl: [bar, i32, { call: [entry.index_of, "|"] }]
+            - if: { condition: { lt: [bar, 0] }, then: [{ return: 0 }] }
+            - decl: [after, i32, { +: [bar, 1] }]
+            - decl: [digits, string, { call: [entry.substr, after, { -: [entry.len, after] }] }]
+            - return: { call: [digits.parse_i32] }
+
+      - def:
+          name: title_x
+          args: [[which, i32]]
+          return: f32
+          body:
+            - return: { +: [12.0, { "*": [{ cast: [which, f32] }, 118.0] }] }
+
+      - def:
+          name: draw
+          static_off: ["same_arg", "str_cmp"]
+          args: [[win_w, f32], [at_x, f32], [at_y, f32]]
+          body:
+            - call: [ui.draw_rect, 0.0, 0.0, win_w, { call: [<.height] }, 0x182430FF]
+            - call: [ui.draw_rect, 0.0, { -: [{ call: [<.height] }, 1.0] }, win_w, 1.0, 0x2A3744FF]
+            - decl: [names, list<string>, { call: [<.titles] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, names.len] }
+                body:
+                  - decl: [name, string, { at: [names, idx] }]
+                  - decl: [left, f32, { call: [<.title_x, idx] }]
+                  - decl: [over, i32, 0]
+                  - if:
+                      condition: { "&&": [{ ge: [at_x, { -: [left, 8.0] }] }, { lt: [at_x, { +: [left, 110.0] }] }] }
+                      then:
+                        - if: { condition: { lt: [at_y, { call: [<.height] }] }, then: [{ set: [over, 1] }] }
+                  - if: { condition: { "&&": [{ eq: [<.shown, 1] }, { eq: [idx, <.open_at] }] }, then: [{ set: [over, 1] }] }
+                  - if:
+                      condition: { eq: [over, 1] }
+                      then: [{ call: [ui.draw_rect, { -: [left, 8.0] }, 0.0, 118.0, { call: [<.height] }, 0x24354AFF] }]
+                  - call: [ui.draw_text, left, 6.0, name, 0xD8E2ECFF]
+                  - set: [idx, { +: [idx, 1] }]
+            # the dropdown is NOT drawn here: the tool strip is drawn after this and
+            # would paint over its first entries.  The caller draws it last.
+
+      # Drawn last of all, over everything below the strip (spec §8.0).
+      - def:
+          name: draw_open
+          static_off: ["same_arg", "str_cmp"]
+          args: [[at_x, f32], [at_y, f32]]
+          body:
+            - if: { condition: { eq: [<.shown, 0] }, then: [{ return: null }] }
+            - call: [<.draw_drop, at_x, at_y]
+
+      - def:
+          name: draw_drop
+          static_off: ["same_arg", "str_cmp"]
+          args: [[at_x, f32], [at_y, f32]]
+          body:
+            - decl: [items, list<string>, { call: [<.entries_of, <.open_at] }]
+            - decl: [left, f32, { -: [{ call: [<.title_x, <.open_at] }, 8.0] }]
+            - decl: [top, f32, { call: [<.height] }]
+            - decl: [wide, f32, 230.0]
+            - decl: [tall, f32, { "*": [{ cast: [items.len, f32] }, 24.0] }]
+            - call: [ui.draw_rect, left, top, wide, { +: [tall, 8.0] }, 0x1E2A36FF]
+            - call: [ui.draw_rect, left, top, wide, 2.0, 0x2F80EDFF]
+            - set: [<.hot, -1]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, items.len] }
+                body:
+                  - decl: [entry, string, { at: [items, idx] }]
+                  - decl: [row_y, f32, { +: [{ +: [top, 4.0] }, { "*": [{ cast: [idx, f32] }, 24.0] }] }]
+                  - decl: [name, string, { call: [<.label_of, entry] }]
+                  - if:
+                      condition: { eq: [name, "-"] }
+                      then: [{ call: [ui.draw_rect, { +: [left, 8.0] }, { +: [row_y, 11.0] }, { -: [wide, 16.0] }, 1.0, 0x33414EFF] }]
+                      else:
+                        - decl: [over, i32, 0]
+                        - if:
+                            condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, wide] }] }] }
+                            then:
+                              - if:
+                                  condition: { "&&": [{ ge: [at_y, row_y] }, { lt: [at_y, { +: [row_y, 24.0] }] }] }
+                                  then: [{ set: [over, 1] }, { set: [<.hot, idx] }]
+                        - if:
+                            condition: { eq: [over, 1] }
+                            then: [{ call: [ui.draw_rect, left, row_y, wide, 24.0, 0x2F4A68FF] }]
+                        - call: [ui.draw_text, { +: [left, 14.0] }, { +: [row_y, 4.0] }, name, 0xD8E2ECFF]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # A press on the strip or on an open dropdown.  Returns 1 when it was ours --
+      # §8.0: the dropdown owns the pointer while it is open.
+      - def:
+          name: press
+          static_off: ["same_arg", "str_cmp"]
+          args: [[at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - set: [<.deed, 0]
+            - if:
+                condition: { lt: [at_y, { call: [<.height] }] }
+                then:
+                  - decl: [names, list<string>, { call: [<.titles] }]
+                  - decl: [idx, i32, 0]
+                  - while:
+                      condition: { lt: [idx, names.len] }
+                      body:
+                        - decl: [left, f32, { call: [<.title_x, idx] }]
+                        - if:
+                            condition: { "&&": [{ ge: [at_x, { -: [left, 8.0] }] }, { lt: [at_x, { +: [left, 110.0] }] }] }
+                            then:
+                              # clicking the open one closes it, the way a menu bar does
+                              - if:
+                                  condition: { "&&": [{ eq: [<.shown, 1] }, { eq: [<.open_at, idx] }] }
+                                  then: [{ set: [<.shown, 0] }]
+                                  else: [{ set: [<.open_at, idx] }, { set: [<.shown, 1] }]
+                              - return: 1
+                        - set: [idx, { +: [idx, 1] }]
+                  - set: [<.shown, 0]
+                  - return: 1
+            - if: { condition: { eq: [<.shown, 0] }, then: [{ return: 0 }] }
+            # inside the open dropdown?
+            - if:
+                condition: { ge: [<.hot, 0] }
+                then:
+                  - decl: [items, list<string>, { call: [<.entries_of, <.open_at] }]
+                  - if:
+                      condition: { lt: [<.hot, items.len] }
+                      then:
+                        - decl: [entry, string, { at: [items, <.hot] }]
+                        - set: [<.deed, { call: [<.action_of, entry] }]
+                  - set: [<.shown, 0]
+                  - return: 1
+            # anywhere else closes it, and that click does nothing else (§8.2)
+            - set: [<.shown, 0]
+            - return: 1

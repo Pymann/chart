@@ -14,6 +14,8 @@
 - import: "src/clip.aiml"
 - import: "src/script.aiml"
 - import: "src/node_art.aiml"
+- import: "src/topbar.aiml"
+- import: "src/toolbar.aiml"
 
 - class:
     name: Editor
@@ -54,6 +56,8 @@
       - [bar_hov, i32]                  # DIAGNOSE: sieht die Leiste den Zeiger?
       - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [art, ref<NodeArt>]            # draws one node (spec §15.2)
+      - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
+      - [tools, ref<ToolBar>]          # the tool strip
     methods:
       # ── geometry ────────────────────────────────────────────────────────────
       # Scale that fits the 1280x720 page into the canvas rect, with a margin.
@@ -471,6 +475,29 @@
                               - set: [kidx, { +: [kidx, 1] }]
                         - return: null
 
+            # 110+: a shape from the tool strip (§8.0).  Its own range, because
+            # 10..18 ends at 18 and 20..30 are already taken.
+            - if:
+                condition: { ge: [action, 110] }
+                then:
+                  - set: [<.armed, { -: [action, 110] }]
+                  - set: [<.status, "Form gewaehlt -- in die Flaeche klicken"]
+                  - return: null
+            # 70..73: the diagram type (§8.0).  Only flowchart is projected (§1.1),
+            # and the status says so rather than hiding the choice.
+            - if:
+                condition: { "&&": [{ ge: [action, 70] }, { le: [action, 73] }] }
+                then:
+                  - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+                  - decl: [slide_d, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                  - set: [slide_d.dtype, { -: [action, 70] }]
+                  - call: [<.touch]
+                  - if:
+                      condition: { eq: [slide_d.dtype, DiagramType.flowchart] }
+                      then: [{ set: [<.status, "Flussdiagramm"] }]
+                      else: [{ set: [<.status, "nur flowchart wird exportiert (spec 1.1)"] }]
+                  - return: null
+
             # 10..18: arm a stencil.  The next canvas click places it (spec §15.1).
             - if:
                 condition: { ge: [action, 10] }
@@ -630,6 +657,8 @@
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
             - decl: [over_canvas, i32, 1]
             - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ set: [over_canvas, 0] }] }
+            # the strips sit above the canvas (§8.0) and own their rows
+            - if: { condition: { lt: [mouse_y, cvs_y] }, then: [{ set: [over_canvas, 0] }] }
             # ── the pointer says what a drag from here would do (spec §15.1a) ─
             - if:
                 condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
@@ -1351,11 +1380,15 @@
                   - if:
                       condition: { eq: [<.script.running, 1] }
                       then:
+                        # the same rect the canvas gets: the strips took the top of
+                        # the window (§8.0), and a step must land where the slide is
                         - decl: [sc_cvs_x, f32, { "*": [win_w, 0.18] }]
                         - decl: [sc_cvs_w, f32, { "*": [win_w, 0.82] }]
-                        - decl: [sc_scale, f32, { call: [<.fit_scale, sc_cvs_w, win_h, 0.88] }]
+                        - decl: [sc_top, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
+                        - decl: [sc_cvs_h, f32, { -: [win_h, sc_top] }]
+                        - decl: [sc_scale, f32, { call: [<.fit_scale, sc_cvs_w, sc_cvs_h, 0.88] }]
                         - decl: [sc_org_x, f32, { +: [sc_cvs_x, { /: [{ -: [sc_cvs_w, { "*": [1280.0, sc_scale] }] }, 2.0] }] }]
-                        - decl: [sc_org_y, f32, { /: [{ -: [win_h, { "*": [720.0, sc_scale] }] }, 2.0] }]
+                        - decl: [sc_org_y, f32, { +: [sc_top, { /: [{ -: [sc_cvs_h, { "*": [720.0, sc_scale] }] }, 2.0] }] }]
                         - decl: [verdict, i32, { call: [<.script.tick, sc_org_x, sc_org_y, sc_scale] }]
                         - if: { condition: { eq: [verdict, 2] }, then: [{ call: [<.save_deck, ""] }] }
                         # verdict 3 = shot: taken at the end of the frame, below
@@ -1391,12 +1424,37 @@
                         - call: [ui.begin_cell, 1, 0, 1, 1]
                         - decl: [cvs_x, f32, { "*": [win_w, 0.18] }]
                         - decl: [cvs_w, f32, { "*": [win_w, 0.82] }]
-                        - call: [<.draw_slide, cvs_x, 0.0, cvs_w, win_h, 0.88]
+                        - decl: [strip_h, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
+                        - call: [<.draw_slide, cvs_x, strip_h, cvs_w, { -: [win_h, strip_h] }, 0.88]
                         - call: [<.menu.draw]
-
-                        - call: [<.canvas_input, cvs_x, 0.0, cvs_w, win_h, 0.88]
+                        - call: [<.canvas_input, cvs_x, strip_h, cvs_w, { -: [win_h, strip_h] }, 0.88]
                         - call: [ui.end_cell]
                         - call: [ui.end_grid]
+                        # The strips draw OUTSIDE the grid, over the full width: a
+                        # widget in a cell cannot leave its cell, and a dropdown has to
+                        # fall over the canvas (§8.0).
+                        - decl: [bar_x, f32, { call: [input.mouse_pos_x] }]
+                        - decl: [bar_y, f32, { call: [input.mouse_pos_y] }]
+                        - decl: [menu_h, f32, { call: [<.top_bar.height] }]
+                        - call: [<.top_bar.draw, win_w, bar_x, bar_y]
+                        - decl: [dtype_now, i32, 0]
+                        - if:
+                            condition: { gt: [<.deck.slides.len, 0] }
+                            then:
+                              - decl: [slide_t, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                              - set: [dtype_now, slide_t.dtype]
+                        - call: [<.tools.draw, win_w, menu_h, dtype_now, bar_x, bar_y]
+                        - call: [<.top_bar.draw_open, bar_x, bar_y]
+                        - if:
+                            condition: { call: [input.mouse_pressed, 0] }
+                            then:
+                              - decl: [took, i32, { call: [<.top_bar.press, bar_x, bar_y] }]
+                              - if:
+                                  condition: { eq: [took, 1] }
+                                  then: [{ set: [action, <.top_bar.deed] }]
+                                  else:
+                                    - decl: [took2, i32, { call: [<.tools.press, bar_x, bar_y, menu_h] }]
+                                    - if: { condition: { eq: [took2, 1] }, then: [{ set: [action, <.tools.deed] }] }
                         - call: [<.dispatch, action]
                   - call: [ui.end]
                   - if:
@@ -1466,6 +1524,10 @@
       - class: NodeArt
         instance: art
         sees: [pen, label]
+      - class: TopBar
+        instance: top_bar
+      - class: ToolBar
+        instance: tools
       - class: FileBrowser
         instance: browse
       - class: Files
@@ -1479,4 +1541,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools]

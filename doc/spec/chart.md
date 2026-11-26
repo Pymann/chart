@@ -617,7 +617,37 @@ odd-sized node is a legitimate thing to want.
 
 ## 8. Chrome
 
-### 8.1 Action bar (left)
+### 8.0 The window's chrome (normative)
+
+Two strips at the top, the canvas below:
+
+```
++--------------------------------------------------+
+| Datei  Bearbeiten  Ansicht  Einstellungen         |  menu strip, 28 px
++--------------------------------------------------+
+| [Flussdiagramm v] | Kasten Rund Kapsel Kreis ...  |  tool strip, 46 px
++--------------------------------------------------+
+|                                                  |
+|                     canvas                       |
+```
+
+- The **menu strip** carries what a menu carries everywhere: `Datei` opens, saves and
+  exports; `Bearbeiten` acts on the selection; `Ansicht` switches slides and starts the
+  presentation; `Einstellungen` holds what is a preference rather than an action. A
+  title opens a dropdown, and the dropdown **claims the pointer** while it is open --
+  the same rule as §8.2, for the same reason.
+- The **tool strip** is the shapes, and its first control sets the **diagram type**. The
+  type sits there because it is the one choice that changes what every other control in
+  the strip means, and because a drawing surface should say what kind of drawing this is
+  without opening a menu.
+- Only `flowchart` is projected (§1.1). The control offers the other types, sets them,
+  and the status line says the export will refuse -- stating it is better than hiding a
+  choice the model already has.
+- **The left bar is on its way out.** It stays while the strips grow, because taking it
+  away before they are complete would cost functions that work today. Nothing new goes
+  into it.
+
+### 8.1 Action bar (left, being replaced by §8.0)
 
 Built like glbview's panel (`test/glbview/src/viewer.aiml`, its spec §4.3):
 `ui.begin` -> `ui.begin_grid` -> `ui.begin_cell`, then a column of `ui.button`s where

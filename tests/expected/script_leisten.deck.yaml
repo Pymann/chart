@@ -1,0 +1,12 @@
+title: "Leisten"
+slides:
+  - title: "Leisten"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    nodes:
+      - { id: n1, kind: diamond, x: 300, y: 255, w: 200, h: 90, text: "" }
+  - title: "Neue Folie"
+    dtype: flowchart
+    dir: TD
+    next_id: 1
