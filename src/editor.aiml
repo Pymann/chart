@@ -195,7 +195,7 @@
                   - if:
                       condition: { eq: [found, 1] }
                       then: [{ set: [found, { call: [<.grip.node_by_id, slide, edge.to_id, tail_node] }] }]
-                  - if: { condition: { eq: [edge.kind, EdgeKind.invisible] }, then: [{ set: [found, 0] }] }
+                  - if: { condition: { eq: [edge.line, LineStyle.invisible] }, then: [{ set: [found, 0] }] }
                   - if:
                       condition: { eq: [found, 1] }
                       then:
@@ -219,32 +219,24 @@
                               - decl: [tail_y, f32, { -: [from_cy, { "*": [uni_y, stop_from] }] }]
                               - decl: [tint, i32, 0x55687AFF]
                               - decl: [thick, f32, 2.0]
-                              - if: { condition: { eq: [edge.kind, EdgeKind.thick] }, then: [{ set: [thick, 4.5] }] }
+                              - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [thick, 4.5] }] }
                               - if: { condition: { eq: [edge.ident, <.sel_edge] }, then: [{ set: [tint, 0x2F80EDFF] }, { set: [thick, { +: [thick, 1.5] }] }] }
+                              - decl: [seg, Segment]
+                              - set: [seg.from_x, tail_x]
+                              - set: [seg.from_y, tail_y]
+                              - set: [seg.to_x, tip_x]
+                              - set: [seg.to_y, tip_y]
+                              - set: [seg.tint, tint]
+                              - set: [seg.thick, thick]
                               - if:
-                                  condition: { eq: [edge.kind, EdgeKind.dotted] }
-                                  then:
-                                    - decl: [seg, Segment]
-                                    - set: [seg.from_x, tail_x]
-                                    - set: [seg.from_y, tail_y]
-                                    - set: [seg.to_x, tip_x]
-                                    - set: [seg.to_y, tip_y]
-                                    - set: [seg.tint, tint]
-                                    - set: [seg.thick, thick]
-                                    - call: [<.pen.dashed, seg]
-                                  else:
-                                    - call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, thick, tint]
-                              - decl: [head, f32, { "*": [16.0, scale] }]
-                              - call: [ui.draw_line, tip_x, tip_y, { +: [tip_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { +: [tip_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, 2.0, 0x55687AFF]
-                              - call: [ui.draw_line, tip_x, tip_y, { +: [tip_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { +: [tip_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, thick, tint]
-                              # a double-headed edge is drawn with both heads --
-                              # otherwise it is recognised, exported and stored as
-                              # bidirectional while looking one-sided on the slide
-                              - if:
-                                  condition: { eq: [edge.kind, EdgeKind.bidirectional] }
-                                  then:
-                                    - call: [ui.draw_line, tail_x, tail_y, { -: [tail_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { -: [tail_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, thick, tint]
-                                    - call: [ui.draw_line, tail_x, tail_y, { -: [tail_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, head] }] }, { -: [tail_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, head] }] }, thick, tint]
+                                  condition: { eq: [edge.line, LineStyle.dotted] }
+                                  then: [{ call: [<.pen.dashed, seg] }]
+                                  else: [{ call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, thick, tint] }]
+                              # one cap per end (§5.3): the sheet says what sits there,
+                              # and the canvas has to show it or the author reads the
+                              # file to see what they drew
+                              - call: [<.pen.cap, seg, 1, edge.head]
+                              - call: [<.pen.cap, seg, 0, edge.tail]
                               - if:
                                   condition: { neq: [edge.text, ""] }
                                   then:
@@ -430,12 +422,23 @@
             - if:
                 condition: { neq: [<.sel_edge, ""] }
                 then:
-                  - if: { condition: { call: [ui.button, "-- normal"] }, then: [{ set: [action, 50] }] }
-                  - if: { condition: { call: [ui.button, "-- offen"] }, then: [{ set: [action, 51] }] }
-                  - if: { condition: { call: [ui.button, "-- gepunktet"] }, then: [{ set: [action, 52] }] }
-                  - if: { condition: { call: [ui.button, "-- dick"] }, then: [{ set: [action, 53] }] }
-                  - if: { condition: { call: [ui.button, "-- beidseitig"] }, then: [{ set: [action, 54] }] }
-                  - if: { condition: { call: [ui.button, "-- unsichtbar"] }, then: [{ set: [action, 55] }] }
+                  - call: [ui.label, "Linie"]
+                  - if: { condition: { call: [ui.button, "durchgezogen"] }, then: [{ set: [action, 50] }] }
+                  - if: { condition: { call: [ui.button, "gepunktet"] }, then: [{ set: [action, 51] }] }
+                  - if: { condition: { call: [ui.button, "dick"] }, then: [{ set: [action, 52] }] }
+                  - if: { condition: { call: [ui.button, "unsichtbar"] }, then: [{ set: [action, 53] }] }
+                  - call: [ui.label, "Kopf"]
+                  - if: { condition: { call: [ui.button, "ohne"] }, then: [{ set: [action, 54] }] }
+                  - if: { condition: { call: [ui.button, "Pfeil"] }, then: [{ set: [action, 55] }] }
+                  - if: { condition: { call: [ui.button, "Kreis"] }, then: [{ set: [action, 56] }] }
+                  - if: { condition: { call: [ui.button, "Kreuz"] }, then: [{ set: [action, 57] }] }
+                  - if: { condition: { call: [ui.button, "hohl"] }, then: [{ set: [action, 58] }] }
+                  - call: [ui.label, "Fuss"]
+                  - if: { condition: { call: [ui.button, "ohne."] }, then: [{ set: [action, 59] }] }
+                  - if: { condition: { call: [ui.button, "Pfeil."] }, then: [{ set: [action, 60] }] }
+                  - if: { condition: { call: [ui.button, "Kreis."] }, then: [{ set: [action, 61] }] }
+                  - if: { condition: { call: [ui.button, "Kreuz."] }, then: [{ set: [action, 62] }] }
+                  - if: { condition: { call: [ui.button, "hohl."] }, then: [{ set: [action, 63] }] }
             - call: [ui.separator]
 
             - call: [ui.label, "Auswahl"]
@@ -549,7 +552,7 @@
                 condition: { ge: [action, 50] }
                 then:
                   - if:
-                      condition: { le: [action, 55] }
+                      condition: { le: [action, 63] }
                       then:
                         - if: { condition: { eq: [<.sel_edge, ""] }, then: [{ return: null }] }
                         - decl: [slide_k, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
@@ -561,8 +564,21 @@
                               - if:
                                   condition: { eq: [edge_k.ident, <.sel_edge] }
                                   then:
-                                    - set: [edge_k.kind, { -: [action, 50] }]
-                                    - set: [<.status, "Kantenart gesetzt"]
+                                    - if:
+                                        condition: { le: [action, 53] }
+                                        then:
+                                          - set: [edge_k.line, { -: [action, 50] }]
+                                          - set: [<.status, "Linienart gesetzt"]
+                                        else:
+                                          - if:
+                                              condition: { le: [action, 58] }
+                                              then:
+                                                - set: [edge_k.head, { -: [action, 54] }]
+                                                - set: [<.status, "Kopf gesetzt"]
+                                              else:
+                                                - set: [edge_k.tail, { -: [action, 59] }]
+                                                - set: [<.status, "Fuss gesetzt"]
+                                    - call: [<.touch]
                                     - set: [kidx, slide_k.edges.len]
                               - set: [kidx, { +: [kidx, 1] }]
                         - return: null
@@ -998,7 +1014,8 @@
                               - set: [edge.ident, "e${slide.next_id}"]
                               - set: [edge.from_id, <.link_from]
                               - set: [edge.to_id, dst]
-                              - set: [edge.kind, EdgeKind.arrow]
+                              - set: [edge.line, LineStyle.solid]
+                              - set: [edge.head, EndCap.arrow]
                               - call: [slide.edges.push, edge]
                               - call: [<.touch]
                               - set: [slide.next_id, { +: [slide.next_id, 1] }]

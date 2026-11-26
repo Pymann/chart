@@ -19,13 +19,13 @@ slides:
       - { id: b2, kind: rect, x: 60, y: 528, w: 210, h: 76, text: "auch drinnen", group: g1 }
       - { id: nie_erklaert, kind: rect, x: 382, y: 528, w: 210, h: 76, text: "nie_erklaert" }
     edges:
-      - { id: e1, from_id: a1, to_id: a2, kind: arrow }
-      - { id: e2, from_id: a2, to_id: a3, kind: open }
-      - { id: e3, from_id: a3, to_id: a4, kind: dotted }
-      - { id: e4, from_id: a4, to_id: a5, kind: thick }
-      - { id: e5, from_id: a5, to_id: a6, kind: bidirectional }
-      - { id: e6, from_id: a6, to_id: a7, kind: invisible }
-      - { id: e7, from_id: a7, to_id: a8, kind: arrow, text: "mit Text" }
-      - { id: e8, from_id: a8, to_id: b1, kind: arrow, text: "kurz" }
-      - { id: e9, from_id: b1, to_id: b2, kind: arrow }
-      - { id: e10, from_id: b2, to_id: nie_erklaert, kind: arrow }
+      - { id: e1, from_id: a1, to_id: a2 }
+      - { id: e2, from_id: a2, to_id: a3, head: none }
+      - { id: e3, from_id: a3, to_id: a4, line: dotted }
+      - { id: e4, from_id: a4, to_id: a5, line: thick }
+      - { id: e5, from_id: a5, to_id: a6, tail: arrow }
+      - { id: e6, from_id: a6, to_id: a7, line: invisible, head: none }
+      - { id: e7, from_id: a7, to_id: a8, text: "mit Text" }
+      - { id: e8, from_id: a8, to_id: b1, text: "kurz" }
+      - { id: e9, from_id: b1, to_id: b2 }
+      - { id: e10, from_id: b2, to_id: nie_erklaert }

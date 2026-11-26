@@ -12,6 +12,20 @@
     # inserted -- the position is the value on disk.
     values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text]
 
+# An edge is TWO independent things (spec §3.2): how the line looks, and what sits at
+# each end.  One enum for both could not express `--o` at all and made `<-.->`
+# impossible -- "dotted" and "bidirectional" were never alternatives.
+- enum:
+    name: LineStyle
+    wire: true
+    values: [solid, dotted, thick, invisible]
+
+- enum:
+    name: EndCap
+    wire: true
+    values: [none, arrow, circle, cross, hollow]
+
+# Read-only legacy: sheets written before the split say `kind:` (spec §4.1a).
 - enum:
     name: EdgeKind
     wire: true
@@ -50,7 +64,9 @@
       - [ident, string, ""]
       - [from_id, string, ""]
       - [to_id, string, ""]
-      - [kind, EdgeKind, EdgeKind.arrow]
+      - [line, LineStyle, LineStyle.solid]
+      - [head, EndCap, EndCap.arrow]   # the cap at to_id
+      - [tail, EndCap, EndCap.none]    # the cap at from_id
       - [text, string, ""]            # "" = no label
       - [stroke, i32, 0]
 

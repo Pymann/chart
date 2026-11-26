@@ -122,6 +122,20 @@ exists so a Markdown file can be read in whole (§18.4) instead of only its diag
     wire: true
     values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text]
 
+# An edge is TWO independent things, and one enum for both was a modelling error:
+# "dotted" and "bidirectional" are not alternatives -- `<-.->` is both at once, and
+# `--o` could not be written down at all.
+- enum:
+    name: LineStyle
+    wire: true
+    values: [solid, dotted, thick, invisible]
+
+- enum:
+    name: EndCap
+    wire: true
+    values: [none, arrow, circle, cross, hollow]
+
+# Kept only for READING sheets written before the split (§4.1a).  Never written.
 - enum:
     name: EdgeKind
     wire: true
@@ -163,9 +177,23 @@ nodes:
   - { id: n2, kind: diamond, x: 40,  y: 160, w: 160, h: 90, text: "valid?", group: g1, fill: 0x2E4A7AFF }
   - { id: n3, kind: rect,    x: 260, y: 170, w: 140, h: 60, text: "Session\nanlegen" }
 edges:
-  - { id: e1, from_id: n1, to_id: n2, kind: arrow }
-  - { id: e2, from_id: n2, to_id: n3, kind: arrow, text: "ja" }
+  - { id: e1, from_id: n1, to_id: n2, line: solid, head: arrow }
+  - { id: e2, from_id: n2, to_id: n3, line: dotted, head: arrow, tail: circle, text: "ja" }
 ```
+
+`line` defaults to `solid`, `head` to `arrow`, `tail` to `none`, so the common edge
+writes two short words and the unusual one says what it is.
+
+### 4.1a Edges written before the split (normative)
+
+A sheet may carry the old single `kind:` instead of `line`/`head`/`tail`. It is **read**
+and mapped (`arrow` → solid+arrow, `open` → solid+none, `dotted` → dotted+arrow, `thick`
+→ thick+arrow, `bidirectional` → solid+arrow+arrow, `invisible` → invisible+none), and
+it is **never written back**. Both spellings in one edge is an error, not a merge: the
+file would be saying two things and chart must not pick one.
+
+Sheets on disk are documents (§2), and a tool that stops opening its own older files
+teaches people not to trust it with their work.
 
 **Normative.** An unknown `kind` on load is **not** silently defaulted: the loader
 reports the file, the element id and the unknown word, and loads the sheet with that
@@ -201,14 +229,30 @@ unconditionally avoids the whole class of bugs where a label containing `(`, `[`
 
 ### 5.3 Edges
 
-| `EdgeKind` | without label | with label |
+An edge carries a **line** and a **cap at each end**, and the Mermaid connector is
+composed from the three rather than looked up as a whole:
+
+| `line` | body | with an arrow head |
 |---|---|---|
-| `arrow` | `-->` | `-->\|"text"\|` |
-| `open` | `---` | `---\|"text"\|` |
-| `dotted` | `-.->` | `-.->\|"text"\|` |
-| `thick` | `==>` | `==>\|"text"\|` |
-| `bidirectional` | `<-->` | `<-->\|"text"\|` |
-| `invisible` | `~~~` | (label dropped) |
+| `solid` | `---` | `-->` |
+| `dotted` | `-.-` | `-.->` |
+| `thick` | `===` | `==>` |
+| `invisible` | `~~~` | `~~~` (caps dropped) |
+
+| `head` / `tail` | at the head | at the tail |
+|---|---|---|
+| `none` | nothing | nothing |
+| `arrow` | `>` | `<` |
+| `circle` | `o` | `o` |
+| `cross` | `x` | `x` |
+| `hollow` | **not expressible** (§5.7) | not expressible |
+
+So `line: dotted, head: arrow, tail: arrow` is `<-.->`, and `line: solid, head: circle,
+tail: circle` is `o--o`. A label always uses the pipe form.
+
+**Mermaid cannot mix caps.** `o--x` is not valid Mermaid; a mixed pair is exported with
+the head's cap on both ends and reported once, because an export that silently flips one
+end would draw a different diagram than the sheet shows.
 
 On the canvas an edge kind is **visible**: `dotted` draws as dashes, `thick` with a
 heavier line, `invisible` is not drawn at all (it still orders the Mermaid layout). An
@@ -272,6 +316,10 @@ flattened.
 
 ### 5.7 What is lost (normative list)
 
+- **The hollow cap.** Mermaid's flowchart has no hollow (UML generalisation) end. It is
+  exported as a plain arrow and reported once. It exists in the sheet because a use-case
+  or class drawing needs it, and chart's own formats (SVG, PPTX, HTML) carry it.
+- **A mixed pair of caps** (§5.3): Mermaid writes one cap for both ends.
 - **Prose.** A `text` node is slide text, and a flowchart has nowhere to put it. The
   Mermaid projection leaves it out rather than inventing a box around it, which would
   put a paragraph into the graph as a node that nobody drew. Markdown, SVG, PPTX and

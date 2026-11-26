@@ -198,6 +198,70 @@
                   - set: [line_y, { +: [line_y, line_h] }]
                   - set: [idx, { +: [idx, 1] }]
 
+      # One end cap of a segment (spec §5.3).  `at_head` 1 = at `to`, 0 = at `from`;
+      # the direction is taken from the segment itself, so a tail cap is the head's
+      # mirror and neither can drift from the line it belongs to.
+      - def:
+          name: cap
+          args: [[seg, ref<Segment>], [at_head, i32], [cap, i32]]
+          body:
+            - if: { condition: { eq: [cap, EndCap.none] }, then: [{ return: null }] }
+            - decl: [del_x, f32, { -: [seg.from_x, seg.to_x] }]
+            - decl: [del_y, f32, { -: [seg.from_y, seg.to_y] }]
+            - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
+            - if: { condition: { lt: [span, 0.001] }, then: [{ return: null }] }
+            - decl: [uni_x, f32, { /: [del_x, span] }]
+            - decl: [uni_y, f32, { /: [del_y, span] }]
+            - decl: [at_x, f32, seg.to_x]
+            - decl: [at_y, f32, seg.to_y]
+            - if:
+                condition: { eq: [at_head, 0] }
+                then:
+                  - set: [at_x, seg.from_x]
+                  - set: [at_y, seg.from_y]
+                  - set: [uni_x, { -: [0.0, uni_x] }]
+                  - set: [uni_y, { -: [0.0, uni_y] }]
+            - decl: [reach, f32, 16.0]
+            - decl: [per_x, f32, { -: [0.0, uni_y] }]
+            - decl: [per_y, f32, uni_x]
+            - if:
+                condition: { eq: [cap, EndCap.circle] }
+                then:
+                  - decl: [ring, Shape]
+                  - decl: [mid_x, f32, { +: [at_x, { "*": [uni_x, 7.0] }] }]
+                  - decl: [mid_y, f32, { +: [at_y, { "*": [uni_y, 7.0] }] }]
+                  - set: [ring.pos_x, { -: [mid_x, 7.0] }]
+                  - set: [ring.pos_y, { -: [mid_y, 7.0] }]
+                  - set: [ring.width, 14.0]
+                  - set: [ring.height, 14.0]
+                  - set: [ring.tint, seg.tint]
+                  - set: [ring.thick, seg.thick]
+                  - call: [<.ellipse, ring]
+                  - return: null
+            - if:
+                condition: { eq: [cap, EndCap.cross] }
+                then:
+                  - decl: [cen_x, f32, { +: [at_x, { "*": [uni_x, 7.0] }] }]
+                  - decl: [cen_y, f32, { +: [at_y, { "*": [uni_y, 7.0] }] }]
+                  - decl: [arm, f32, 7.0]
+                  - decl: [arm_ax, f32, { "*": [{ +: [uni_x, per_x] }, arm] }]
+                  - decl: [arm_ay, f32, { "*": [{ +: [uni_y, per_y] }, arm] }]
+                  - decl: [arm_bx, f32, { "*": [{ -: [uni_x, per_x] }, arm] }]
+                  - decl: [arm_by, f32, { "*": [{ -: [uni_y, per_y] }, arm] }]
+                  - call: [ui.draw_line, { -: [cen_x, arm_ax] }, { -: [cen_y, arm_ay] }, { +: [cen_x, arm_ax] }, { +: [cen_y, arm_ay] }, seg.thick, seg.tint]
+                  - call: [ui.draw_line, { -: [cen_x, arm_bx] }, { -: [cen_y, arm_by] }, { +: [cen_x, arm_bx] }, { +: [cen_y, arm_by] }, seg.thick, seg.tint]
+                  - return: null
+            # arrow and hollow share the two barbs; hollow closes them into a triangle
+            - decl: [one_x, f32, { +: [at_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, reach] }] }]
+            - decl: [one_y, f32, { +: [at_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, reach] }] }]
+            - decl: [two_x, f32, { +: [at_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, reach] }] }]
+            - decl: [two_y, f32, { +: [at_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, reach] }] }]
+            - call: [ui.draw_line, at_x, at_y, one_x, one_y, seg.thick, seg.tint]
+            - call: [ui.draw_line, at_x, at_y, two_x, two_y, seg.thick, seg.tint]
+            - if:
+                condition: { eq: [cap, EndCap.hollow] }
+                then: [{ call: [ui.draw_line, one_x, one_y, two_x, two_y, seg.thick, seg.tint] }]
+
       # Prose (spec §3.2): left-aligned, starting at the top edge.  A paragraph that
       # is centred line by line reads like a poster, which is exactly wrong for text
       # that came out of a document.

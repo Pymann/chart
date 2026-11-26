@@ -1,0 +1,25 @@
+title: ""
+slides:
+  - title: ""
+    dtype: flowchart
+    dir: LR
+    next_id: 9
+    nodes:
+      - { id: a, kind: rect, x: 60, y: 90, w: 210, h: 76, text: "Start" }
+      - { id: b, kind: rect, x: 382, y: 90, w: 210, h: 76, text: "Pfeil" }
+      - { id: c, kind: rect, x: 704, y: 90, w: 210, h: 76, text: "Kreis" }
+      - { id: d, kind: rect, x: 60, y: 236, w: 210, h: 76, text: "Kreuz" }
+      - { id: e, kind: rect, x: 382, y: 236, w: 210, h: 76, text: "beide Kreise" }
+      - { id: f, kind: rect, x: 704, y: 236, w: 210, h: 76, text: "beide Kreuze" }
+      - { id: g, kind: rect, x: 60, y: 382, w: 210, h: 76, text: "gepunktet beidseitig" }
+      - { id: h, kind: rect, x: 382, y: 382, w: 210, h: 76, text: "dick beidseitig" }
+      - { id: i, kind: rect, x: 704, y: 382, w: 210, h: 76, text: "ohne Enden" }
+    edges:
+      - { id: e1, from_id: a, to_id: b }
+      - { id: e2, from_id: b, to_id: c, head: circle }
+      - { id: e3, from_id: c, to_id: d, head: cross }
+      - { id: e4, from_id: d, to_id: e, head: circle, tail: circle }
+      - { id: e5, from_id: e, to_id: f, head: cross, tail: cross }
+      - { id: e6, from_id: f, to_id: g, line: dotted, tail: arrow }
+      - { id: e7, from_id: g, to_id: h, line: thick, tail: arrow }
+      - { id: e8, from_id: h, to_id: i, head: none }

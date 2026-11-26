@@ -36,6 +36,9 @@
       - [diag, ref<Diag>]
       - [status, string]            # what the bar should say afterwards
       - [made_id, string]           # a node that wants its label opened, "" = none
+      - [want_line, i32]            # what the next edge should look like (spec §5.3)
+      - [want_head, i32]
+      - [want_tail, i32]
     methods:
       # ── canvas input (spec §15.1) ──────────────────────────────────────────
       # §7.5: an endpoint hits a node's box GROWN by `reach`. Without it a line has
@@ -178,13 +181,16 @@
                         - set: [idx, { +: [idx, 1] }]
                   - decl: [line_n, i32, { call: [<.ink.copy, line_at] }]
                   - call: [<.ink.recognizer.stroke_end, <.ink.scratch, line_n, shape]
-                  - decl: [kind, i32, EdgeKind.open]
+                  - set: [<.want_line, LineStyle.solid]
+                  - set: [<.want_head, EndCap.none]
+                  - set: [<.want_tail, EndCap.none]
                   - decl: [word, string, "Linie"]
                   - if:
                       condition: { "&&": [{ gt: [total, 1] }, { lt: [longest, { "*": [sum_span, 0.40] }] }] }
                       then:
                         # every stroke a similar fraction of the whole: dashes
-                        - set: [kind, EdgeKind.dotted]
+                        - set: [<.want_line, LineStyle.dotted]
+                        - set: [<.want_head, EndCap.arrow]
                         - set: [word, "gepunktete Linie"]
                       else:
                         # one long stroke carries the line; a short stroke whose middle
@@ -208,19 +214,23 @@
                                     - if: { condition: { lt: [to_start, 70.0] }, then: [{ set: [head_at_start, 1] }] }
                                     - if: { condition: { lt: [to_end, 70.0] }, then: [{ set: [head_at_end, 1] }] }
                               - set: [idx, { +: [idx, 1] }]
+                        # each end on its own now (§5.3): a head drawn at the start is
+                        # a tail cap, not a reason to call the whole edge "bidirectional"
+                        - if: { condition: { eq: [head_at_end, 1] }, then: [{ set: [<.want_head, EndCap.arrow] }] }
+                        - if: { condition: { eq: [head_at_start, 1] }, then: [{ set: [<.want_tail, EndCap.arrow] }] }
                         - if:
                             condition: { "&&": [{ eq: [head_at_end, 1] }, { eq: [head_at_start, 1] }] }
-                            then: [{ set: [kind, EdgeKind.bidirectional] }, { set: [word, "Doppelpfeil"] }]
+                            then: [{ set: [word, "Doppelpfeil"] }]
                             else:
                               - if:
                                   condition: { "||": [{ eq: [head_at_end, 1] }, { eq: [head_at_start, 1] }] }
-                                  then: [{ set: [kind, EdgeKind.arrow] }, { set: [word, "Pfeil"] }]
+                                  then: [{ set: [word, "Pfeil"] }]
                         - set: [shape.has_head, head_at_end]
                         - set: [shape.has_tail, head_at_start]
                   # 40 units, not 12: a line is begun beside a shape, not on it
                   - decl: [src, string, { call: [<.node_near, slide, ends.pos_x, ends.pos_y, 40.0] }]
                   - decl: [dst, string, { call: [<.node_near, slide, ends.tip_x, ends.tip_y, 40.0] }]
-                  - decl: [made_it, i32, { call: [<.make_edge, slide, src, dst, kind] }]
+                  - decl: [made_it, i32, { call: [<.make_edge, slide, src, dst] }]
                   - if:
                       condition: { eq: [made_it, 1] }
                       then: [{ set: [<.status, "${word} erkannt"] }]
@@ -315,7 +325,7 @@
       - def:
           name: make_edge
           static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [src, string], [dst, string], [kind, i32]]
+          args: [[slide, ref<Sheet>], [src, string], [dst, string]]
           return: i32
           body:
             - if: { condition: { eq: [src, ""] }, then: [{ return: 0 }] }
@@ -325,7 +335,9 @@
             - set: [edge.ident, "e${slide.next_id}"]
             - set: [edge.from_id, src]
             - set: [edge.to_id, dst]
-            - set: [edge.kind, kind]
+            - set: [edge.line, <.want_line]
+            - set: [edge.head, <.want_head]
+            - set: [edge.tail, <.want_tail]
             - call: [slide.edges.push, edge]
             - set: [slide.next_id, { +: [slide.next_id, 1] }]
             - return: 1

@@ -90,6 +90,49 @@
             - return: -1
 
       - def:
+          name: line_style
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "solid"] },     then: [{ return: LineStyle.solid }] }
+            - if: { condition: { eq: [word, "dotted"] },    then: [{ return: LineStyle.dotted }] }
+            - if: { condition: { eq: [word, "thick"] },     then: [{ return: LineStyle.thick }] }
+            - if: { condition: { eq: [word, "invisible"] }, then: [{ return: LineStyle.invisible }] }
+            - return: -1
+
+      - def:
+          name: end_cap
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "none"] },   then: [{ return: EndCap.none }] }
+            - if: { condition: { eq: [word, "arrow"] },  then: [{ return: EndCap.arrow }] }
+            - if: { condition: { eq: [word, "circle"] }, then: [{ return: EndCap.circle }] }
+            - if: { condition: { eq: [word, "cross"] },  then: [{ return: EndCap.cross }] }
+            - if: { condition: { eq: [word, "hollow"] }, then: [{ return: EndCap.hollow }] }
+            - return: -1
+
+      # §4.1a: the old single `kind:` becomes the three fields.  Read, never written.
+      - def:
+          name: from_legacy
+          args: [[old_kind, i32], [edge, ref<Edge>]]
+          body:
+            - set: [edge.line, LineStyle.solid]
+            - set: [edge.head, EndCap.arrow]
+            - set: [edge.tail, EndCap.none]
+            - if: { condition: { eq: [old_kind, EdgeKind.open] }, then: [{ set: [edge.head, EndCap.none] }] }
+            - if: { condition: { eq: [old_kind, EdgeKind.dotted] }, then: [{ set: [edge.line, LineStyle.dotted] }] }
+            - if: { condition: { eq: [old_kind, EdgeKind.thick] }, then: [{ set: [edge.line, LineStyle.thick] }] }
+            - if: { condition: { eq: [old_kind, EdgeKind.bidirectional] }, then: [{ set: [edge.tail, EndCap.arrow] }] }
+            - if:
+                condition: { eq: [old_kind, EdgeKind.invisible] }
+                then:
+                  - set: [edge.line, LineStyle.invisible]
+                  - set: [edge.head, EndCap.none]
+
+      - def:
           name: direction
           static_off: ["same_arg", "str_cmp"]
           args: [[word, string]]
@@ -208,14 +251,45 @@
                         - set: [edge.ident, { call: [<.kv_text, item, "id", ""] }]
                         - set: [edge.from_id, { call: [<.kv_text, item, "from_id", ""] }]
                         - set: [edge.to_id, { call: [<.kv_text, item, "to_id", ""] }]
-                        - decl: [ekind_word, string, { call: [<.kv_text, item, "kind", "arrow"] }]
-                        - decl: [ekind_val, i32, { call: [<.edge_kind, ekind_word] }]
+                        - decl: [old_word, string, { call: [<.kv_text, item, "kind", ""] }]
+                        - decl: [line_word, string, { call: [<.kv_text, item, "line", ""] }]
+                        - decl: [head_word, string, { call: [<.kv_text, item, "head", ""] }]
+                        - decl: [tail_word, string, { call: [<.kv_text, item, "tail", ""] }]
+                        - decl: [has_new, i32, 0]
+                        - if: { condition: { neq: [line_word, ""] }, then: [{ set: [has_new, 1] }] }
+                        - if: { condition: { neq: [head_word, ""] }, then: [{ set: [has_new, 1] }] }
+                        - if: { condition: { neq: [tail_word, ""] }, then: [{ set: [has_new, 1] }] }
+                        # both spellings would be the file saying two things (§4.1a)
                         - if:
-                            condition: { lt: [ekind_val, 0] }
+                            condition: { "&&": [{ neq: [old_word, ""] }, { eq: [has_new, 1] }] }
                             then:
-                              - call: [log.error, "chart: ${path}: edge '${edge.ident}' has unknown kind '${ekind_word}'"]
+                              - call: [log.error, "chart: ${path}: edge '${edge.ident}' hat 'kind' UND 'line/head/tail' -- was gilt? (spec §4.1a)"]
                               - return: 0
-                        - set: [edge.kind, ekind_val]
+                        - if:
+                            condition: { neq: [old_word, ""] }
+                            then:
+                              - decl: [old_val, i32, { call: [<.edge_kind, old_word] }]
+                              - if:
+                                  condition: { lt: [old_val, 0] }
+                                  then:
+                                    - call: [log.error, "chart: ${path}: edge '${edge.ident}' has unknown kind '${old_word}'"]
+                                    - return: 0
+                              - call: [<.from_legacy, old_val, edge]
+                            else:
+                              - if: { condition: { eq: [line_word, ""] }, then: [{ set: [line_word, "solid"] }] }
+                              - if: { condition: { eq: [head_word, ""] }, then: [{ set: [head_word, "arrow"] }] }
+                              - if: { condition: { eq: [tail_word, ""] }, then: [{ set: [tail_word, "none"] }] }
+                              - decl: [line_val, i32, { call: [<.line_style, line_word] }]
+                              - decl: [head_val, i32, { call: [<.end_cap, head_word] }]
+                              - decl: [tail_val, i32, { call: [<.end_cap, tail_word] }]
+                              - if:
+                                  condition: { "||": [{ lt: [line_val, 0] }, { "||": [{ lt: [head_val, 0] }, { lt: [tail_val, 0] }] }] }
+                                  then:
+                                    - call: [log.error, "chart: ${path}: edge '${edge.ident}': unbekanntes line/head/tail ('${line_word}' '${head_word}' '${tail_word}')"]
+                                    - return: 0
+                              - set: [edge.line, line_val]
+                              - set: [edge.head, head_val]
+                              - set: [edge.tail, tail_val]
                         - set: [edge.text, { call: [<.kv_text, item, "text", ""] }]
                         - set: [edge.stroke, { call: [<.kv_i32, item, "stroke"] }]
                         - call: [sheet.edges.push, edge]
@@ -354,8 +428,15 @@
                             condition: { lt: [eidx, slide.edges.len] }
                             body:
                               - decl: [edge, ref<Edge>, { at: [slide.edges, eidx] }]
-                              - decl: [ekind_word, string, { call: [enums.name, "EdgeKind", edge.kind] }]
-                              - set: [out, "${out}      - { id: ${edge.ident}, from_id: ${edge.from_id}, to_id: ${edge.to_id}, kind: ${ekind_word}"]
+                              - decl: [line_word, string, { call: [enums.name, "LineStyle", edge.line] }]
+                              - decl: [head_word, string, { call: [enums.name, "EndCap", edge.head] }]
+                              - decl: [tail_word, string, { call: [enums.name, "EndCap", edge.tail] }]
+                              - set: [out, "${out}      - { id: ${edge.ident}, from_id: ${edge.from_id}, to_id: ${edge.to_id}"]
+                              # only what differs from the default: the common edge
+                              # stays one short line (spec §4)
+                              - if: { condition: { neq: [edge.line, LineStyle.solid] }, then: [{ set: [out, "${out}, line: ${line_word}"] }] }
+                              - if: { condition: { neq: [edge.head, EndCap.arrow] }, then: [{ set: [out, "${out}, head: ${head_word}"] }] }
+                              - if: { condition: { neq: [edge.tail, EndCap.none] }, then: [{ set: [out, "${out}, tail: ${tail_word}"] }] }
                               - if: { condition: { neq: [edge.text, ""] }, then: [{ set: [out, "${out}, text: \"${ { call: [<.esc_yaml, edge.text] } }\""] }] }
                               - set: [out, "${out} }\n"]
                               - set: [eidx, { +: [eidx, 1] }]

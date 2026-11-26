@@ -133,6 +133,22 @@
             - set: [out, "${out}<p:spPr><a:xfrm>${spot}</a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"]
             - return: "${out}${ { call: [<.body_xml, node.text, \"4A5A6A\"] } }</p:sp>"
 
+      # One cap as DrawingML.  `oval` carries a circle end; a CROSS has no preset at
+      # all, so it degrades to none and §5.7 says so -- drawing a triangle instead
+      # would state the opposite of what the sheet says.
+      - def:
+          name: cap_xml
+          args: [[cap, i32], [at_head, i32]]
+          return: string
+          body:
+            - if: { condition: { eq: [cap, EndCap.none] }, then: [{ return: "" }] }
+            - if: { condition: { eq: [cap, EndCap.cross] }, then: [{ return: "" }] }
+            - decl: [shape, string, "triangle"]
+            - if: { condition: { eq: [cap, EndCap.circle] }, then: [{ set: [shape, "oval"] }] }
+            - if: { condition: { eq: [cap, EndCap.hollow] }, then: [{ set: [shape, "stealth"] }] }
+            - if: { condition: { eq: [at_head, 1] }, then: [{ return: "<a:tailEnd type=\"${shape}\"/>" }] }
+            - return: "<a:headEnd type=\"${shape}\"/>"
+
       # A straight connector between the two rims, with the same pen.edge_stop the
       # canvas and the SVG use.  PowerPoint states a line by its box plus flips, so
       # the direction lives in flipH/flipV rather than in the coordinates.
@@ -142,7 +158,7 @@
           args: [[sheet, ref<Sheet>], [edge, ref<Edge>], [shape_id, i32]]
           return: string
           body:
-            - if: { condition: { eq: [edge.kind, EdgeKind.invisible] }, then: [{ return: "" }] }
+            - if: { condition: { eq: [edge.line, LineStyle.invisible] }, then: [{ return: "" }] }
             - decl: [found, i32, 0]
             - decl: [src_cx, f32, 0.0]
             - decl: [src_cy, f32, 0.0]
@@ -198,12 +214,12 @@
             - decl: [tall, f32, { call: [math.abs, { -: [tip_y, end_y] }] }]
             - decl: [tint, string, { call: [<.tone, edge.stroke, 0x55687AFF] }]
             - decl: [thick, string, "19050"]
-            - if: { condition: { eq: [edge.kind, EdgeKind.thick] }, then: [{ set: [thick, "38100"] }] }
+            - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [thick, "38100"] }] }
             - decl: [dash, string, ""]
-            - if: { condition: { eq: [edge.kind, EdgeKind.dotted] }, then: [{ set: [dash, "<a:prstDash val=\"dash\"/>"] }] }
-            - decl: [ends, string, "<a:tailEnd type=\"triangle\"/>"]
-            - if: { condition: { eq: [edge.kind, EdgeKind.open] }, then: [{ set: [ends, ""] }] }
-            - if: { condition: { eq: [edge.kind, EdgeKind.bidirectional] }, then: [{ set: [ends, "<a:headEnd type=\"triangle\"/><a:tailEnd type=\"triangle\"/>"] }] }
+            - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [dash, "<a:prstDash val=\"dash\"/>"] }] }
+            # DrawingML names the END at the line's start `headEnd`, and chart's
+            # `tail` is that end: the connector runs from the sheet's from_id.
+            - decl: [ends, string, "${ { call: [<.cap_xml, edge.tail, 0] } }${ { call: [<.cap_xml, edge.head, 1] } }"]
             - decl: [out, string, "<p:cxnSp><p:nvCxnSpPr><p:cNvPr id=\"${shape_id}\" name=\"${ { call: [<.svg.esc, edge.ident] } }\"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>"]
             - set: [out, "${out}<p:spPr><a:xfrm${flip}><a:off x=\"${ { call: [<.emu, low_x] } }\" y=\"${ { call: [<.emu, low_y] } }\"/><a:ext cx=\"${ { call: [<.emu, wide] } }\" cy=\"${ { call: [<.emu, tall] } }\"/></a:xfrm>"]
             - set: [out, "${out}<a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom><a:ln w=\"${thick}\"><a:solidFill><a:srgbClr val=\"${tint}\"/></a:solidFill>${dash}${ends}</a:ln></p:spPr></p:cxnSp>"]

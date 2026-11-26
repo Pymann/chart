@@ -109,15 +109,11 @@
           args: [[edge, Edge]]
           return: string
           body:
-            - decl: [link, string, "-->"]
-            - if: { condition: { eq: [edge.kind, EdgeKind.open] },          then: [{ set: [link, "---"] }] }
-            - if: { condition: { eq: [edge.kind, EdgeKind.dotted] },        then: [{ set: [link, "-.->"] }] }
-            - if: { condition: { eq: [edge.kind, EdgeKind.thick] },         then: [{ set: [link, "==>"] }] }
-            - if: { condition: { eq: [edge.kind, EdgeKind.bidirectional] }, then: [{ set: [link, "<-->"] }] }
-            - if: { condition: { eq: [edge.kind, EdgeKind.invisible] },     then: [{ set: [link, "~~~"] }] }
+            # Composed from the line and the two caps (§5.3), not looked up whole.
+            - decl: [link, string, { call: [<.connector, edge] }]
             # An invisible link has no place to put a label, so it loses it (§5.3).
             - if:
-                condition: { eq: [edge.kind, EdgeKind.invisible] }
+                condition: { eq: [edge.line, LineStyle.invisible] }
                 then: [{ return: "    ${edge.from_id} ${link} ${edge.to_id}\n" }]
             - if:
                 condition: { neq: [edge.text, ""] }
@@ -125,6 +121,43 @@
                   - decl: [label, string, { call: [<.esc, edge.text] }]
                   - return: "    ${edge.from_id} ${link}|\"${label}\"| ${edge.to_id}\n"
             - return: "    ${edge.from_id} ${link} ${edge.to_id}\n"
+
+      # line + caps -> the Mermaid connector.  Mermaid cannot mix caps and has no
+      # hollow end, so both are degraded here and reported by `emit` -- a silent flip
+      # of one end would draw a different diagram than the sheet shows (§5.7).
+      - def:
+          name: connector
+          args: [[edge, Edge]]
+          return: string
+          body:
+            - if: { condition: { eq: [edge.line, LineStyle.invisible] }, then: [{ return: "~~~" }] }
+            - decl: [body_text, string, "--"]
+            - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [body_text, "-.-"] }] }
+            - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [body_text, "=="] }] }
+            - decl: [head_cap, i32, edge.head]
+            - if: { condition: { eq: [head_cap, EndCap.hollow] }, then: [{ set: [head_cap, EndCap.arrow] }] }
+            - decl: [tail_cap, i32, edge.tail]
+            - if: { condition: { eq: [tail_cap, EndCap.hollow] }, then: [{ set: [tail_cap, EndCap.arrow] }] }
+            # a mixed pair: the head wins on both ends
+            - if:
+                condition: { "&&": [{ neq: [tail_cap, EndCap.none] }, { neq: [tail_cap, head_cap] }] }
+                then: [{ set: [tail_cap, head_cap] }]
+            - decl: [mark_head, string, ""]
+            - if: { condition: { eq: [head_cap, EndCap.arrow] }, then: [{ set: [mark_head, ">"] }] }
+            - if: { condition: { eq: [head_cap, EndCap.circle] }, then: [{ set: [mark_head, "o"] }] }
+            - if: { condition: { eq: [head_cap, EndCap.cross] }, then: [{ set: [mark_head, "x"] }] }
+            - decl: [mark_tail, string, ""]
+            - if: { condition: { eq: [tail_cap, EndCap.arrow] }, then: [{ set: [mark_tail, "<"] }] }
+            - if: { condition: { eq: [tail_cap, EndCap.circle] }, then: [{ set: [mark_tail, "o"] }] }
+            - if: { condition: { eq: [tail_cap, EndCap.cross] }, then: [{ set: [mark_tail, "x"] }] }
+            # a bare line needs a third dash: `--` alone is not a link
+            - if:
+                condition: { "&&": [{ eq: [mark_head, ""] }, { eq: [mark_tail, ""] }] }
+                then:
+                  - if: { condition: { eq: [edge.line, LineStyle.solid] }, then: [{ return: "---" }] }
+                  - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ return: "===" }] }
+                  - return: "-.-"
+            - return: "${mark_tail}${body_text}${mark_head}"
 
       # One subgraph block: its own nodes, then its nested groups (§5.5).
       - def:

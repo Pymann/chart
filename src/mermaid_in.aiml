@@ -17,6 +17,11 @@
       - [group_now, string]         # the subgraph being read, "" = top level
       - [unread, string]            # every line chart did not understand
       - [ref_class, string]         # the `:::klasse` on the reference last read
+      - [link_from, i32]            # bounds of the connector found by link_at
+      - [link_to, i32]
+      - [got_line, i32]             # scratch of decode_link
+      - [got_head, i32]
+      - [got_tail, i32]
       - [class_names, list<string>]  # classDef: the name ...
       - [class_fill, list<i32>]      # ... and the two colours it carries
       - [class_line, list<i32>]
@@ -249,43 +254,136 @@
             - set: [fresh.height, 76.0]
             - call: [sheet.nodes.push, fresh]
 
-      # Which connector is on this line?  Longest first: "<-->" contains "-->", and
-      # "-- text -->" contains "--" long before the arrow that matters.
+      # The connector is found as a RUN of link characters, then decoded into a line
+      # and two caps (§5.3) -- `o--o`, `x--x` and `<-.->` cannot be matched as whole
+      # tokens, there are too many combinations and they compose.
+      #
+      # The run is `-.=~<>ox`, but `o` and `x` only count at an end that touches a
+      # space: `demo --> x` must not read the "o" of "demo" as a cap.
+      # Find the connector, and ONLY the connector.  Link characters also live
+      # inside labels (`x[1]-y`, `line1<br/>line2`), so the scan skips anything in
+      # quotes or inside a shape's brackets -- the escaping fixture caught exactly
+      # that, with `-->` picked out of the middle of a node's text.
+      #
+      # A run must be at least three link characters (`-->`, `---`, `-.-`) or two
+      # with a cap letter beside it (`--o`, `o--o`): one dash is an id like
+      # `my-node`, not a link.  Sets <.link_from and <.link_to.
       - def:
-          name: link_kind
+          name: link_at
           static_off: ["same_arg", "str_cmp"]
           args: [[line, string]]
           return: i32
           body:
-            - if: { condition: { ge: [{ call: [line.index_of, "<-->"] }, 0] }, then: [{ return: EdgeKind.bidirectional }] }
-            - if: { condition: { ge: [{ call: [line.index_of, "-.->"] }, 0] }, then: [{ return: EdgeKind.dotted }] }
-            - if: { condition: { ge: [{ call: [line.index_of, "==>"] }, 0] }, then: [{ return: EdgeKind.thick }] }
-            - if: { condition: { ge: [{ call: [line.index_of, "~~~"] }, 0] }, then: [{ return: EdgeKind.invisible }] }
-            - if: { condition: { ge: [{ call: [line.index_of, "-->"] }, 0] }, then: [{ return: EdgeKind.arrow }] }
-            - if: { condition: { ge: [{ call: [line.index_of, "---"] }, 0] }, then: [{ return: EdgeKind.open }] }
+            - decl: [marks, string, "-.=~<>"]
+            - decl: [quoted, i32, 0]
+            - decl: [depth, i32, 0]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, line.len] }
+                body:
+                  - decl: [chr, string, { call: [line.substr, pos, 1] }]
+                  - if:
+                      condition: { eq: [chr, "\""] }
+                      then: [{ set: [quoted, { -: [1, quoted] }] }]
+                  - decl: [skip, i32, quoted]
+                  - if:
+                      condition: { eq: [quoted, 0] }
+                      then:
+                        - if: { condition: { eq: [chr, "["] }, then: [{ set: [depth, { +: [depth, 1] }] }] }
+                        - if: { condition: { eq: [chr, "("] }, then: [{ set: [depth, { +: [depth, 1] }] }] }
+                        - if: { condition: { eq: [chr, "{"] }, then: [{ set: [depth, { +: [depth, 1] }] }] }
+                        - if: { condition: { eq: [chr, "]"] }, then: [{ set: [depth, { -: [depth, 1] }] }] }
+                        - if: { condition: { eq: [chr, ")"] }, then: [{ set: [depth, { -: [depth, 1] }] }] }
+                        - if: { condition: { eq: [chr, "}"] }, then: [{ set: [depth, { -: [depth, 1] }] }] }
+                  - if: { condition: { gt: [depth, 0] }, then: [{ set: [skip, 1] }] }
+                  - if:
+                      condition: { "&&": [{ eq: [skip, 0] }, { ge: [{ call: [marks.index_of, chr] }, 0] }] }
+                      then:
+                        - decl: [run_end, i32, pos]
+                        - decl: [walking, i32, 1]
+                        - while:
+                            condition: { "&&": [{ eq: [walking, 1] }, { lt: [run_end, line.len] }] }
+                            body:
+                              - decl: [walk, string, { call: [line.substr, run_end, 1] }]
+                              - if:
+                                  condition: { lt: [{ call: [marks.index_of, walk] }, 0] }
+                                  then: [{ set: [walking, 0] }]
+                                  else: [{ set: [run_end, { +: [run_end, 1] }] }]
+                        - decl: [verdict, i32, { call: [<.weigh_run, line, pos, run_end] }]
+                        - if: { condition: { ge: [verdict, 0] }, then: [{ return: verdict }] }
+                        - set: [pos, { -: [run_end, 1] }]
+                  - set: [pos, { +: [pos, 1] }]
             - return: -1
 
+      # Is the run from `from` to `upto` really a link?  Widens it over `o`/`x` caps
+      # and sets the bounds; returns the start, or -1 when it is just a dash in a name.
       - def:
-          name: link_mark
-          args: [[kind, i32]]
-          return: string
+          name: weigh_run
+          static_off: ["same_arg", "str_cmp"]
+          args: [[line, string], [from, i32], [upto, i32]]
+          return: i32
           body:
-            - if: { condition: { eq: [kind, EdgeKind.bidirectional] }, then: [{ return: "<-->" }] }
-            - if: { condition: { eq: [kind, EdgeKind.dotted] }, then: [{ return: "-.->" }] }
-            - if: { condition: { eq: [kind, EdgeKind.thick] }, then: [{ return: "==>" }] }
-            - if: { condition: { eq: [kind, EdgeKind.invisible] }, then: [{ return: "~~~" }] }
-            - if: { condition: { eq: [kind, EdgeKind.arrow] }, then: [{ return: "-->" }] }
-            - return: "---"
+            - decl: [begins, i32, from]
+            - decl: [ends, i32, upto]
+            - decl: [caps, i32, 0]
+            - if:
+                condition: { gt: [from, 0] }
+                then:
+                  - decl: [before, string, { call: [line.substr, { -: [from, 1] }, 1] }]
+                  - if:
+                      condition: { "||": [{ eq: [before, "o"] }, { eq: [before, "x"] }] }
+                      then:
+                        - set: [begins, { -: [from, 1] }]
+                        - set: [caps, { +: [caps, 1] }]
+            - if:
+                condition: { lt: [upto, line.len] }
+                then:
+                  - decl: [after, string, { call: [line.substr, upto, 1] }]
+                  - if:
+                      condition: { "||": [{ eq: [after, "o"] }, { eq: [after, "x"] }] }
+                      then:
+                        - set: [ends, { +: [upto, 1] }]
+                        - set: [caps, { +: [caps, 1] }]
+            - decl: [core, i32, { -: [upto, from] }]
+            - if: { condition: { lt: [core, 2] }, then: [{ return: -1 }] }
+            - if:
+                condition: { "&&": [{ eq: [core, 2] }, { eq: [caps, 0] }] }
+                then: [{ return: -1 }]
+            - set: [<.link_from, begins]
+            - set: [<.link_to, ends]
+            - return: begins
+
+      # Decode one run: sets <.got_line, <.got_head, <.got_tail.
+      - def:
+          name: decode_link
+          static_off: ["same_arg", "str_cmp"]
+          args: [[token, string]]
+          body:
+            - set: [<.got_line, LineStyle.solid]
+            - set: [<.got_head, EndCap.none]
+            - set: [<.got_tail, EndCap.none]
+            - if: { condition: { ge: [{ call: [token.index_of, "~"] }, 0] }, then: [{ set: [<.got_line, LineStyle.invisible] }, { return: null }] }
+            - if: { condition: { ge: [{ call: [token.index_of, "="] }, 0] }, then: [{ set: [<.got_line, LineStyle.thick] }] }
+            - if: { condition: { ge: [{ call: [token.index_of, "."] }, 0] }, then: [{ set: [<.got_line, LineStyle.dotted] }] }
+            - decl: [first, string, { call: [token.substr, 0, 1] }]
+            - if: { condition: { eq: [first, "<"] }, then: [{ set: [<.got_tail, EndCap.arrow] }] }
+            - if: { condition: { eq: [first, "o"] }, then: [{ set: [<.got_tail, EndCap.circle] }] }
+            - if: { condition: { eq: [first, "x"] }, then: [{ set: [<.got_tail, EndCap.cross] }] }
+            - decl: [last, string, { call: [token.substr, { -: [token.len, 1] }, 1] }]
+            - if: { condition: { eq: [last, ">"] }, then: [{ set: [<.got_head, EndCap.arrow] }] }
+            - if: { condition: { eq: [last, "o"] }, then: [{ set: [<.got_head, EndCap.circle] }] }
+            - if: { condition: { eq: [last, "x"] }, then: [{ set: [<.got_head, EndCap.cross] }] }
 
       - def:
           name: read_edge
           static_off: ["same_arg", "str_cmp"]
-          args: [[sheet, ref<Sheet>], [line, string], [kind, i32]]
+          args: [[sheet, ref<Sheet>], [line, string], [cut, i32]]
           body:
-            - decl: [mark, string, { call: [<.link_mark, kind] }]
-            - decl: [cut, i32, { call: [line.index_of, mark] }]
-            - decl: [left, string, { call: [line.substr, 0, cut] }]
-            - decl: [after, i32, { +: [cut, mark.len] }]
+            - decl: [begins, i32, <.link_from]
+            - decl: [after, i32, <.link_to]
+            - decl: [token, string, { call: [line.substr, begins, { -: [after, begins] }] }]
+            - call: [<.decode_link, token]
+            - decl: [left, string, { call: [line.substr, 0, begins] }]
             - decl: [right, string, { call: [line.substr, after, { -: [line.len, after] }] }]
             - decl: [label, string, ""]
             # `a -->|"text"| b`
@@ -322,7 +420,9 @@
             - set: [edge.ident, "e${sheet.next_id}"]
             - set: [edge.from_id, src]
             - set: [edge.to_id, dst]
-            - set: [edge.kind, kind]
+            - set: [edge.line, <.got_line]
+            - set: [edge.head, <.got_head]
+            - set: [edge.tail, <.got_tail]
             - set: [edge.text, label]
             - call: [sheet.edges.push, edge]
             - set: [sheet.next_id, { +: [sheet.next_id, 1] }]
@@ -401,11 +501,11 @@
                   - if:
                       condition: { eq: [done, 0] }
                       then:
-                        - decl: [kind, i32, { call: [<.link_kind, line] }]
+                        - decl: [cut, i32, { call: [<.link_at, line] }]
                         - if:
-                            condition: { ge: [kind, 0] }
+                            condition: { ge: [cut, 0] }
                             then:
-                              - call: [<.read_edge, sheet, line, kind]
+                              - call: [<.read_edge, sheet, line, cut]
                               - set: [done, 1]
                   # a declaration is a reference and nothing else on the line
                   - if:

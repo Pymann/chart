@@ -12,8 +12,8 @@ slides:
       - { id: b, kind: diamond, x: 382, y: 290, w: 210, h: 76, text: "Regel trifft?" }
       - { id: c, kind: rect, x: 704, y: 290, w: 210, h: 76, text: "Befund" }
     edges:
-      - { id: e1, from_id: a, to_id: b, kind: arrow }
-      - { id: e2, from_id: b, to_id: c, kind: arrow, text: "ja" }
+      - { id: e1, from_id: a, to_id: b }
+      - { id: e2, from_id: b, to_id: c, text: "ja" }
   - title: "Zweite Folie"
     dtype: flowchart
     dir: TD

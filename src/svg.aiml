@@ -214,7 +214,7 @@
           args: [[sheet, ref<Sheet>], [edge, ref<Edge>]]
           return: string
           body:
-            - if: { condition: { eq: [edge.kind, EdgeKind.invisible] }, then: [{ return: "" }] }
+            - if: { condition: { eq: [edge.line, LineStyle.invisible] }, then: [{ return: "" }] }
             - decl: [found, i32, 0]
             - decl: [src_cx, f32, 0.0]
             - decl: [src_cy, f32, 0.0]
@@ -266,18 +266,12 @@
             - decl: [end_y, f32, { -: [src_cy, { "*": [uni_y, stop_src] }] }]
             - decl: [tint, string, { call: [<.rgb, edge.stroke, 0x55687AFF] }]
             - decl: [thick, string, "2"]
-            - if: { condition: { eq: [edge.kind, EdgeKind.thick] }, then: [{ set: [thick, "4.5"] }] }
+            - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [thick, "4.5"] }] }
             - decl: [dash, string, ""]
-            - if: { condition: { eq: [edge.kind, EdgeKind.dotted] }, then: [{ set: [dash, " stroke-dasharray=\"7 6\""] }] }
+            - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [dash, " stroke-dasharray=\"7 6\""] }] }
             - decl: [out, string, "  <line x1=\"${ { call: [<.num, end_x] } }\" y1=\"${ { call: [<.num, end_y] } }\" x2=\"${ { call: [<.num, tip_x] } }\" y2=\"${ { call: [<.num, tip_y] } }\" stroke=\"${tint}\" stroke-width=\"${thick}\"${dash}/>\n"]
-            - decl: [open_line, i32, 0]
-            - if: { condition: { eq: [edge.kind, EdgeKind.open] }, then: [{ set: [open_line, 1] }] }
-            - if:
-                condition: { eq: [open_line, 0] }
-                then: [{ set: [out, "${out}${ { call: [<.head_svg, tip_x, tip_y, uni_x, uni_y] } }"] }]
-            - if:
-                condition: { eq: [edge.kind, EdgeKind.bidirectional] }
-                then: [{ set: [out, "${out}${ { call: [<.head_svg, end_x, end_y, { -: [0.0, uni_x] }, { -: [0.0, uni_y] }] } }"] }]
+            - set: [out, "${out}${ { call: [<.cap_svg, edge.head, tip_x, tip_y, uni_x, uni_y] } }"]
+            - set: [out, "${out}${ { call: [<.cap_svg, edge.tail, end_x, end_y, { -: [0.0, uni_x] }, { -: [0.0, uni_y] }] } }"]
             - if:
                 condition: { neq: [edge.text, ""] }
                 then:
@@ -295,9 +289,54 @@
                   - set: [out, "${out}  <text ${spot} fill=\"#33404d\">${say}</text>\n"]
             - return: out
 
+      # One cap at one end (§5.3).  `uni` points back along the line, so every cap is
+      # drawn from the same two numbers and a tail cap is the head's mirror.
+      - def:
+          name: cap_svg
+          args: [[cap, i32], [at_x, f32], [at_y, f32], [uni_x, f32], [uni_y, f32]]
+          return: string
+          body:
+            - if: { condition: { eq: [cap, EndCap.none] }, then: [{ return: "" }] }
+            - if:
+                condition: { eq: [cap, EndCap.circle] }
+                then:
+                  - decl: [mid_x, f32, { +: [at_x, { "*": [uni_x, 7.0] }] }]
+                  - decl: [mid_y, f32, { +: [at_y, { "*": [uni_y, 7.0] }] }]
+                  - decl: [spot_x, string, { call: [<.num, mid_x] }]
+                  - decl: [spot_y, string, { call: [<.num, mid_y] }]
+                  - return: "  <circle cx=\"${spot_x}\" cy=\"${spot_y}\" r=\"7\" fill=\"#ffffff\" stroke=\"#55687a\" stroke-width=\"2\"/>\n"
+            - if:
+                condition: { eq: [cap, EndCap.cross] }
+                then:
+                  # every coordinate first: a `"*"` inside a double-quoted scalar ends
+                  # that scalar, and YAML then reads the rest as an alias
+                  - decl: [span, f32, 7.0]
+                  - decl: [cen_x, f32, { +: [at_x, { "*": [uni_x, span] }] }]
+                  - decl: [cen_y, f32, { +: [at_y, { "*": [uni_y, span] }] }]
+                  - decl: [per_x, f32, { -: [0.0, uni_y] }]
+                  - decl: [per_y, f32, uni_x]
+                  - decl: [arm_a_x, f32, { "*": [{ +: [uni_x, per_x] }, span] }]
+                  - decl: [arm_a_y, f32, { "*": [{ +: [uni_y, per_y] }, span] }]
+                  - decl: [arm_b_x, f32, { "*": [{ -: [uni_x, per_x] }, span] }]
+                  - decl: [arm_b_y, f32, { "*": [{ -: [uni_y, per_y] }, span] }]
+                  - decl: [a1x, string, { call: [<.num, { -: [cen_x, arm_a_x] }] }]
+                  - decl: [a1y, string, { call: [<.num, { -: [cen_y, arm_a_y] }] }]
+                  - decl: [a2x, string, { call: [<.num, { +: [cen_x, arm_a_x] }] }]
+                  - decl: [a2y, string, { call: [<.num, { +: [cen_y, arm_a_y] }] }]
+                  - decl: [b1x, string, { call: [<.num, { -: [cen_x, arm_b_x] }] }]
+                  - decl: [b1y, string, { call: [<.num, { -: [cen_y, arm_b_y] }] }]
+                  - decl: [b2x, string, { call: [<.num, { +: [cen_x, arm_b_x] }] }]
+                  - decl: [b2y, string, { call: [<.num, { +: [cen_y, arm_b_y] }] }]
+                  - decl: [one, string, "  <line x1=\"${a1x}\" y1=\"${a1y}\" x2=\"${a2x}\" y2=\"${a2y}\" stroke=\"#55687a\" stroke-width=\"2\"/>\n"]
+                  - decl: [two, string, "  <line x1=\"${b1x}\" y1=\"${b1y}\" x2=\"${b2x}\" y2=\"${b2y}\" stroke=\"#55687a\" stroke-width=\"2\"/>\n"]
+                  - return: "${one}${two}"
+            - decl: [hollow, i32, 0]
+            - if: { condition: { eq: [cap, EndCap.hollow] }, then: [{ set: [hollow, 1] }] }
+            - return: { call: [<.head_svg, at_x, at_y, uni_x, uni_y, hollow] }
+
       - def:
           name: head_svg
-          args: [[at_x, f32], [at_y, f32], [uni_x, f32], [uni_y, f32]]
+          args: [[at_x, f32], [at_y, f32], [uni_x, f32], [uni_y, f32], [hollow, i32]]
           return: string
           body:
             - decl: [reach, f32, 16.0]
@@ -305,7 +344,11 @@
             - decl: [one_y, f32, { +: [at_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, reach] }] }]
             - decl: [two_x, f32, { +: [at_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, reach] }] }]
             - decl: [two_y, f32, { +: [at_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, reach] }] }]
-            - return: "  <polygon points=\"${ { call: [<.num, at_x] } },${ { call: [<.num, at_y] } } ${ { call: [<.num, one_x] } },${ { call: [<.num, one_y] } } ${ { call: [<.num, two_x] } },${ { call: [<.num, two_y] } }\" fill=\"#55687a\"/>\n"
+            - decl: [paint, string, "fill=\"#55687a\""]
+            # hollow: the UML generalisation end (§5.3).  White, not "no fill" -- an
+            # unfilled triangle lets the line show through its own head.
+            - if: { condition: { eq: [hollow, 1] }, then: [{ set: [paint, "fill=\"#ffffff\" stroke=\"#55687a\" stroke-width=\"2\""] }] }
+            - return: "  <polygon points=\"${ { call: [<.num, at_x] } },${ { call: [<.num, at_y] } } ${ { call: [<.num, one_x] } },${ { call: [<.num, one_y] } } ${ { call: [<.num, two_x] } },${ { call: [<.num, two_y] } }\" ${paint}/>\n"
 
       # One slide, whole document.  Nodes first, then edges: an arrow must not end up
       # under a box it points at (§17.1).
