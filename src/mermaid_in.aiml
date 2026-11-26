@@ -123,6 +123,30 @@
       # classDef may be declared after the nodes that use it, so the pairing waits
       # until the file is read -- guessing from the order would lose colour on a file
       # Mermaid itself accepts.
+      # `linkStyle 2 stroke:#c0504d` colours the third edge read (spec §18.2).
+      - def:
+          name: read_linkstyle
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [line, string], [number, i32]]
+          body:
+            - decl: [rest, string, { call: [line.substr, 9, { -: [line.len, 9] }] }]
+            - decl: [body_text, string, { call: [rest.trim] }]
+            - decl: [space, i32, { call: [body_text.index_of, " "] }]
+            - if: { condition: { lt: [space, 0] }, then: [{ return: null }] }
+            - decl: [digits, string, { call: [body_text.substr, 0, space] }]
+            # aiml spec/09 §parse: a string into an i32 is parse_i32, and `cast` does
+            # not do it (cast is for numeric types, spec/13).
+            - decl: [which, i32, { call: [digits.parse_i32] }]
+            - if:
+                condition: { "||": [{ lt: [which, 0] }, { ge: [which, sheet.edges.len] }] }
+                then:
+                  - set: [<.unread, "${<.unread}  Zeile ${number}: ${line}\n"]
+                  - return: null
+            - decl: [tone, i32, { call: [<.hex_colour, { call: [<.attr_of, body_text, "stroke"] }] }]
+            - if: { condition: { eq: [tone, 0] }, then: [{ return: null }] }
+            - decl: [edge, ref<Edge>, { at: [sheet.edges, which] }]
+            - set: [edge.stroke, tone]
+
       - def:
           name: paint_classes
           static_off: ["same_arg", "str_cmp"]
@@ -525,6 +549,27 @@
             - decl: [lines, list<string>, { call: [text.split, "\n"] }]
             - decl: [row, i32, 0]
             - decl: [seen_head, i32, 0]
+            # YAML front matter (`---` ... `---` at the very top): Mermaid's own
+            # config block.  Skipped, except a `title:`, which IS the sheet's.
+            - decl: [matter, i32, 0]
+            - if:
+                condition: { gt: [lines.len, 0] }
+                then:
+                  - decl: [first, string, { at: [lines, 0] }]
+                  - if: { condition: { eq: [{ call: [first.trim] }, "---"] }, then: [{ set: [matter, 1] }, { set: [row, 1] }] }
+            - while:
+                condition: { "&&": [{ eq: [matter, 1] }, { lt: [row, lines.len] }] }
+                body:
+                  - decl: [matter_raw, string, { at: [lines, row] }]
+                  - decl: [matter_line, string, { call: [matter_raw.trim] }]
+                  - set: [row, { +: [row, 1] }]
+                  - if: { condition: { eq: [matter_line, "---"] }, then: [{ set: [matter, 0] }] }
+                  - if:
+                      condition: { "&&": [{ eq: [matter, 1] }, { eq: [{ call: [matter_line.starts_with, "title:"] }, 1] }] }
+                      then:
+                        - decl: [title_raw, string, { call: [matter_line.substr, 6, { -: [matter_line.len, 6] }] }]
+                        - decl: [title_trim, string, { call: [title_raw.trim] }]
+                        - set: [sheet.title, { call: [<.unquote, title_trim] }]
             - while:
                 condition: { lt: [row, lines.len] }
                 body:
@@ -577,6 +622,11 @@
                       then:
                         - decl: [known, i32, 0]
                         - if:
+                            condition: { "&&": [{ eq: [done, 0] }, { eq: [{ call: [line.starts_with, "linkStyle"] }, 1] }] }
+                            then:
+                              - call: [<.read_linkstyle, sheet, line, number]
+                              - set: [done, 1]
+                        - if:
                             condition: { eq: [{ call: [line.starts_with, "classDef"] }, 1] }
                             then:
                               - call: [<.read_classdef, line]
@@ -586,7 +636,6 @@
                             then:
                               - call: [<.read_style, sheet, line]
                               - set: [done, 1]
-                        - if: { condition: { eq: [{ call: [line.starts_with, "linkStyle"] }, 1] }, then: [{ set: [known, 1] }] }
                         - if: { condition: { eq: [{ call: [line.starts_with, "click"] }, 1] }, then: [{ set: [known, 1] }] }
                         - if: { condition: { eq: [{ call: [line.starts_with, "direction"] }, 1] }, then: [{ set: [known, 1] }] }
                         - if:

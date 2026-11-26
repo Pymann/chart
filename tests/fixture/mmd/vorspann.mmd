@@ -1,0 +1,14 @@
+---
+title: Aus dem Vorspann
+config:
+  theme: dark
+---
+flowchart TD
+    a["eins"] --> b["zwei"]
+    b --> c["drei"]
+    subgraph g1 ["Gruppe"]
+        direction LR
+        c --> d["vier"]
+    end
+    linkStyle 1 stroke:#c0504d
+    linkStyle 9 stroke:#000000

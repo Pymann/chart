@@ -1130,7 +1130,10 @@ instead of pretending.
 | `<br/>` inside a label | a newline |
 | `classDef NAME fill:#rrggbb,stroke:#rrggbb` + `node:::NAME` | the node's `fill`/`stroke` (§5.6) |
 | `style NODE fill:#rrggbb,stroke:#rrggbb` | the same, for a colour used once |
-| `click`, `linkStyle`, `direction` | reported as unread, never silently skipped |
+| `linkStyle N stroke:#rrggbb` | that edge's `stroke` (§5.6) |
+| `direction LR` inside a `subgraph` | reported as unread: a sheet has ONE direction (§5.4) |
+| YAML front matter (`---` … `---` at the top) | skipped, and `title:` in it becomes the sheet's title |
+| `click` | reported as unread, never silently skipped |
 
 A node named only in an edge (`a --> b` with no declaration for `b`) is created as a
 `rect` with its id as the label: Mermaid allows it, so refusing it would reject valid
@@ -1150,6 +1153,9 @@ files over a formality.
 - Inside a layer, nodes keep **declaration order** — the order of the file is the only
   ordering information Mermaid carries, and inventing a better one would make the result
   depend on chart's mood rather than on the input.
+- `linkStyle` numbers edges in **declaration order**, which is the order chart read
+  them, so `linkStyle 2` is the third edge on the sheet. A number past the end is
+  reported rather than wrapped around.
 - A `classDef` may be declared after the nodes that use it, so colour is applied once the
   whole file is read. Guessing from the order would lose colour on a file Mermaid itself
   accepts.

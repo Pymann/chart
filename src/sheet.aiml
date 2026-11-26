@@ -445,6 +445,10 @@
                               - if: { condition: { neq: [edge.head, EndCap.arrow] }, then: [{ set: [out, "${out}, head: ${head_word}"] }] }
                               - if: { condition: { neq: [edge.tail, EndCap.none] }, then: [{ set: [out, "${out}, tail: ${tail_word}"] }] }
                               - if: { condition: { neq: [edge.text, ""] }, then: [{ set: [out, "${out}, text: \"${ { call: [<.esc_yaml, edge.text] } }\""] }] }
+                              # the edge's own colour: set by the menu (§8.2) and by
+                              # `linkStyle` on import, and silently dropped here until
+                              # an imported linkStyle came back colourless
+                              - if: { condition: { neq: [edge.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${edge.stroke}"] }] }
                               - set: [out, "${out} }\n"]
                               - set: [eidx, { +: [eidx, 1] }]
                   - set: [sidx, { +: [sidx, 1] }]

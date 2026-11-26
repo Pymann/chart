@@ -1,0 +1,17 @@
+title: ""
+slides:
+  - title: "Aus dem Vorspann"
+    dtype: flowchart
+    dir: TD
+    next_id: 4
+    groups:
+      - { id: g1, title: "Gruppe", parent: "" }
+    nodes:
+      - { id: a, kind: rect, x: 40, y: 90, w: 210, h: 76, text: "eins" }
+      - { id: b, kind: rect, x: 40, y: 236, w: 210, h: 76, text: "zwei" }
+      - { id: c, kind: rect, x: 40, y: 382, w: 210, h: 76, text: "drei" }
+      - { id: d, kind: rect, x: 40, y: 528, w: 210, h: 76, text: "vier", group: g1 }
+    edges:
+      - { id: e1, from_id: a, to_id: b }
+      - { id: e2, from_id: b, to_id: c, stroke: -1068478977 }
+      - { id: e3, from_id: c, to_id: d }

@@ -312,4 +312,18 @@
                               - decl: [stroke_hex, string, { call: [<.hex6, node.stroke] }]
                               - set: [out, "${out}    style ${node.ident} fill:${fill_hex},stroke:${stroke_hex}\n"]
                   - set: [idx, { +: [idx, 1] }]
+
+            # An edge's own colour, as `linkStyle N` -- numbered in declaration order,
+            # which is the order the edges were just written (spec §18.2).
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.edges.len] }
+                body:
+                  - decl: [edge_c, Edge, { at: [sheet.edges, idx] }]
+                  - if:
+                      condition: { neq: [edge_c.stroke, 0] }
+                      then:
+                        - decl: [edge_hex, string, { call: [<.hex6, edge_c.stroke] }]
+                        - set: [out, "${out}    linkStyle ${idx} stroke:${edge_hex}\n"]
+                  - set: [idx, { +: [idx, 1] }]
             - return: out
