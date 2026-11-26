@@ -1,7 +1,7 @@
 # Die neuen Leisten bedienen: Form aus der Werkzeugleiste, dann aus dem Menue
 # "Bearbeiten" eine neue Folie.  Koordinaten der Leisten sind Fensterpixel.
 wait 3
-at_win 590 51
+at_win 520 51
 down 0
 up 0
 wait 2
@@ -11,7 +11,7 @@ up 0
 wait 2
 key Escape
 wait 2
-at_win 170 14
+at_win 120 14
 down 0
 up 0
 wait 2

@@ -41,12 +41,35 @@
             - decl: [out, list<string>, ["Flussdiagramm", "Sequenz", "Zustand", "Klassen"]]
             - return: out
 
+      # Measured like the menu titles (§8.0): "Unterprog." ran out of its 80 px
+      # button and into the next one.
       - def:
-          name: shape_x
+          name: shape_w
+          static_off: ["same_arg", "str_cmp"]
           args: [[which, i32]]
           return: f32
           body:
-            - return: { +: [{ +: [{ call: [<.type_width] }, 16.0] }, { "*": [{ cast: [which, f32] }, 86.0] }] }
+            - decl: [names, list<string>, { call: [<.shapes] }]
+            - if: { condition: { ge: [which, names.len] }, then: [{ return: 0.0 }] }
+            - decl: [name, string, { at: [names, which] }]
+            - decl: [wide, f32, { +: [{ call: [ui.measure_text, name] }, 18.0] }]
+            - if: { condition: { lt: [wide, 64.0] }, then: [{ set: [wide, 64.0] }] }
+            - return: wide
+
+      - def:
+          name: shape_x
+          static_off: ["same_arg", "str_cmp"]
+          args: [[which, i32]]
+          return: f32
+          body:
+            - decl: [cursor, f32, { +: [{ call: [<.type_width] }, 16.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, which] }
+                body:
+                  - set: [cursor, { +: [cursor, { +: [{ call: [<.shape_w, idx] }, 6.0] }] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: cursor
 
       - def:
           name: draw
@@ -69,20 +92,21 @@
                 body:
                   - decl: [name, string, { at: [names, idx] }]
                   - decl: [left, f32, { call: [<.shape_x, idx] }]
+                  - decl: [wide, f32, { call: [<.shape_w, idx] }]
                   - if:
-                      condition: { lt: [left, { -: [win_w, 80.0] }] }
+                      condition: { lt: [{ +: [left, wide] }, win_w] }
                       then:
                         - decl: [over, i32, 0]
                         - if:
-                            condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, 80.0] }] }] }
+                            condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, wide] }] }] }
                             then:
                               - if:
                                   condition: { "&&": [{ ge: [at_y, top] }, { lt: [at_y, { +: [top, tall] }] }] }
                                   then: [{ set: [over, 1] }]
                         - decl: [paint, i32, 0x24354AFF]
                         - if: { condition: { eq: [over, 1] }, then: [{ set: [paint, 0x2F4A68FF] }] }
-                        - call: [ui.draw_rect, left, { +: [top, 8.0] }, 80.0, { -: [tall, 16.0] }, paint]
-                        - call: [ui.draw_text, { +: [left, 8.0] }, { +: [top, 14.0] }, name, 0xD8E2ECFF]
+                        - call: [ui.draw_rect, left, { +: [top, 8.0] }, wide, { -: [tall, 16.0] }, paint]
+                        - call: [ui.draw_text, { +: [left, 9.0] }, { +: [top, 14.0] }, name, 0xD8E2ECFF]
                   - set: [idx, { +: [idx, 1] }]
             - if: { condition: { eq: [<.type_open, 1] }, then: [{ call: [<.draw_types, top, at_x, at_y] }] }
 
@@ -148,8 +172,9 @@
                 condition: { lt: [idx, names.len] }
                 body:
                   - decl: [left, f32, { call: [<.shape_x, idx] }]
+                  - decl: [wide, f32, { call: [<.shape_w, idx] }]
                   - if:
-                      condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, 80.0] }] }] }
+                      condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, wide] }] }] }
                       then:
                         - set: [<.deed, { +: [110, idx] }]
                         - return: 1

@@ -19,7 +19,7 @@
 
 - class:
     name: Editor
-    description: "Window, action bar, canvas, presentation mode"
+    description: "Window, strips, canvas, presentation mode (spec §8.0)"
     members:
       - [sheet_io, ref<SheetIO>]        # borrow, wired dst_cy the classgroup
       - [mermaid, ref<MermaidOut>]
@@ -53,7 +53,6 @@
       - [reader, ref<Reader>]           # turns ink into sheet elements (spec §7)
       - [settle, f64]                   # seconds the ink waits (spec §7.5a)
       - [read_at, i32]                  # ink size when it was last read
-      - [bar_hov, i32]                  # DIAGNOSE: sieht die Leiste den Zeiger?
       - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [art, ref<NodeArt>]            # draws one node (spec §15.2)
       - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
@@ -264,86 +263,45 @@
                               - call: [ui.draw_rect, cvs_x, { -: [{ +: [cvs_y, cvs_h] }, 58.0] }, cvs_w, 58.0, 0x0A0F14D8]
                               - call: [ui.draw_text, { +: [cvs_x, 18.0] }, { -: [{ +: [cvs_y, cvs_h] }, 42.0] }, slide.notes, 0xF0E8D0FF]
 
-      # ── the action bar (spec §8.1) ──────────────────────────────────────────
-      # glbview's pattern: a column of buttons, each setting ONE integer that a
-      # single dispatch point consumes afterwards.
+      # ── the status strip (spec §8.0) ────────────────────────────────────────
+      # Drawn, not built from widgets, and it claims no input: a report of state
+      # that swallows a click would be lying about what it is.
       - def:
-          name: bar
+          name: status_strip
           static_off: ["same_arg", "str_cmp"]
-          return: i32
+          args: [[win_w, f32], [win_h, f32]]
           body:
-            - decl: [action, i32, 0]
-            - call: [ui.begin_cell, 0, 0, 1, 1]
-            - call: [ui.set_scroll, "y"]
-            - set: [<.bar_hov, { call: [ui.cell_hovered] }]
-            - call: [ui.label, "chart"]
-            - call: [ui.label, "frei zeichnen:"]
-            - call: [ui.label, "einfach losziehen"]
-            - call: [ui.separator]
-            - call: [ui.label, <.status]
-            - call: [ui.separator]
-
-            - decl: [dirt, string, ""]
-            - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [dirt, " *"] }] }
-            - call: [ui.label, "Datei${dirt}"]
-            - if: { condition: { call: [ui.button, "Oeffnen..."] }, then: [{ set: [action, 60] }] }
-            - if: { condition: { call: [ui.button, "Speichern"] }, then: [{ set: [action, 1] }] }
-            - if: { condition: { call: [ui.button, "Speichern unter..."] }, then: [{ set: [action, 61] }] }
-            - call: [ui.label, "Export"]
-            - if: { condition: { call: [ui.button, "Markdown..."] }, then: [{ set: [action, 2] }] }
-            - if: { condition: { call: [ui.button, "Mermaid..."] }, then: [{ set: [action, 3] }] }
-            - if: { condition: { call: [ui.button, "SVG..."] }, then: [{ set: [action, 65] }] }
-            - if: { condition: { call: [ui.button, "HTML..."] }, then: [{ set: [action, 66] }] }
-            - if: { condition: { call: [ui.button, "PowerPoint..."] }, then: [{ set: [action, 67] }] }
-            - call: [ui.separator]
-
-            - call: [ui.label, "Formen"]
-            - if: { condition: { call: [ui.button, "Kasten"] }, then: [{ set: [action, 10] }] }
-            - if: { condition: { call: [ui.button, "Rund"] }, then: [{ set: [action, 11] }] }
-            - if: { condition: { call: [ui.button, "Kapsel"] }, then: [{ set: [action, 12] }] }
-            - if: { condition: { call: [ui.button, "Kreis"] }, then: [{ set: [action, 13] }] }
-            - if: { condition: { call: [ui.button, "Raute"] }, then: [{ set: [action, 14] }] }
-            - if: { condition: { call: [ui.button, "Sechseck"] }, then: [{ set: [action, 15] }] }
-            - if: { condition: { call: [ui.button, "Zylinder"] }, then: [{ set: [action, 16] }] }
-            - if: { condition: { call: [ui.button, "Unterprogramm"] }, then: [{ set: [action, 17] }] }
-            - if: { condition: { call: [ui.button, "Bild"] }, then: [{ set: [action, 18] }] }
-            - call: [ui.separator]
-
-            - call: [ui.label, "Verbinden"]
-            - if: { condition: { call: [ui.button, "Pfeil ziehen"] }, then: [{ set: [action, 19] }] }
+            - decl: [tall, f32, { call: [<.strip_bottom] }]
+            - decl: [top, f32, { -: [win_h, tall] }]
+            - call: [ui.draw_rect, 0.0, top, win_w, tall, 0x182430FF]
+            - call: [ui.draw_rect, 0.0, top, win_w, 1.0, 0x2A3744FF]
+            - call: [ui.draw_text, 12.0, { +: [top, 4.0] }, <.status, 0xA8B6C4FF]
+            - decl: [where, string, ""]
             - if:
-                condition: { neq: [<.sel_edge, ""] }
+                condition: { gt: [<.deck.slides.len, 0] }
                 then:
-                  - call: [ui.label, "Linie"]
-                  - if: { condition: { call: [ui.button, "durchgezogen"] }, then: [{ set: [action, 50] }] }
-                  - if: { condition: { call: [ui.button, "gepunktet"] }, then: [{ set: [action, 51] }] }
-                  - if: { condition: { call: [ui.button, "dick"] }, then: [{ set: [action, 52] }] }
-                  - if: { condition: { call: [ui.button, "unsichtbar"] }, then: [{ set: [action, 53] }] }
-                  - call: [ui.label, "Kopf"]
-                  - if: { condition: { call: [ui.button, "ohne"] }, then: [{ set: [action, 54] }] }
-                  - if: { condition: { call: [ui.button, "Pfeil"] }, then: [{ set: [action, 55] }] }
-                  - if: { condition: { call: [ui.button, "Kreis"] }, then: [{ set: [action, 56] }] }
-                  - if: { condition: { call: [ui.button, "Kreuz"] }, then: [{ set: [action, 57] }] }
-                  - if: { condition: { call: [ui.button, "hohl"] }, then: [{ set: [action, 58] }] }
-                  - call: [ui.label, "Fuss"]
-                  - if: { condition: { call: [ui.button, "ohne."] }, then: [{ set: [action, 59] }] }
-                  - if: { condition: { call: [ui.button, "Pfeil."] }, then: [{ set: [action, 60] }] }
-                  - if: { condition: { call: [ui.button, "Kreis."] }, then: [{ set: [action, 61] }] }
-                  - if: { condition: { call: [ui.button, "Kreuz."] }, then: [{ set: [action, 62] }] }
-                  - if: { condition: { call: [ui.button, "hohl."] }, then: [{ set: [action, 63] }] }
-            - call: [ui.separator]
+                  - decl: [number, i32, { +: [<.deck.current, 1] }]
+                  - set: [where, "Folie ${number}/${<.deck.slides.len}"]
+            - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [where, "${where}  *"] }] }
+            - decl: [wide, f32, { call: [ui.measure_text, where] }]
+            - call: [ui.draw_text, { -: [win_w, { +: [wide, 14.0] }] }, { +: [top, 4.0] }, where, 0xA8B6C4FF]
 
-            - call: [ui.label, "Auswahl"]
-            - if: { condition: { call: [ui.button, "Beschriften"] }, then: [{ set: [action, 26] }] }
-            - if: { condition: { call: [ui.button, "Bild waehlen..."] }, then: [{ set: [action, 68] }] }
-            - if: { condition: { call: [ui.button, "Entfernen"] }, then: [{ set: [action, 20] }] }
-            - call: [ui.separator]
+      - def:
+          name: strip_bottom
+          return: f32
+          body:
+            - return: 24.0
 
-            - call: [ui.label, "Folien"]
-            - if: { condition: { call: [ui.button, "< Zurueck"] }, then: [{ set: [action, 21] }] }
-            - if: { condition: { call: [ui.button, "Weiter >"] }, then: [{ set: [action, 22] }] }
-            - if: { condition: { call: [ui.button, "Neue Folie"] }, then: [{ set: [action, 23] }] }
-            - if: { condition: { call: [ui.button, "Ueberschrift..."] }, then: [{ set: [action, 24] }] }
+      # The menu strip asks the deck what it should offer (spec §8.0): the slide
+      # list under `Ansicht`, and `Kante` only while an edge is selected.
+      - def:
+          name: feed_bar
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - decl: [edge_on, i32, 0]
+            - if: { condition: { neq: [<.sel_edge, ""] }, then: [{ set: [edge_on, 1] }] }
+            - set: [<.top_bar.has_edge, edge_on]
+            - call: [<.top_bar.clear_slides]
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, <.deck.slides.len] }
@@ -354,16 +312,9 @@
                   - if: { condition: { eq: [idx, <.deck.current] }, then: [{ set: [mark, "> "] }] }
                   - decl: [name, string, slide.title]
                   - if: { condition: { eq: [name, ""] }, then: [{ set: [name, "(ohne Titel)"] }] }
-                  - if:
-                      condition: { call: [ui.button, "${mark}${number} ${name}"] }
-                      then: [{ set: [action, { +: [40, idx] }] }]
+                  - call: [<.top_bar.add_slide, "${mark}${number} ${name}", { +: [40, idx] }]
                   - set: [idx, { +: [idx, 1] }]
-            - call: [ui.separator]
 
-            - call: [ui.label, "Ansicht"]
-            - if: { condition: { call: [ui.button, "Praesentieren"] }, then: [{ set: [action, 30] }] }
-            - call: [ui.end_cell]
-            - return: action
 
       # ── dispatch ────────────────────────────────────────────────────────────
       - def:
@@ -439,41 +390,43 @@
                 then:
                   - if: { condition: { neq: [<.sel, ""] }, then: [{ call: [<.begin_edit, <.sel] }] }
                   - return: null
-            # 50..55: the selected edge's kind (spec §5.3)
+            # The selected edge's connector (spec §5.3): line 50..53, head 54..58,
+            # tail 80..84.  The tail used to start at 59, where 60 and 61 are open
+            # and save-as -- tested earlier, so those two caps were unreachable (§8.1).
+            - decl: [edge_deed, i32, 0]
+            - if: { condition: { "&&": [{ ge: [action, 50] }, { le: [action, 58] }] }, then: [{ set: [edge_deed, 1] }] }
+            - if: { condition: { "&&": [{ ge: [action, 80] }, { le: [action, 84] }] }, then: [{ set: [edge_deed, 1] }] }
             - if:
-                condition: { ge: [action, 50] }
+                condition: { eq: [edge_deed, 1] }
                 then:
-                  - if:
-                      condition: { le: [action, 63] }
-                      then:
-                        - if: { condition: { eq: [<.sel_edge, ""] }, then: [{ return: null }] }
-                        - decl: [slide_k, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
-                        - decl: [kidx, i32, 0]
-                        - while:
-                            condition: { lt: [kidx, slide_k.edges.len] }
-                            body:
-                              - decl: [edge_k, ref<Edge>, { at: [slide_k.edges, kidx] }]
+                  - if: { condition: { eq: [<.sel_edge, ""] }, then: [{ return: null }] }
+                  - decl: [slide_k, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                  - decl: [kidx, i32, 0]
+                  - while:
+                      condition: { lt: [kidx, slide_k.edges.len] }
+                      body:
+                        - decl: [edge_k, ref<Edge>, { at: [slide_k.edges, kidx] }]
+                        - if:
+                            condition: { eq: [edge_k.ident, <.sel_edge] }
+                            then:
                               - if:
-                                  condition: { eq: [edge_k.ident, <.sel_edge] }
+                                  condition: { le: [action, 53] }
                                   then:
+                                    - set: [edge_k.line, { -: [action, 50] }]
+                                    - set: [<.status, "Linienart gesetzt"]
+                                  else:
                                     - if:
-                                        condition: { le: [action, 53] }
+                                        condition: { le: [action, 58] }
                                         then:
-                                          - set: [edge_k.line, { -: [action, 50] }]
-                                          - set: [<.status, "Linienart gesetzt"]
+                                          - set: [edge_k.head, { -: [action, 54] }]
+                                          - set: [<.status, "Kopf gesetzt"]
                                         else:
-                                          - if:
-                                              condition: { le: [action, 58] }
-                                              then:
-                                                - set: [edge_k.head, { -: [action, 54] }]
-                                                - set: [<.status, "Kopf gesetzt"]
-                                              else:
-                                                - set: [edge_k.tail, { -: [action, 59] }]
-                                                - set: [<.status, "Fuss gesetzt"]
-                                    - call: [<.touch]
-                                    - set: [kidx, slide_k.edges.len]
-                              - set: [kidx, { +: [kidx, 1] }]
-                        - return: null
+                                          - set: [edge_k.tail, { -: [action, 80] }]
+                                          - set: [<.status, "Fuss gesetzt"]
+                              - call: [<.touch]
+                              - set: [kidx, slide_k.edges.len]
+                        - set: [kidx, { +: [kidx, 1] }]
+                  - return: null
 
             # 110+: a shape from the tool strip (§8.0).  Its own range, because
             # 10..18 ends at 18 and 20..30 are already taken.
@@ -655,10 +608,14 @@
             - decl: [slide_x, f32, { /: [{ -: [mouse_x, org_x] }, scale] }]
             - decl: [slide_y, f32, { /: [{ -: [mouse_y, org_y] }, scale] }]
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            # §8.0: chrome owns its area.  The canvas cell now spans the whole
+            # window, so the canvas has to reject the strips' rows itself --
+            # otherwise a press on a button also starts a stroke.
             - decl: [over_canvas, i32, 1]
             - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ set: [over_canvas, 0] }] }
-            # the strips sit above the canvas (§8.0) and own their rows
+            - if: { condition: { ge: [mouse_x, { +: [cvs_x, cvs_w] }] }, then: [{ set: [over_canvas, 0] }] }
             - if: { condition: { lt: [mouse_y, cvs_y] }, then: [{ set: [over_canvas, 0] }] }
+            - if: { condition: { ge: [mouse_y, { +: [cvs_y, cvs_h] }] }, then: [{ set: [over_canvas, 0] }] }
             # ── the pointer says what a drag from here would do (spec §15.1a) ─
             - if:
                 condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
@@ -666,6 +623,16 @@
                 else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y, scale] }]
             # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
             # meine bisherige Diagnose hing an PRESSED.
+            # The same claim for the strips' dropdowns (§8.0).  They hang OVER the
+            # canvas, and the canvas is asked first: without this a click on
+            # `Kante > Fuss Pfeil` also landed on empty canvas, which dropped the
+            # selection -- so the action arrived with nothing selected and did
+            # nothing.  An overlay that draws on top must claim the pointer.
+            - if:
+                condition: { "||": [{ eq: [<.top_bar.shown, 1] }, { eq: [<.tools.type_open, 1] }] }
+                then:
+                  - call: [input.set_cursor, "arrow"]
+                  - return: null
             # §8.2: while the menu is open it owns the pointer.  An overlay that
             # draws on top but claims nothing lets the click through -- here that
             # would draw a stroke THROUGH the menu.
@@ -684,12 +651,14 @@
             - if:
                 condition: { "||": [{ neq: [down_now, 0] }, { neq: [up_now, 0] }] }
                 then:
-                  - set: [<.status, "P${down_now} R${up_now} H${held} F${over_canvas} W${<.armed}"]
+                  # the mouse state belongs in --diag, not in the status strip:
+                  # that strip reports to the author now (§8.0), and "P1 R0 H1"
+                  # tells an author nothing
                   - decl: [hit_dbg, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                   # Diag.say checks the flag itself.  A `return` here skipped the whole
                   # press handling whenever --diag was off: the canvas ignored every
                   # click, and every live test had happened to run WITH --diag.
-                  - call: [<.diag.say, "P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} leiste_hover=${<.bar_hov} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'"]
+                  - call: [<.diag.say, "P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'"]
 
             # ── press ────────────────────────────────────────────────────────
             - if:
@@ -1357,7 +1326,6 @@
             - call: [ui.set_default_font, font]
             - call: [<.art.load_images, <.deck]
 
-            - decl: [cols_edit, buffer<f32>, [0.18, 0.82]]
             - decl: [cols_show, buffer<f32>, [1.0]]
             - decl: [rows, buffer<f32>, [1.0]]
 
@@ -1382,12 +1350,10 @@
                       then:
                         # the same rect the canvas gets: the strips took the top of
                         # the window (§8.0), and a step must land where the slide is
-                        - decl: [sc_cvs_x, f32, { "*": [win_w, 0.18] }]
-                        - decl: [sc_cvs_w, f32, { "*": [win_w, 0.82] }]
                         - decl: [sc_top, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
-                        - decl: [sc_cvs_h, f32, { -: [win_h, sc_top] }]
-                        - decl: [sc_scale, f32, { call: [<.fit_scale, sc_cvs_w, sc_cvs_h, 0.88] }]
-                        - decl: [sc_org_x, f32, { +: [sc_cvs_x, { /: [{ -: [sc_cvs_w, { "*": [1280.0, sc_scale] }] }, 2.0] }] }]
+                        - decl: [sc_cvs_h, f32, { -: [{ -: [win_h, sc_top] }, { call: [<.strip_bottom] }] }]
+                        - decl: [sc_scale, f32, { call: [<.fit_scale, win_w, sc_cvs_h, 0.88] }]
+                        - decl: [sc_org_x, f32, { /: [{ -: [win_w, { "*": [1280.0, sc_scale] }] }, 2.0] }]
                         - decl: [sc_org_y, f32, { +: [sc_top, { /: [{ -: [sc_cvs_h, { "*": [720.0, sc_scale] }] }, 2.0] }] }]
                         - decl: [verdict, i32, { call: [<.script.tick, sc_org_x, sc_org_y, sc_scale] }]
                         - if: { condition: { eq: [verdict, 2] }, then: [{ call: [<.save_deck, ""] }] }
@@ -1411,25 +1377,19 @@
                         - call: [ui.end_cell]
                         - call: [ui.end_grid]
                       else:
-                        - call: [ui.begin_grid, cols_edit, rows]
-                        - decl: [action, i32, { call: [<.bar] }]
-                        - set: [<.last_action, action]
-                        # DIAGNOSE: eine Leisten-Aktion wird eigenstaendig vermerkt,
-                        # unabhaengig von der Maus-Flanke -- sonst haengt der Beweis,
-                        # dass ein Knopf feuert, an der Protokollstelle daneben.
-                        - if:
-                            condition: { "&&": [{ neq: [action, 0] }, { neq: [<.diag.wanted, 0] }] }
-                            then:
-                              - call: [<.diag.say, "LEISTE aktion=${action} hover=${<.bar_hov}"]
-                        - call: [ui.begin_cell, 1, 0, 1, 1]
-                        - decl: [cvs_x, f32, { "*": [win_w, 0.18] }]
-                        - decl: [cvs_w, f32, { "*": [win_w, 0.82] }]
+                        # what the menu strip offers depends on the deck (§8.0)
+                        - call: [<.feed_bar]
+                        - decl: [action, i32, 0]
+                        - call: [ui.begin_grid, cols_show, rows]
+                        - call: [ui.begin_cell, 0, 0, 1, 1]
                         - decl: [strip_h, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
-                        - call: [<.draw_slide, cvs_x, strip_h, cvs_w, { -: [win_h, strip_h] }, 0.88]
+                        - decl: [cvs_h, f32, { -: [{ -: [win_h, strip_h] }, { call: [<.strip_bottom] }] }]
+                        - call: [<.draw_slide, 0.0, strip_h, win_w, cvs_h, 0.88]
                         - call: [<.menu.draw]
-                        - call: [<.canvas_input, cvs_x, strip_h, cvs_w, { -: [win_h, strip_h] }, 0.88]
+                        - call: [<.canvas_input, 0.0, strip_h, win_w, cvs_h, 0.88]
                         - call: [ui.end_cell]
                         - call: [ui.end_grid]
+                        - call: [<.status_strip, win_w, win_h]
                         # The strips draw OUTSIDE the grid, over the full width: a
                         # widget in a cell cannot leave its cell, and a dropdown has to
                         # fall over the canvas (§8.0).
@@ -1455,6 +1415,14 @@
                                   else:
                                     - decl: [took2, i32, { call: [<.tools.press, bar_x, bar_y, menu_h] }]
                                     - if: { condition: { eq: [took2, 1] }, then: [{ set: [action, <.tools.deed] }] }
+                        - set: [<.last_action, action]
+                        # DIAGNOSE: eine Leisten-Aktion wird eigenstaendig vermerkt,
+                        # unabhaengig von der Maus-Flanke -- sonst haengt der Beweis,
+                        # dass ein Knopf feuert, an der Protokollstelle daneben.
+                        - if:
+                            condition: { "&&": [{ neq: [action, 0] }, { neq: [<.diag.wanted, 0] }] }
+                            then:
+                              - call: [<.diag.say, "LEISTE aktion=${action}"]
                         - call: [<.dispatch, action]
                   - call: [ui.end]
                   - if:

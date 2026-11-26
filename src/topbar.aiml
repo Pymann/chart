@@ -16,6 +16,8 @@
       - [hot, i32]                # the entry under the pointer, -1 = none (set in draw)
       - [deed, i32]               # the action a click produced, 0 = none
       - [strip_h, f32]
+      - [has_edge, i32]           # 1 = an edge is selected, so "Kante" is offered (§8.0)
+      - [slides, list<string>]    # "Label|action" per slide, refilled each frame
     methods:
       - def:
           name: height
@@ -28,7 +30,24 @@
           return: list<string>
           body:
             - decl: [out, list<string>, ["Datei", "Bearbeiten", "Ansicht", "Einstellungen"]]
+            # "Kante" only while an edge is selected (§8.0): a menu whose every entry
+            # is dead says less than one that appears when it has something to say.
+            - if: { condition: { eq: [<.has_edge, 1] }, then: [{ call: [out.push, "Kante"] }] }
             - return: out
+
+      # The slide list under `Ansicht` is rebuilt from the deck each frame, so a
+      # renamed slide is renamed in the menu (§8.0).
+      - def:
+          name: clear_slides
+          body:
+            - call: [<.slides.clear]
+
+      - def:
+          name: add_slide
+          static_off: ["same_arg", "str_cmp"]
+          args: [[caption, string], [action, i32]]
+          body:
+            - call: [<.slides.push, "${caption}|${action}"]
 
       # Each menu is a list of "Label|action" pairs: one place decides what an entry
       # says AND what it does, so the two cannot drift apart.
@@ -55,9 +74,33 @@
                 condition: { eq: [menu, 2] }
                 then:
                   - decl: [view_menu, list<string>, ["< Zurueck|21", "Weiter >|22", "-|0", "Praesentieren|30"]]
+                  - if:
+                      condition: { gt: [<.slides.len, 0] }
+                      then:
+                        - call: [view_menu.push, "-|0"]
+                        - decl: [sdx, i32, 0]
+                        - while:
+                            condition: { lt: [sdx, <.slides.len] }
+                            body:
+                              - call: [view_menu.push, { at: [<.slides, sdx] }]
+                              - set: [sdx, { +: [sdx, 1] }]
                   - return: view_menu
-            - decl: [opt_menu, list<string>, ["frei zeichnen|101", "Pfeil ziehen|100"]]
-            - return: opt_menu
+            - if:
+                condition: { eq: [menu, 3] }
+                then:
+                  - decl: [opt_menu, list<string>, ["frei zeichnen|101", "Pfeil ziehen|100"]]
+                  - return: opt_menu
+            # Kante (§8.0): line, head and tail of the selected edge (§5.3).  The tail
+            # caps are 80..84 -- 59..63 collided with `open` and `save as` (§8.1).
+            - decl: [edge_menu, list<string>, ["Linie durchgezogen|50", "Linie gepunktet|51",
+                                               "Linie dick|52", "Linie unsichtbar|53",
+                                               "-|0",
+                                               "Kopf ohne|54", "Kopf Pfeil|55", "Kopf Kreis|56",
+                                               "Kopf Kreuz|57", "Kopf hohl|58",
+                                               "-|0",
+                                               "Fuss ohne|80", "Fuss Pfeil|81", "Fuss Kreis|82",
+                                               "Fuss Kreuz|83", "Fuss hohl|84"]]
+            - return: edge_menu
 
       - def:
           name: label_of
@@ -81,12 +124,34 @@
             - decl: [digits, string, { call: [entry.substr, after, { -: [entry.len, after] }] }]
             - return: { call: [digits.parse_i32] }
 
+      # Titles are MEASURED, not placed on a fixed pitch: "Einstellungen" is twice
+      # as wide as "Datei", and a fixed pitch either wastes the strip or lets the
+      # next title run into the one before it (it did, with "Kante").
       - def:
-          name: title_x
+          name: title_w
+          static_off: ["same_arg", "str_cmp"]
           args: [[which, i32]]
           return: f32
           body:
-            - return: { +: [12.0, { "*": [{ cast: [which, f32] }, 118.0] }] }
+            - decl: [names, list<string>, { call: [<.titles] }]
+            - if: { condition: { ge: [which, names.len] }, then: [{ return: 0.0 }] }
+            - decl: [name, string, { at: [names, which] }]
+            - return: { +: [{ call: [ui.measure_text, name] }, 16.0] }
+
+      - def:
+          name: title_x
+          static_off: ["same_arg", "str_cmp"]
+          args: [[which, i32]]
+          return: f32
+          body:
+            - decl: [cursor, f32, 12.0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, which] }
+                body:
+                  - set: [cursor, { +: [cursor, { +: [{ call: [<.title_w, idx] }, 16.0] }] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: cursor
 
       - def:
           name: draw
@@ -102,15 +167,16 @@
                 body:
                   - decl: [name, string, { at: [names, idx] }]
                   - decl: [left, f32, { call: [<.title_x, idx] }]
+                  - decl: [wide, f32, { call: [<.title_w, idx] }]
                   - decl: [over, i32, 0]
                   - if:
-                      condition: { "&&": [{ ge: [at_x, { -: [left, 8.0] }] }, { lt: [at_x, { +: [left, 110.0] }] }] }
+                      condition: { "&&": [{ ge: [at_x, { -: [left, 8.0] }] }, { lt: [at_x, { +: [{ -: [left, 8.0] }, wide] }] }] }
                       then:
                         - if: { condition: { lt: [at_y, { call: [<.height] }] }, then: [{ set: [over, 1] }] }
                   - if: { condition: { "&&": [{ eq: [<.shown, 1] }, { eq: [idx, <.open_at] }] }, then: [{ set: [over, 1] }] }
                   - if:
                       condition: { eq: [over, 1] }
-                      then: [{ call: [ui.draw_rect, { -: [left, 8.0] }, 0.0, 118.0, { call: [<.height] }, 0x24354AFF] }]
+                      then: [{ call: [ui.draw_rect, { -: [left, 8.0] }, 0.0, wide, { call: [<.height] }, 0x24354AFF] }]
                   - call: [ui.draw_text, left, 6.0, name, 0xD8E2ECFF]
                   - set: [idx, { +: [idx, 1] }]
             # the dropdown is NOT drawn here: the tool strip is drawn after this and
@@ -180,8 +246,9 @@
                       condition: { lt: [idx, names.len] }
                       body:
                         - decl: [left, f32, { call: [<.title_x, idx] }]
+                        - decl: [wide, f32, { call: [<.title_w, idx] }]
                         - if:
-                            condition: { "&&": [{ ge: [at_x, { -: [left, 8.0] }] }, { lt: [at_x, { +: [left, 110.0] }] }] }
+                            condition: { "&&": [{ ge: [at_x, { -: [left, 8.0] }] }, { lt: [at_x, { +: [{ -: [left, 8.0] }, wide] }] }] }
                             then:
                               # clicking the open one closes it, the way a menu bar does
                               - if:

@@ -1,0 +1,17 @@
+title: "Kante"
+slides:
+  - title: "Kante"
+    dtype: flowchart
+    dir: TD
+    next_id: 3
+    nodes:
+      - { id: a, kind: rect, x: 540, y: 120, w: 200, h: 90, text: "oben" }
+      - { id: b, kind: rect, x: 540, y: 420, w: 200, h: 90, text: "unten" }
+    edges:
+      - { id: e1, from_id: a, to_id: b, line: dotted, tail: arrow }
+  - title: "Zweite"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    nodes:
+      - { id: n1, kind: diamond, x: 300, y: 255, w: 200, h: 90, text: "" }

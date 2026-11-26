@@ -608,7 +608,7 @@ Applied after straightening, in this order:
 Snap 2 is the one that makes a hand-drawn sheet look machine-drawn: boxes a human means
 to be the same size never are.
 
-**Normative.** Each snap is individually switchable from the action bar (§8.1) and is a
+**Normative.** Each snap is individually switchable from `Einstellungen` (§8.0) and is a
 pure function on the sheet, so each is testable (§9). They are switchable because a
 diagram where everything snaps is occasionally the wrong diagram — a deliberately
 odd-sized node is a legitimate thing to want.
@@ -619,16 +619,20 @@ odd-sized node is a legitimate thing to want.
 
 ### 8.0 The window's chrome (normative)
 
-Two strips at the top, the canvas below:
+Two strips at the top, a status strip at the bottom, the canvas between:
 
 ```
-+--------------------------------------------------+
-| Datei  Bearbeiten  Ansicht  Einstellungen         |  menu strip, 28 px
-+--------------------------------------------------+
-| [Flussdiagramm v] | Kasten Rund Kapsel Kreis ...  |  tool strip, 46 px
-+--------------------------------------------------+
-|                                                  |
-|                     canvas                       |
++---------------------------------------------------+
+| Datei  Bearbeiten  Ansicht  Einstellungen  [Kante] |  menu strip, 28 px
++---------------------------------------------------+
+| [Flussdiagramm v] | Kasten Rund Kapsel Kreis ...   |  tool strip, 46 px
++---------------------------------------------------+
+|                                                   |
+|                      canvas                       |
+|                                                   |
++---------------------------------------------------+
+| bereit                             Folie 2/7  *   |  status strip, 24 px
++---------------------------------------------------+
 ```
 
 - The **menu strip** carries what a menu carries everywhere: `Datei` opens, saves and
@@ -636,48 +640,65 @@ Two strips at the top, the canvas below:
   presentation; `Einstellungen` holds what is a preference rather than an action. A
   title opens a dropdown, and the dropdown **claims the pointer** while it is open --
   the same rule as §8.2, for the same reason.
+- **`Kante` appears only while an edge is selected**, and holds line, head and tail
+  (§5.3) -- the only place where a composed connector is built by hand. A menu that is
+  always there but whose every entry is dead says less than a menu that appears when it
+  has something to say.
+- **`Ansicht` lists the slides** under its fixed entries, `>` on the current one, click
+  to jump. The list belongs in the menu because switching slides is a view act; it is
+  built fresh each frame from the deck, so a renamed slide is renamed in the menu.
 - The **tool strip** is the shapes, and its first control sets the **diagram type**. The
   type sits there because it is the one choice that changes what every other control in
   the strip means, and because a drawing surface should say what kind of drawing this is
   without opening a menu.
 - Only `flowchart` is projected (§1.1). The control offers the other types, sets them,
-  and the status line says the export will refuse -- stating it is better than hiding a
+  and the status strip says the export will refuse -- stating it is better than hiding a
   choice the model already has.
-- **The left bar is on its way out.** It stays while the strips grow, because taking it
-  away before they are complete would cost functions that work today. Nothing new goes
-  into it.
+- The **status strip** carries, left, the last thing that happened (what every `status`
+  message in the editor goes to), and right, the slide number plus `*` while there are
+  unsaved changes (§16.2). It is drawn, not built from widgets, and claims no input: a
+  click on it lands nowhere, which is what a report of state should do.
 
-### 8.1 Action bar (left, being replaced by §8.0)
+- Titles and shape buttons are **measured** (`ui.measure_text`), not placed on a fixed
+  pitch: `Einstellungen` is twice as wide as `Datei`, and a fixed pitch either wastes
+  the strip or lets the next label run into the one before it. Both happened.
 
-Built like glbview's panel (`test/glbview/src/viewer.aiml`, its spec §4.3):
-`ui.begin` -> `ui.begin_grid` -> `ui.begin_cell`, then a column of `ui.button`s where
-each one sets a single integer `action` that one dispatch point consumes afterwards.
-Groups go into their own methods (glbview's `file_panel`, `clip_panel`, `shader_panel`)
-instead of one long body.
+**Normative -- chrome owns its area.** A press that *begins* on a strip never starts a
+stroke: the canvas tests the pointer against its own rect only. Without this rule a drag
+that starts on a button also starts drawing, and the stroke crawls out from under the
+chrome.
 
-| Group | Entries |
+**Normative -- an open dropdown claims the pointer**, and the canvas is asked *first*,
+so the canvas must stand down while one is open (§8.2 has the same rule for the
+right-click menu). A dropdown hangs over the canvas: without this, a click on
+`Kante > Fuss Pfeil` also landed on empty canvas, cleared the selection, and the action
+then arrived with nothing to act on -- a menu entry that did nothing, every time.
+
+### 8.1 The left bar, and why it is gone
+
+Until the strips were complete the window had a scrollable column of `ui.button`s on the
+left, built like glbview's panel (`test/glbview/src/viewer.aiml`, its spec §4.3): file,
+export, shapes, selection, slides, view. It is **removed**; every entry it had has a home:
+
+| was in the bar | is now |
 |---|---|
-| file | new, open, save, export `.mmd` |
-| tool | select / draw / edge / erase — mutually exclusive, so `ui.radio` |
-| shape | the `NodeKind` palette as draggable stencils — the no-recognition path, always available |
-| snap | grid, straighten, harmonise sizes, align (§7.6.1 toggles) |
-| sheet | diagram type, direction, propose direction from layout (§5.4) |
-| view | zoom in / out, fit, show Mermaid pane |
+| Datei, Export | `Datei` (§8.0) |
+| Formen | tool strip |
+| Auswahl (label, image, delete) | `Bearbeiten` |
+| Folien (back, forward, new, title, the list) | `Ansicht` |
+| Linie / Kopf / Fuss of an edge | `Kante`, which appears with the selection |
+| Praesentieren | `Ansicht` |
+| the status label and the `*` | status strip |
 
-**Normative — the bar owns its area.**
+The canvas now has the full window width, which is the point: a sheet is 1280 x 720 and
+was being drawn into 82 % of the window.
 
-- The bar is a **scrollable cell** (aiml spec/44_3 §3.6) at a fixed fraction of the window
-  width, so a long shape palette never pushes a control out of reach. glbview uses 16%;
-  `chart` uses 18% to fit the palette.
-- The **wheel** scrolls the bar while the cursor is over it and zooms the canvas while
-  it is over the canvas — one wheel, two meanings, decided by position, exactly as in
-  glbview (its spec §4.4).
-- A press that **begins** over the bar never starts a stroke: the canvas tests
-  `mouse_pressed` against the canvas rect only. Without this rule a drag that starts on
-  a button also starts drawing, and the stroke then crawls out from under the panel.
-
-A toggle shows its state in its own caption (glbview's `switch_text`), not in a separate
-indicator next to it.
+**A number that meant two things.** In the bar the tail caps were actions 59..63, and
+the dispatch had already spent 60 and 61 on *open* and *save as* -- it tests them first,
+so `Fuss: Pfeil.` opened a file dialog and `Fuss: Kreis.` opened *save as*. Two
+authors, one list of integers, no compiler to notice. The caps are **80..84** now, and
+the rule is: a dispatch number is allocated once, in the table of §8.3, and a menu entry
+carries its number next to its label so the two cannot drift apart.
 
 ### 8.2 Right-click menu
 
@@ -713,6 +734,26 @@ menu rather than the canvas. This is stated because the opposite has already hap
 in this codebase: an overlay that drew on top but claimed nothing let clicks fall
 straight through to the canvas, which here would mean drawing a stroke *through* the
 menu. `ui.spinbox` already shields this way (spec/44_3 §4.2) and is the model.
+
+### 8.3 Dispatch numbers
+
+One action integer runs the whole editor, so the ranges are written down:
+
+| range | meaning |
+|---|---|
+| 1..3 | save, Markdown, Mermaid |
+| 19, 26, 27 | arm the arrow gesture, label the selection, free drawing |
+| 20..24, 30 | delete, slide back/forward/new, heading, present |
+| 40 + n | jump to slide n |
+| 50..53 | the selected edge's line (solid, dotted, thick, invisible) |
+| 54..58 | its head (none, arrow, circle, cross, hollow) |
+| 60, 61, 65..68 | open, save as, SVG, HTML, PowerPoint, choose image |
+| 70 + n | diagram type n |
+| 80..84 | its tail (none, arrow, circle, cross, hollow) |
+| 100, 101 | pointer mode: drag an arrow / draw freely |
+| 110 + n | arm shape n of the tool strip |
+
+---
 
 ---
 
@@ -921,9 +962,9 @@ something the author never saw.
 
 ## 15. The editor surface
 
-The window is the action bar (§8.1) on the left and the canvas filling the rest. The
-canvas is one slide of the deck; a strip at the bottom of the bar lists the slides and
-switches on click.
+The window is the two strips of §8.0 at the top, the status strip at the bottom and the
+canvas filling everything between, at the full window width. The canvas is one slide of
+the deck; `Ansicht` lists the slides and switches on click.
 
 ### 15.1 Placing and editing
 
