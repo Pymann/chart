@@ -131,3 +131,19 @@
                 condition: { eq: [good, 1] }
                 then: [{ set: [<.status, "geschrieben: ${target}"] }]
                 else: [{ set: [<.status, "Export fehlgeschlagen"] }]
+
+      # An empty deck with one slide (spec §16.4).  Here rather than in the editor
+      # because `Datei` owns what a document is, and because the editor file is at
+      # its line limit (aiml spec/49 §3).
+      - def:
+          name: fresh
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          body:
+            - call: [deck.slides.clear]
+            - decl: [blank, Sheet]
+            - set: [blank.title, "Neue Folie"]
+            - call: [deck.slides.push, blank]
+            - set: [deck.current, 0]
+            - set: [deck.title, ""]
+            - set: [<.status, "neues Blatt"]

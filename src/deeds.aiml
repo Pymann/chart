@@ -138,3 +138,76 @@
                   - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
                   - if: { condition: { eq: [step.ident, ident] }, then: [{ set: [step.text, text] }, { return: null }] }
                   - set: [idx, { +: [idx, 1] }]
+
+      # First line is the class name, the rest are its members (spec §5.8.2).  The
+      # box grows to hold them: a compartment that is drawn outside its own frame is
+      # worse than no compartment.
+      - def:
+          name: fill_rows
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [whole, string], [scale, f32]]
+          body:
+            - decl: [lines, list<string>, { call: [whole.split, "\n"] }]
+            - call: [node.rows.clear]
+            - set: [node.text, ""]
+            - decl: [idx, i32, 0]
+            - decl: [widest, f32, 0.0]
+            - while:
+                condition: { lt: [idx, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, idx] }]
+                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                  - if: { condition: { gt: [line_w, widest] }, then: [{ set: [widest, line_w] }] }
+                  - if:
+                      condition: { eq: [idx, 0] }
+                      then: [{ set: [node.text, line] }]
+                      else: [{ call: [node.rows.push, line] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [want_h, f32, { +: [36.0, { "*": [20.0, { cast: [node.rows.len, f32] }] }] }]
+            - if: { condition: { gt: [want_h, node.height] }, then: [{ set: [node.height, want_h] }] }
+            - if:
+                condition: { gt: [scale, 0.0] }
+                then:
+                  - decl: [want_w, f32, { +: [{ /: [widest, scale] }, 40.0] }]
+                  - if: { condition: { gt: [want_w, node.width] }, then: [{ set: [node.width, want_w] }] }
+
+      # Fill, frame or text colour of one element (spec §8.2, §5.6a).  deed 1 fill,
+      # 2 line/frame, 4 text; 1 when something was painted.
+      - def:
+          name: paint
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [kind, i32], [deed, i32], [tone, i32]]
+          return: i32
+          body:
+            - if:
+                condition: { eq: [kind, 2] }
+                then:
+                  - decl: [eidx, i32, 0]
+                  - while:
+                      condition: { lt: [eidx, slide.edges.len] }
+                      body:
+                        - decl: [edge, ref<Edge>, { at: [slide.edges, eidx] }]
+                        - if:
+                            condition: { eq: [edge.ident, ident] }
+                            then:
+                              - if:
+                                  condition: { eq: [deed, 4] }
+                                  then: [{ set: [edge.ink, tone] }]
+                                  else: [{ set: [edge.stroke, tone] }]
+                              - return: 1
+                        - set: [eidx, { +: [eidx, 1] }]
+                  - return: 0
+            - decl: [nidx, i32, 0]
+            - while:
+                condition: { lt: [nidx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, nidx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - if: { condition: { eq: [deed, 1] }, then: [{ set: [node.fill, tone] }] }
+                        - if: { condition: { eq: [deed, 2] }, then: [{ set: [node.stroke, tone] }] }
+                        - if: { condition: { eq: [deed, 4] }, then: [{ set: [node.ink, tone] }] }
+                        - return: 1
+                  - set: [nidx, { +: [nidx, 1] }]
+            - return: 0

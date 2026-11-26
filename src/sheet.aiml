@@ -414,6 +414,26 @@
           return: i32
           body:
             - decl: [document, ptr<yaml_doc>, { call: [yaml.parse_file, path] }]
+            - return: { call: [<.take_doc, document, path, deck] }
+
+      # The same deck out of a STRING -- what undo needs (spec §16.4): a snapshot is
+      # the sheet's own YAML, so undo restores through the very reader that opens a
+      # file, and cannot drift from it.
+      - def:
+          name: load_text
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [deck, ref<Deck>]]
+          return: i32
+          body:
+            - decl: [document, ptr<yaml_doc>, { call: [yaml.parse, text] }]
+            - return: { call: [<.take_doc, document, "(Schritt zurueck)", deck] }
+
+      - def:
+          name: take_doc
+          static_off: ["same_arg", "str_cmp"]
+          args: [[document, ptr<yaml_doc>], [path, string], [deck, ref<Deck>]]
+          return: i32
+          body:
             - decl: [error_text, string, { call: [yaml.error, document] }]
             - if:
                 condition: { neq: [error_text, ""] }

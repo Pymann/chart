@@ -1,0 +1,107 @@
+# Undo and redo (doc/spec/chart.md §16.4).
+#
+# A snapshot is the deck's own YAML -- the same bytes `Speichern` would write -- so a
+# step back goes through the very reader that opens a file. A second, cleverer
+# representation would be a second thing that can disagree with the document.
+#
+# What is NOT recorded: anything that is not in the file. The current slide, the
+# selection and the scroll are the view, and a view that jumps on undo is the thing
+# people complain about in other editors.
+- import: "src/sheet.aiml"
+
+- class:
+    name: History
+    description: "A stack of deck snapshots, and the one in hand (spec §16.4)"
+    members:
+      - [sheet_io, ref<SheetIO>]
+      - [past, list<string>]       # oldest first; the last one is the state in hand
+      - [future, list<string>]     # what undo took away, newest last
+      - [depth, i32]               # how many steps are kept
+    methods:
+      - def:
+          name: start
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          body:
+            - set: [<.depth, 100]
+            - call: [<.past.clear]
+            - call: [<.future.clear]
+            - call: [<.past.push, { call: [<.sheet_io.deck_yaml, deck] }]
+
+      # The state has settled into something new.  Recorded only if it really is new:
+      # a drag writes the same sheet many times, and an undo per mouse frame would be
+      # an undo nobody can use.
+      - def:
+          name: note
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          body:
+            - decl: [now, string, { call: [<.sheet_io.deck_yaml, deck] }]
+            - if:
+                condition: { gt: [<.past.len, 0] }
+                then:
+                  - decl: [last, string, { at: [<.past, { -: [<.past.len, 1] }] }]
+                  - if: { condition: { eq: [last, now] }, then: [{ return: null }] }
+            - call: [<.past.push, now]
+            # a new branch makes the old future unreachable, as in every editor
+            - call: [<.future.clear]
+            - if:
+                condition: { gt: [<.past.len, <.depth] }
+                then: [{ call: [<.past.remove, 0] }]
+
+      - def:
+          name: can_undo
+          return: i32
+          body:
+            - if: { condition: { gt: [<.past.len, 1] }, then: [{ return: 1 }] }
+            - return: 0
+
+      - def:
+          name: can_redo
+          return: i32
+          body:
+            - if: { condition: { gt: [<.future.len, 0] }, then: [{ return: 1 }] }
+            - return: 0
+
+      - def:
+          name: undo
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          return: i32
+          body:
+            - if: { condition: { eq: [{ call: [<.can_undo] }, 0] }, then: [{ return: 0 }] }
+            - decl: [now, string, { at: [<.past, { -: [<.past.len, 1] }] }]
+            - call: [<.past.remove, { -: [<.past.len, 1] }]
+            - call: [<.future.push, now]
+            - decl: [back, string, { at: [<.past, { -: [<.past.len, 1] }] }]
+            - return: { call: [<.apply, deck, back] }
+
+      - def:
+          name: redo
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          return: i32
+          body:
+            - if: { condition: { eq: [{ call: [<.can_redo] }, 0] }, then: [{ return: 0 }] }
+            - decl: [ahead, string, { at: [<.future, { -: [<.future.len, 1] }] }]
+            - call: [<.future.remove, { -: [<.future.len, 1] }]
+            - call: [<.past.push, ahead]
+            - return: { call: [<.apply, deck, ahead] }
+
+      # The slide in view is kept across the step, clamped to what is left: undo of
+      # "new slide" must not leave the editor looking at a slide that is gone.
+      - def:
+          name: apply
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [text, string]]
+          return: i32
+          body:
+            - decl: [keep, i32, deck.current]
+            - call: [deck.slides.clear]
+            - if:
+                condition: { eq: [{ call: [<.sheet_io.load_text, text, deck] }, 0] }
+                then: [{ return: 0 }]
+            - set: [deck.current, keep]
+            - if: { condition: { ge: [deck.current, deck.slides.len] }, then: [{ set: [deck.current, { -: [deck.slides.len, 1] }] }] }
+            - if: { condition: { lt: [deck.current, 0] }, then: [{ set: [deck.current, 0] }] }
+            - return: 1

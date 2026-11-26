@@ -1,0 +1,28 @@
+# Rueckgaengig und Wiederholen (spec §16.4): zwei Formen setzen, zweimal zurueck,
+# einmal vor -- uebrig bleibt die erste.  Ein Schnappschuss ist das YAML des Decks,
+# also muss auch next_id zurueckgehen.
+wait 3
+tool Raute
+wait 2
+at 300 250
+down 0
+up 0
+wait 2
+key Escape
+wait 2
+tool Kreis
+wait 2
+at 800 250
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+menu Bearbeiten|Rueckgaengig
+wait 2
+menu Bearbeiten|Rueckgaengig
+wait 2
+menu Bearbeiten|Wiederholen
+wait 3
+save
+wait 2

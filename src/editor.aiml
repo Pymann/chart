@@ -19,6 +19,7 @@
 - import: "src/seq_art.aiml"
 - import: "src/edge_art.aiml"
 - import: "src/deeds.aiml"
+- import: "src/history.aiml"
 
 - class:
     name: Editor
@@ -61,6 +62,8 @@
       - [art, ref<NodeArt>]            # draws one node (spec §15.2)
       - [edge_art, ref<EdgeArt>]       # draws the connectors (spec §5.3)
       - [deeds, ref<Deeds>]            # sheet edits that need no window
+      - [past, ref<History>]           # undo/redo (spec §16.4)
+      - [changed, i32]                 # something changed and has not settled yet
       - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
       - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
       - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
@@ -207,19 +210,13 @@
                               - call: [ui.draw_rect, cvs_x, { -: [{ +: [cvs_y, cvs_h] }, 58.0] }, cvs_w, 58.0, 0x0A0F14D8]
                               - call: [ui.draw_text, { +: [cvs_x, 18.0] }, { -: [{ +: [cvs_y, cvs_h] }, 42.0] }, slide.notes, 0xF0E8D0FF]
 
-      # ── the status strip (spec §8.0) ────────────────────────────────────────
-      # Drawn, not built from widgets, and it claims no input: a report of state
-      # that swallows a click would be lying about what it is.
+      # The status strip is drawn by the chrome (spec §8.0); the editor only says
+      # what goes in it: the last thing that happened, and where we are.
       - def:
           name: status_strip
           static_off: ["same_arg", "str_cmp"]
           args: [[win_w, f32], [win_h, f32]]
           body:
-            - decl: [tall, f32, { call: [<.strip_bottom] }]
-            - decl: [top, f32, { -: [win_h, tall] }]
-            - call: [ui.draw_rect, 0.0, top, win_w, tall, 0x182430FF]
-            - call: [ui.draw_rect, 0.0, top, win_w, 1.0, 0x2A3744FF]
-            - call: [ui.draw_text, 12.0, { +: [top, 4.0] }, <.status, 0xA8B6C4FF]
             - decl: [where, string, ""]
             - if:
                 condition: { gt: [<.deck.slides.len, 0] }
@@ -227,14 +224,13 @@
                   - decl: [number, i32, { +: [<.deck.current, 1] }]
                   - set: [where, "Folie ${number}/${<.deck.slides.len}"]
             - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [where, "${where}  *"] }] }
-            - decl: [wide, f32, { call: [ui.measure_text, where] }]
-            - call: [ui.draw_text, { -: [win_w, { +: [wide, 14.0] }] }, { +: [top, 4.0] }, where, 0xA8B6C4FF]
+            - call: [<.top_bar.foot, win_w, win_h, <.status, where]
 
       - def:
           name: strip_bottom
           return: f32
           body:
-            - return: 24.0
+            - return: { call: [<.top_bar.foot_height] }
 
       # The menu strip asks the deck what it should offer (spec §8.0): the slide
       # list under `Ansicht`, and `Kante` only while an edge is selected.
@@ -383,6 +379,44 @@
             - call: [<.label.begin, <.sel_step, { call: [<.deeds.text_of_step, slide, <.sel_step] }]
             - set: [<.status, "tippen, Enter uebernimmt"]
 
+      # Copy, cut, paste, duplicate -- one method, so the keys and the Bearbeiten
+      # menu cannot drift apart (spec §6).  1 copy, 2 cut, 3 paste, 4 duplicate.
+      - def:
+          name: clip_deed
+          static_off: ["same_arg", "str_cmp"]
+          args: [[wanted, i32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { le: [wanted, 2] }
+                then:
+                  - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Element waehlen"] }, { return: null }] }
+                  - if:
+                      condition: { eq: [{ call: [<.clip.copy, slide, <.sel] }, 1] }
+                      then:
+                        - set: [<.status, "kopiert"]
+                        - if:
+                            condition: { eq: [wanted, 2] }
+                            then: [{ call: [<.dispatch, 20] }, { set: [<.status, "ausgeschnitten"] }]
+                  - return: null
+            # duplicate is copy and paste in one gesture -- the offset comes from the
+            # paste, so a duplicate sits beside its original like any other
+            - if:
+                condition: { eq: [wanted, 4] }
+                then:
+                  - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Element waehlen"] }, { return: null }] }
+                  - if: { condition: { eq: [{ call: [<.clip.copy, slide, <.sel] }, 0] }, then: [{ return: null }] }
+            - decl: [made, string, { call: [<.clip.paste, slide] }]
+            - if:
+                condition: { neq: [made, ""] }
+                then:
+                  - set: [<.sel, made]
+                  - set: [<.sel_edge, ""]
+                  - call: [<.touch]
+                  - set: [<.status, "eingefuegt"]
+                else: [{ set: [<.status, "nichts in der Ablage"] }]
+
       # ── dispatch ────────────────────────────────────────────────────────────
       - def:
           name: dispatch
@@ -392,6 +426,57 @@
             - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
 
             - if: { condition: { eq: [action, 1] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
+            # 15/16 undo and redo, 17 a new deck (spec §16.4)
+            - if:
+                condition: { eq: [action, 15] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.past.undo, <.deck] }, 1] }
+                      then:
+                        - call: [<.clear_selection]
+                        - call: [<.ink.clear]
+                        - set: [<.dirty, 1]
+                        - set: [<.changed, 0]
+                        - set: [<.status, "Schritt zurueck"]
+                      else: [{ set: [<.status, "nichts mehr zurueckzunehmen"] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 16] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.past.redo, <.deck] }, 1] }
+                      then:
+                        - call: [<.clear_selection]
+                        - call: [<.ink.clear]
+                        - set: [<.dirty, 1]
+                        - set: [<.changed, 0]
+                        - set: [<.status, "Schritt vor"]
+                      else: [{ set: [<.status, "nichts mehr vorzunehmen"] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 17] }
+                then:
+                  - if:
+                      condition: { eq: [<.dirty, 1] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [<.files.ask_keep, "Die Aenderungen vorher speichern?"] }, 1] }
+                            then: [{ call: [<.save_deck, ""] }]
+                  - call: [<.files.fresh, <.deck]
+                  - set: [<.deck_path, ""]
+                  - set: [<.dirty, 0]
+                  - set: [<.changed, 0]
+                  - call: [<.clear_selection]
+                  - call: [<.ink.clear]
+                  - call: [<.past.start, <.deck]
+                  - set: [<.status, "neues Blatt"]
+                  - return: null
+            # 230..233: the clipboard, the same deeds the keys do (spec §6)
+            - if:
+                condition: { "&&": [{ ge: [action, 230] }, { le: [action, 233] }] }
+                then:
+                  - call: [<.clip_deed, { -: [action, 229] }]
+                  - return: null
             - if:
                 condition: { eq: [action, 61] }
                 then:
@@ -1136,36 +1221,15 @@
             - if:
                 condition: { eq: [holding, 1] }
                 then:
-                  - decl: [slide_c, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
-                  - decl: [wanted, i32, 0]
-                  - if: { condition: { eq: [key, "C"] }, then: [{ set: [wanted, 1] }] }
-                  - if: { condition: { eq: [key, "X"] }, then: [{ set: [wanted, 2] }] }
-                  - if: { condition: { eq: [key, "V"] }, then: [{ set: [wanted, 3] }] }
+                  - decl: [key_deed, i32, 0]
+                  - if: { condition: { eq: [key, "C"] }, then: [{ set: [key_deed, 1] }] }
+                  - if: { condition: { eq: [key, "X"] }, then: [{ set: [key_deed, 2] }] }
+                  - if: { condition: { eq: [key, "V"] }, then: [{ set: [key_deed, 3] }] }
+                  - if: { condition: { eq: [key, "Z"] }, then: [{ call: [<.dispatch, 15] }, { return: null }] }
+                  - if: { condition: { eq: [key, "Y"] }, then: [{ call: [<.dispatch, 16] }, { return: null }] }
                   - if:
-                      condition: { "&&": [{ lt: [wanted, 3] }, { gt: [wanted, 0] }] }
-                      then:
-                        - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Element waehlen"] }, { return: null }] }
-                        - if:
-                            condition: { eq: [{ call: [<.clip.copy, slide_c, <.sel] }, 1] }
-                            then:
-                              - set: [<.status, "kopiert"]
-                              - if:
-                                  condition: { eq: [wanted, 2] }
-                                  then: [{ call: [<.dispatch, 20] }, { set: [<.status, "ausgeschnitten"] }]
-                        - return: null
-                  - if:
-                      condition: { eq: [wanted, 3] }
-                      then:
-                        - decl: [made, string, { call: [<.clip.paste, slide_c] }]
-                        - if:
-                            condition: { neq: [made, ""] }
-                            then:
-                              - set: [<.sel, made]
-                              - set: [<.sel_edge, ""]
-                              - call: [<.touch]
-                              - set: [<.status, "eingefuegt"]
-                            else: [{ set: [<.status, "nichts in der Ablage"] }]
-                        - return: null
+                      condition: { gt: [key_deed, 0] }
+                      then: [{ call: [<.clip_deed, key_deed] }, { return: null }]
             - if: { condition: { eq: [key, "S"] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
             - if: { condition: { eq: [key, "O"] }, then: [{ call: [<.dispatch, 60] }, { return: null }] }
             # Enter opens the selected node for editing (spec §6)
@@ -1240,37 +1304,10 @@
             - call: [<.menu.close]
             - if: { condition: { eq: [deed, 3] }, then: [{ call: [<.dispatch, 20] }, { call: [<.touch] }, { return: null }] }
             - if:
-                condition: { eq: [kind, 2] }
+                condition: { eq: [{ call: [<.deeds.paint, slide, ident, kind, deed, tone] }, 1] }
                 then:
-                  - decl: [pos_e, i32, 0]
-                  - while:
-                      condition: { lt: [pos_e, slide.edges.len] }
-                      body:
-                        - decl: [edge, ref<Edge>, { at: [slide.edges, pos_e] }]
-                        - if:
-                            condition: { eq: [edge.ident, ident] }
-                            then:
-                              - if: { condition: { eq: [deed, 4] }, then: [{ set: [edge.ink, tone] }], else: [{ set: [edge.stroke, tone] }] }
-                              - call: [<.touch]
-                              - set: [<.status, "Kantenfarbe gesetzt"]
-                              - return: null
-                        - set: [pos_e, { +: [pos_e, 1] }]
-                  - return: null
-            - decl: [pos, i32, 0]
-            - while:
-                condition: { lt: [pos, slide.nodes.len] }
-                body:
-                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
-                  - if:
-                      condition: { eq: [node.ident, ident] }
-                      then:
-                        - if: { condition: { eq: [deed, 1] }, then: [{ set: [node.fill, tone] }] }
-                        - if: { condition: { eq: [deed, 2] }, then: [{ set: [node.stroke, tone] }] }
-                        - if: { condition: { eq: [deed, 4] }, then: [{ set: [node.ink, tone] }] }
-                        - call: [<.touch]
-                        - set: [<.status, "Farbe gesetzt"]
-                        - return: null
-                  - set: [pos, { +: [pos, 1] }]
+                  - call: [<.touch]
+                  - set: [<.status, "Farbe gesetzt"]
 
       # Picking something up ends the drawing (§7.5a): ink that produced nothing is
       # litter once the author has moved on to arranging.
@@ -1286,6 +1323,10 @@
           name: touch
           body:
             - set: [<.dirty, 1]
+            # the snapshot is NOT taken here: a drag calls touch every frame, and an
+            # undo per mouse frame is an undo nobody can use (spec §16.4).  The frame
+            # loop records it once the hand comes to rest.
+            - set: [<.changed, 1]
 
       - def:
           name: clear_selection
@@ -1368,7 +1409,7 @@
                         - if:
                             condition: { eq: [slide.dtype, DiagramType.class_diagram] }
                             then:
-                              - call: [<.fill_rows, node]
+                              - call: [<.deeds.fill_rows, node, <.label.text, <.last_scale]
                               - set: [<.edit_id, ""]
                               - call: [<.label.stop]
                               - set: [<.status, "uebernommen"]
@@ -1396,38 +1437,6 @@
                   - set: [idx, { +: [idx, 1] }]
             - set: [<.edit_id, ""]
 
-      # First line is the class name, the rest are its members (spec §5.8.2).  The
-      # box grows to hold them: a compartment that is drawn outside its own frame is
-      # worse than no compartment.
-      - def:
-          name: fill_rows
-          static_off: ["same_arg", "str_cmp"]
-          args: [[node, ref<Node>]]
-          body:
-            - decl: [lines, list<string>, { call: [<.label.text.split, "\n"] }]
-            - call: [node.rows.clear]
-            - set: [node.text, ""]
-            - decl: [idx, i32, 0]
-            - decl: [widest, f32, 0.0]
-            - while:
-                condition: { lt: [idx, lines.len] }
-                body:
-                  - decl: [line, string, { at: [lines, idx] }]
-                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
-                  - if: { condition: { gt: [line_w, widest] }, then: [{ set: [widest, line_w] }] }
-                  - if:
-                      condition: { eq: [idx, 0] }
-                      then: [{ set: [node.text, line] }]
-                      else: [{ call: [node.rows.push, line] }]
-                  - set: [idx, { +: [idx, 1] }]
-            - decl: [want_h, f32, { +: [36.0, { "*": [20.0, { cast: [node.rows.len, f32] }] }] }]
-            - if: { condition: { gt: [want_h, node.height] }, then: [{ set: [node.height, want_h] }] }
-            - if:
-                condition: { gt: [<.last_scale, 0.0] }
-                then:
-                  - decl: [want_w, f32, { +: [{ /: [widest, <.last_scale] }, 40.0] }]
-                  - if: { condition: { gt: [want_w, node.width] }, then: [{ set: [node.width, want_w] }] }
-
       # ── images ──────────────────────────────────────────────────────────────
       # Loaded once per distinct path when the deck is opened: a texture per frame
       # would re-upload every picture 60 times a second.
@@ -1449,6 +1458,7 @@
                 condition: { eq: [{ call: [<.sheet_io.load, path, <.deck] }, 0] }
                 then: [{ return: 1 }]
             - call: [<.ink.setup]
+            - call: [<.past.start, <.deck]
             - set: [<.diag.wanted, opts.diag]
             - if:
                 condition: { neq: [opts.script, ""] }
@@ -1572,14 +1582,19 @@
                                     - decl: [took2, i32, { call: [<.tools.press, bar_x, bar_y, menu_h] }]
                                     - if: { condition: { eq: [took2, 1] }, then: [{ set: [action, <.tools.deed] }] }
                         - set: [<.last_action, action]
-                        # DIAGNOSE: eine Leisten-Aktion wird eigenstaendig vermerkt,
-                        # unabhaengig von der Maus-Flanke -- sonst haengt der Beweis,
-                        # dass ein Knopf feuert, an der Protokollstelle daneben.
-                        - if:
-                            condition: { "&&": [{ neq: [action, 0] }, { neq: [<.diag.wanted, 0] }] }
-                            then:
-                              - call: [<.diag.say, "LEISTE aktion=${action}"]
+                        - if: { condition: { neq: [action, 0] }, then: [{ call: [<.diag.say, "LEISTE aktion=${action}"] }] }
                         - call: [<.dispatch, action]
+                        # a step for the undo stack, once the gesture is over and the
+                        # label editor is closed (spec §16.4)
+                        - if:
+                            condition: { eq: [<.changed, 1] }
+                            then:
+                              - decl: [busy, i32, { call: [input.mouse_button, 0] }]
+                              - if:
+                                  condition: { "&&": [{ eq: [busy, 0] }, { eq: [<.editing, 0] }] }
+                                  then:
+                                    - call: [<.past.note, <.deck]
+                                    - set: [<.changed, 0]
                   - call: [ui.end]
                   - if:
                       condition: { eq: [<.script.shot_due, 1] }
@@ -1618,6 +1633,9 @@
         sees: [pen, grip]
       - class: Deeds
         instance: deeds
+      - class: History
+        instance: past
+        sees: [sheet_io]
       - class: MermaidOut
         instance: mermaid
         sees: [seq]
@@ -1677,4 +1695,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art, edge_art, deeds]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art, edge_art, deeds, past]

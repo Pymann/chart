@@ -26,6 +26,28 @@
             - return: 28.0
 
       - def:
+          name: foot_height
+          return: f32
+          body:
+            - return: 24.0
+
+      # The status strip at the bottom (spec §8.0).  Drawn, not built from widgets,
+      # and it claims no input: a report of state that swallows a click would be
+      # lying about what it is.
+      - def:
+          name: foot
+          static_off: ["same_arg", "str_cmp"]
+          args: [[win_w, f32], [win_h, f32], [says, string], [where, string]]
+          body:
+            - decl: [tall, f32, { call: [<.foot_height] }]
+            - decl: [top, f32, { -: [win_h, tall] }]
+            - call: [ui.draw_rect, 0.0, top, win_w, tall, 0x182430FF]
+            - call: [ui.draw_rect, 0.0, top, win_w, 1.0, 0x2A3744FF]
+            - call: [ui.draw_text, 12.0, { +: [top, 4.0] }, says, 0xA8B6C4FF]
+            - decl: [wide, f32, { call: [ui.measure_text, where] }]
+            - call: [ui.draw_text, { -: [win_w, { +: [wide, 14.0] }] }, { +: [top, 4.0] }, where, 0xA8B6C4FF]
+
+      - def:
           name: titles
           return: list<string>
           body:
@@ -59,14 +81,19 @@
             - if:
                 condition: { eq: [menu, 0] }
                 then:
-                  - decl: [file_menu, list<string>, ["Oeffnen...|60", "Speichern|1", "Speichern unter...|61",
+                  - decl: [file_menu, list<string>, ["Neu|17", "Oeffnen...|60", "Speichern|1", "Speichern unter...|61",
                                                      "-|0",
                                                      "Markdown...|2", "Mermaid...|3", "SVG...|65", "HTML...|66", "PowerPoint...|67"]]
                   - return: file_menu
             - if:
                 condition: { eq: [menu, 1] }
                 then:
-                  - decl: [edit_menu, list<string>, ["Beschriften|26", "Bild waehlen...|68", "Entfernen|20",
+                  - decl: [edit_menu, list<string>, ["Rueckgaengig|15", "Wiederholen|16",
+                                                     "-|0",
+                                                     "Kopieren|230", "Ausschneiden|231", "Einfuegen|232",
+                                                     "Duplizieren|233",
+                                                     "-|0",
+                                                     "Beschriften|26", "Bild waehlen...|68", "Entfernen|20",
                                                      "-|0",
                                                      "Ueberschrift...|24", "Neue Folie|23"]]
                   - return: edit_menu

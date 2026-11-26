@@ -815,8 +815,9 @@ Two strips at the top, a status strip at the bottom, the canvas between:
 +---------------------------------------------------+
 ```
 
-- The **menu strip** carries what a menu carries everywhere: `Datei` opens, saves and
-  exports; `Bearbeiten` acts on the selection; `Ansicht` switches slides and starts the
+- The **menu strip** carries what a menu carries everywhere: `Datei` makes, opens,
+  saves and exports; `Bearbeiten` undoes, redoes, carries the clipboard and acts on
+  the selection; `Format` styles the label (§5.6a); `Ansicht` switches slides and starts the
   presentation; `Einstellungen` holds what is a preference rather than an action. A
   title opens a dropdown, and the dropdown **claims the pointer** while it is open --
   the same rule as §8.2, for the same reason.
@@ -1311,6 +1312,28 @@ stored **relative to the deck file** when it is below the deck's directory, abso
 otherwise: a deck that is moved or shared with its images next to it keeps working, and
 one that points into someone's home directory says so plainly instead of breaking
 silently somewhere else.
+
+---
+
+### 16.4 Undo and redo (normative)
+
+A snapshot is the **deck's own YAML** -- the same bytes `Speichern` writes. Undo
+restores through the reader that opens a file, so the two cannot drift apart; a
+second, cleverer representation would be a second thing to keep in step.
+
+- A step is recorded **when the hand comes to rest**: the frame loop notes a change
+  only while no mouse button is down and no label is being edited. A drag writes the
+  sheet on every frame, and an undo per mouse frame is an undo nobody can use.
+- A snapshot equal to the one before it is **not** recorded, so a gesture that ends
+  where it began costs nothing.
+- The **view is not part of the step**: the current slide, the selection and the ink
+  are not restored. An editor that jumps to another slide on undo is the thing people
+  complain about in other editors. The slide index is kept and clamped, because undo
+  of "new slide" must not leave the window looking at a slide that is gone.
+- A new change after an undo **drops the redo chain**, as everywhere else.
+- Depth is 100 steps. Keys: `Strg+Z`, `Strg+Y`; entries: `Bearbeiten`.
+- `Datei > Neu` starts an empty deck with one slide and **starts a new history**: the
+  old one belongs to a document that is no longer open.
 
 ---
 
