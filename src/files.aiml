@@ -1,0 +1,133 @@
+# Opening, saving and exporting (doc/spec/chart.md §16, §17).
+#
+# Its own class because the editor may not pass 1499 lines (aiml spec/49 §3) -- and
+# because none of this is editor state: it is a deck, a path and a dialog.  The editor
+# keeps the selection and the canvas; this keeps the file.
+- import: "src/runtime.aiml"
+- import: "src/browser.aiml"
+
+- class:
+    name: Files
+    description: "The deck's file: open, save, export (spec §16)"
+    members:
+      - [sheet_io, ref<SheetIO>]
+      - [exporter, ref<Exporter>]
+      - [mermaid, ref<MermaidOut>]
+      - [pptx, ref<PptxOut>]
+      - [browse, ref<FileBrowser>]
+      - [status, string]              # what to show in the bar after a call
+    methods:
+      # Returns the path written to, "" when nothing was written -- a cancel must
+      # leave the deck exactly as it was (§16.1).
+      - def:
+          name: save
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [into, string], [current, string]]
+          return: { type: string, lifetime: producer }
+          body:
+            - decl: [target, string, into]
+            - if: { condition: { eq: [target, ""] }, then: [{ set: [target, current] }] }
+            - if:
+                condition: { eq: [target, ""] }
+                then: [{ set: [target, { call: [<.browse.ask, 1, "diagramm.deck.yaml"] }] }]
+            - if: { condition: { eq: [target, ""] }, then: [{ set: [<.status, "abgebrochen"] }, { return: "" }] }
+            - decl: [yaml_text, string, { call: [<.sheet_io.deck_yaml, deck] }]
+            - if:
+                condition: { eq: [{ call: [<.exporter.write_file, target, yaml_text] }, 0] }
+                then:
+                  - set: [<.status, "Speichern fehlgeschlagen"]
+                  - return: ""
+            - call: [<.browse.start_in, target]
+            - set: [<.status, "gespeichert: ${target}"]
+            - return: target
+
+      - def:
+          name: ask_open
+          return: { type: string, lifetime: producer }
+          body:
+            - return: { call: [<.browse.ask, 0, ""] }
+
+      - def:
+          name: ask_save_as
+          return: { type: string, lifetime: producer }
+          body:
+            - return: { call: [<.browse.ask, 1, "diagramm.deck.yaml"] }
+
+      - def:
+          name: ask_keep
+          static_off: ["same_arg", "str_cmp"]
+          args: [[question, string]]
+          return: i32
+          body:
+            - return: { call: [<.browse.confirm, question] }
+
+      # SheetIO.load PUSHES slides, so the deck is emptied first: opening a second
+      # file would otherwise show both decks at once.
+      - def:
+          name: load
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [from_path, string]]
+          return: i32
+          body:
+            - decl: [fresh, Deck]
+            - if:
+                condition: { eq: [{ call: [<.sheet_io.load, from_path, fresh] }, 0] }
+                then:
+                  - set: [<.status, "konnte ${from_path} nicht lesen"]
+                  - return: 0
+            - call: [deck.slides.clear]
+            - set: [deck.title, fresh.title]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, fresh.slides.len] }
+                body:
+                  - decl: [slide, Sheet, { at: [fresh.slides, idx] }]
+                  - call: [deck.slides.push, slide]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [deck.current, 0]
+            - call: [<.browse.start_in, from_path]
+            - set: [<.status, "geoeffnet: ${from_path}"]
+            - return: 1
+
+      # 2 Markdown, 3 Mermaid, 65 SVG, 66 HTML, 67 PowerPoint -- the bar's numbers, so
+      # one place decides what each one means.
+      - def:
+          name: export_to
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [action, i32], [deck_path, string]]
+          body:
+            - decl: [folder_wanted, i32, 0]
+            - if: { condition: { eq: [action, 2] }, then: [{ set: [folder_wanted, 1] }] }
+            - if: { condition: { eq: [action, 65] }, then: [{ set: [folder_wanted, 1] }] }
+            - decl: [suggest, string, "folie.mmd"]
+            - if: { condition: { eq: [action, 66] }, then: [{ set: [suggest, "praesentation.html"] }] }
+            - if: { condition: { eq: [action, 67] }, then: [{ set: [suggest, "praesentation.pptx"] }] }
+            - decl: [target, string, ""]
+            - if:
+                condition: { eq: [folder_wanted, 1] }
+                then: [{ set: [target, { call: [<.browse.ask, 3, ""] }] }]
+                else: [{ set: [target, { call: [<.browse.ask, 1, suggest] }] }]
+            - if: { condition: { eq: [target, ""] }, then: [{ set: [<.status, "abgebrochen"] }, { return: null }] }
+            - decl: [good, i32, 0]
+            - if: { condition: { eq: [action, 2] }, then: [{ set: [good, { call: [<.exporter.write_markdown, deck, target] }] }] }
+            - if: { condition: { eq: [action, 65] }, then: [{ set: [good, { call: [<.exporter.write_svg, deck, target] }] }] }
+            - if: { condition: { eq: [action, 66] }, then: [{ set: [good, { call: [<.exporter.write_html, deck, target] }] }] }
+            - if:
+                condition: { eq: [action, 67] }
+                then:
+                  # images hang off the deck file, not off the working directory (§16.3)
+                  - decl: [here, path, deck_path]
+                  - decl: [up_dir, path, { call: [here.parent] }]
+                  - decl: [folder, string, { call: [up_dir.to_string] }]
+                  - set: [good, { call: [<.pptx.emit, deck, target, folder] }]
+            - if:
+                condition: { eq: [action, 3] }
+                then:
+                  # one .mmd is one diagram (§5), so this exports the slide on screen
+                  - decl: [slide, ref<Sheet>, { at: [deck.slides, deck.current] }]
+                  - decl: [text, string, { call: [<.mermaid.emit, slide] }]
+                  - set: [good, { call: [<.exporter.write_file, target, text] }]
+            - if:
+                condition: { eq: [good, 1] }
+                then: [{ set: [<.status, "geschrieben: ${target}"] }]
+                else: [{ set: [<.status, "Export fehlgeschlagen"] }]

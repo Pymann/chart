@@ -842,13 +842,22 @@ fine on screen.
 
 ## 16. Files: opening, saving, picking
 
-There is **no OS file dialog** in aiml, and chart does not pretend otherwise: the file
-browser is drawn by chart itself from `io.list_dir`, the way glbview's already is. That
-is not a workaround to be replaced later — a dialog drawn by the application keeps the
-filter, the sort order and the keyboard in one place, and `ui.*` is an immediate-mode
-surface where a modal native dialog would block the frame loop.
+**The system's dialog first, chart's own as the fallback** — the arrangement glbview
+already uses. aiml has no dialog call of its own, but it can run one: `sys.exe` starts
+`zenity`, `kdialog`, `yad` or `qarma` and reads the chosen path from its output. That
+dialog is the one the author knows, with their places, their recent folders and their
+keyboard habits, and nothing chart draws will ever match it.
+
+When no such program is installed, chart draws the browser itself from `io.list_dir`.
+That is not a lesser mode to be removed later: a machine without zenity must still be
+able to open and save, and an export that depends on an optional package is an export
+that fails on someone else's machine.
 
 ### 16.1 The browser (normative)
+
+The rules below describe the **fallback** browser. The system dialog brings its own
+behaviour and chart does not fight it; it only states the start directory, the filter
+and, when saving, the suggested name.
 
 - It is **modal over the canvas**: while it is open the canvas takes no presses and the
   ink is not read. §6's rule stands — one consumer for the keyboard, and while the
@@ -873,9 +882,12 @@ surface where a modal native dialog would block the frame loop.
   than inventing one.
 - The sheet is **dirty** from the first edit that changes it, and the window title and
   the bar say so. Writing clears it.
-- Opening another file, or quitting, **while dirty asks first**, with three answers:
-  save, discard, cancel. A surface that drops an hour of arranging because a key was hit
-  is not finished software, and "it was in the status line" is not a warning.
+- Opening another file **while dirty asks first**. The question has two buttons, and the
+  third answer comes from asking twice: "save the changes?" and then the file dialog,
+  whose cancel leaves everything as it was. Three-button dialogs are spelled differently
+  by zenity and kdialog and report the third answer through the exit code — a wrong
+  guess there would discard an hour of arranging silently, which is exactly what this
+  question exists to prevent.
 
 ### 16.3 Images
 
@@ -932,18 +944,30 @@ serialisation of the data the sheet already is (§4).
 
 ### 17.2 PPTX (normative)
 
-- OOXML, written as a directory tree and zipped with `compress.zip`. Slide size
-  12192000 x 6858000 EMU (16:9); one EMU-per-sheet-unit factor of 9525, so the 1280x720
-  page maps exactly.
-- Shapes are **real** `p:sp` with `a:prstGeom` — `rect`, `roundRect`, `ellipse`,
-  `diamond`, `parallelogram`, `hexagon` — and the label in `a:t`. The point of a PPTX is
-  that someone can edit it afterwards; a slide holding one flat picture would be a
-  screenshot with extra steps.
+- OOXML. Slide size 12192000 x 6858000 EMU (16:9) at 9525 EMU per sheet unit, so the
+  1280x720 page maps exactly and nothing is scaled.
+- The archive is written by chart, not by `compress.zip`: that call puts a directory's
+  contents **under that directory's own name** inside the archive, and OOXML parts must
+  sit at the root. Entries are STORED rather than deflated and carry a fixed
+  1980-01-01 timestamp — that costs a little size and buys a package that is a pure
+  function of its contents, which is the same promise §17.1 makes and the only reason
+  the test below can compare bytes at all.
+- Images are **embedded** in `ppt/media/`, never linked: a link breaks the moment the
+  deck is mailed, which is the normal fate of a deck. Paths are resolved against the
+  deck's directory (§16.3), so exporting from elsewhere does not turn every picture
+  into a missing file.
+- Shapes are **real** `p:sp` with `a:prstGeom` — `rect`, `roundRect` (a stadium is the
+  same with `adj 50000`), `ellipse`, `diamond`, `hexagon`, `can` for a cylinder and
+  `flowChartPredefinedProcess` for a subroutine — and the label in `a:t`. The point of a
+  PPTX is that someone can edit it afterwards; a slide holding one flat picture would be
+  a screenshot with extra steps.
 - Edges are `p:cxnSp` straight connectors with the arrow head in `a:tailEnd`.
-- The zip stores modification times, so a PPTX is **not** byte-comparable. Its test is
-  structural instead: the XML parts are compared byte-exact before zipping, and
-  `soffice --headless --convert-to pdf` must read the finished file — an external reader
-  is the only honest check that the container is valid.
+- Two tests, because either alone would lie: the parts are unpacked and compared
+  **byte-exact**, which catches every silent change to the projection; and
+  `soffice --headless --convert-to pdf` must read the finished file, because only a real
+  reader can say whether the container is valid at all. A byte comparison would happily
+  bless a package no tool can open, and a converter that succeeds says nothing about
+  which shapes are inside.
 
 ### 17.3 HTML (normative)
 

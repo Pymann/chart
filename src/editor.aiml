@@ -7,6 +7,8 @@
 - import: "src/ink.aiml"
 - import: "src/pen.aiml"
 - import: "src/grip.aiml"
+- import: "src/files.aiml"
+- import: "src/reader.aiml"
 
 - class:
     name: Editor
@@ -19,6 +21,8 @@
       - [ink, ref<Ink>]
       - [pen, ref<Pen>]
       - [grip, ref<Grip>]
+      - [files, ref<Files>]
+      - [dirty, i32]                   # unsaved changes (spec §16.2)
       - [deck, Deck]
       - [deck_path, string]
       - [armed, i32]                    # NodeKind to place on the next canvas click, -1 = none
@@ -35,8 +39,8 @@
       - [link_from, string]             # source node while an edge is being dragged
       - [sel_edge, string]
       - [last_scale, f32]               # slide scale of the last frame, for auto-grow
-      - [diag, string]                  # --diag: Klickprotokoll
-      - [diag_on, i32]                  # --diag 1
+      - [diag, ref<Diag>]               # --diag 1: the shared log
+      - [reader, ref<Reader>]           # turns ink into sheet elements (spec §7)
       - [settle, f64]                   # seconds the ink waits (spec §7.5a)
       - [read_at, i32]                  # ink size when it was last read
       - [bar_hov, i32]                  # DIAGNOSE: sieht die Leiste den Zeiger?
@@ -379,10 +383,18 @@
             - call: [ui.label, <.status]
             - call: [ui.separator]
 
-            - call: [ui.label, "Datei"]
+            - decl: [dirt, string, ""]
+            - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [dirt, " *"] }] }
+            - call: [ui.label, "Datei${dirt}"]
+            - if: { condition: { call: [ui.button, "Oeffnen..."] }, then: [{ set: [action, 60] }] }
             - if: { condition: { call: [ui.button, "Speichern"] }, then: [{ set: [action, 1] }] }
-            - if: { condition: { call: [ui.button, "Markdown"] }, then: [{ set: [action, 2] }] }
-            - if: { condition: { call: [ui.button, "Mermaid"] }, then: [{ set: [action, 3] }] }
+            - if: { condition: { call: [ui.button, "Speichern unter..."] }, then: [{ set: [action, 61] }] }
+            - call: [ui.label, "Export"]
+            - if: { condition: { call: [ui.button, "Markdown..."] }, then: [{ set: [action, 2] }] }
+            - if: { condition: { call: [ui.button, "Mermaid..."] }, then: [{ set: [action, 3] }] }
+            - if: { condition: { call: [ui.button, "SVG..."] }, then: [{ set: [action, 65] }] }
+            - if: { condition: { call: [ui.button, "HTML..."] }, then: [{ set: [action, 66] }] }
+            - if: { condition: { call: [ui.button, "PowerPoint..."] }, then: [{ set: [action, 67] }] }
             - call: [ui.separator]
 
             - call: [ui.label, "Formen"]
@@ -412,6 +424,7 @@
 
             - call: [ui.label, "Auswahl"]
             - if: { condition: { call: [ui.button, "Beschriften"] }, then: [{ set: [action, 26] }] }
+            - if: { condition: { call: [ui.button, "Bild waehlen..."] }, then: [{ set: [action, 68] }] }
             - if: { condition: { call: [ui.button, "Entfernen"] }, then: [{ set: [action, 20] }] }
             - call: [ui.separator]
 
@@ -448,33 +461,53 @@
           body:
             - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
 
+            - if: { condition: { eq: [action, 1] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
             - if:
-                condition: { eq: [action, 1] }
+                condition: { eq: [action, 61] }
                 then:
-                  - decl: [yaml_text, string, { call: [<.sheet_io.deck_yaml, <.deck] }]
-                  - if:
-                      condition: { eq: [{ call: [<.exporter.write_file, <.deck_path, yaml_text] }, 1] }
-                      then: [{ set: [<.status, "gespeichert"] }]
-                      else: [{ set: [<.status, "Speichern fehlgeschlagen"] }]
+                  - decl: [where, string, { call: [<.files.ask_save_as] }]
+                  - if: { condition: { neq: [where, ""] }, then: [{ call: [<.save_deck, where] }] }
                   - return: null
             - if:
-                condition: { eq: [action, 2] }
+                condition: { eq: [action, 60] }
                 then:
+                  # dirty first (§16.2): the open dialog's cancel is the third answer
                   - if:
-                      condition: { eq: [{ call: [<.exporter.write_markdown, <.deck, "export/md"] }, 1] }
-                      then: [{ set: [<.status, "Markdown in export/md"] }]
-                      else: [{ set: [<.status, "Markdown fehlgeschlagen"] }]
+                      condition: { eq: [<.dirty, 1] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [<.files.ask_keep, "Die Aenderungen vorher speichern?"] }, 1] }
+                            then: [{ call: [<.save_deck, ""] }]
+                  - decl: [chosen, string, { call: [<.files.ask_open] }]
+                  - if: { condition: { eq: [chosen, ""] }, then: [{ set: [<.status, "abgebrochen"] }, { return: null }] }
+                  - if:
+                      condition: { eq: [{ call: [<.files.load, <.deck, chosen] }, 1] }
+                      then:
+                        - set: [<.deck_path, chosen]
+                        - set: [<.dirty, 0]
+                        - call: [<.clear_selection]
+                        - call: [<.ink.clear]
+                  - set: [<.status, <.files.status]
+                  - return: null
+            - decl: [exports, i32, 0]
+            - if: { condition: { eq: [action, 2] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 3] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 65] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 66] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 67] }, then: [{ set: [exports, 1] }] }
+            - if:
+                condition: { eq: [exports, 1] }
+                then:
+                  - call: [<.files.export_to, <.deck, action, <.deck_path]
+                  - set: [<.status, <.files.status]
                   - return: null
             - if:
-                condition: { eq: [action, 3] }
+                condition: { eq: [action, 68] }
                 then:
-                  - decl: [cur_mm, i32, <.deck.current]
-                  - decl: [slide_mm, ref<Sheet>, { at: [<.deck.slides, cur_mm] }]
-                  - decl: [text, string, { call: [<.mermaid.emit, slide_mm] }]
-                  - if:
-                      condition: { eq: [{ call: [<.exporter.write_file, "export/slide.mmd", text] }, 1] }
-                      then: [{ set: [<.status, "Mermaid in export/slide.mmd"] }]
-                      else: [{ set: [<.status, "Mermaid fehlgeschlagen"] }]
+                  - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Bild-Element waehlen"] }, { return: null }] }
+                  - decl: [picture, string, { call: [<.files.browse.ask, 2, ""] }]
+                  - if: { condition: { eq: [picture, ""] }, then: [{ return: null }] }
+                  - call: [<.set_image, picture]
                   - return: null
 
             - if:
@@ -575,6 +608,7 @@
                                   condition: { eq: [node.ident, <.sel] }
                                   then:
                                     - call: [slide_del.nodes.remove, pos]
+                                    - call: [<.touch]
                                     - set: [<.sel, ""]
                                     - set: [<.status, "entfernt"]
                                     - return: null
@@ -616,35 +650,6 @@
                 then:
                   - set: [<.deck.current, { -: [action, 40] }]
                   - set: [<.sel, ""]
-
-      # ── canvas input (spec §15.1) ──────────────────────────────────────────
-      # §7.5: an endpoint hits a node's box GROWN by `reach`. Without it a line has
-      # to start and end exactly inside the shape, which is not how anybody draws.
-      - def:
-          name: node_near
-          static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32], [reach, f32]]
-          return: string
-          body:
-            - decl: [pos, i32, { -: [slide.nodes.len, 1] }]
-            - while:
-                condition: { ge: [pos, 0] }
-                body:
-                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
-                  - if:
-                      condition: { ge: [spot_x, { -: [node.pos_x, reach] }] }
-                      then:
-                        - if:
-                            condition: { le: [spot_x, { +: [{ +: [node.pos_x, node.width] }, reach] }] }
-                            then:
-                              - if:
-                                  condition: { ge: [spot_y, { -: [node.pos_y, reach] }] }
-                                  then:
-                                    - if:
-                                        condition: { le: [spot_y, { +: [{ +: [node.pos_y, node.height] }, reach] }] }
-                                        then: [{ return: node.ident }]
-                  - set: [pos, { -: [pos, 1] }]
-            - return: ""
 
       - def:
           name: node_at
@@ -744,9 +749,8 @@
                 then:
                   - set: [<.status, "P${down_now} R${up_now} H${held} F${over_canvas} W${<.armed}"]
                   - decl: [hit_dbg, string, { call: [<.node_at, slide, slide_x, slide_y] }]
-                  - if: { condition: { eq: [<.diag_on, 0] }, then: [{ return: null }] }
-                  - set: [<.diag, "${<.diag}P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} leiste_hover=${<.bar_hov} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'\n"]
-                  - call: [<.exporter.write_file, "diag.log", <.diag]
+                  - if: { condition: { eq: [<.diag.wanted, 0] }, then: [{ return: null }] }
+                  - call: [<.diag.say, "P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} leiste_hover=${<.bar_hov} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'"]
 
             # ── press ────────────────────────────────────────────────────────
             - if:
@@ -793,6 +797,7 @@
                         - set: [fresh.width, 200.0]
                         - set: [fresh.height, 90.0]
                         - call: [slide.nodes.push, fresh]
+                        - call: [<.touch]
                         - set: [slide.next_id, { +: [slide.next_id, 1] }]
                         - set: [<.armed, -1]
                         - call: [<.begin_edit, fresh.ident]
@@ -889,7 +894,13 @@
                       condition: { "||": [{ call: [input.mouse_pressed, 1] }, { "&&": [{ eq: [fresh_ink, 1] }, { gt: [idle, <.settle] }] }] }
                       then:
                         - set: [<.read_at, <.ink.count]
-                        - decl: [made, i32, { call: [<.read_ink, slide] }]
+                        - decl: [made, i32, { call: [<.reader.read_ink, slide] }]
+                        - set: [<.status, <.reader.status]
+                        - if:
+                            condition: { neq: [<.reader.made_id, ""] }
+                            then:
+                              - call: [<.begin_edit, <.reader.made_id]
+                              - set: [<.reader.made_id, ""]
                         # A group that produced nothing is KEPT: drawing a head first
                         # and then taking a moment over the line must not cost the
                         # head. The right button is the explicit discard.
@@ -932,6 +943,7 @@
                               - set: [edge.to_id, dst]
                               - set: [edge.kind, EdgeKind.arrow]
                               - call: [slide.edges.push, edge]
+                              - call: [<.touch]
                               - set: [slide.next_id, { +: [slide.next_id, 1] }]
                               - set: [<.sel_edge, edge.ident]
                               - set: [<.status, "Kante gezogen"]
@@ -951,6 +963,7 @@
                       condition: { eq: [{ call: [input.mouse_button, 0] }, 0] }
                       then: [{ call: [<.grip.stop] }, { return: null }]
                   - call: [<.grip.drag, slide, slide_x, slide_y]
+                  - call: [<.touch]
                   - return: null
 
             # ── drag a node ──────────────────────────────────────────────────
@@ -968,275 +981,11 @@
                         - if:
                             condition: { eq: [node.ident, <.drag_id] }
                             then:
+                              - call: [<.touch]
                               - set: [node.pos_x, { -: [slide_x, <.drag_dx] }]
                               - set: [node.pos_y, { -: [slide_y, <.drag_dy] }]
                               - set: [pos, slide.nodes.len]
                         - set: [pos, { +: [pos, 1] }]
-
-      - def:
-          name: log_ink
-          static_off: ["same_arg", "str_cmp"]
-          args: [[what, string], [shape, ref<Guess>], [total, i32]]
-          body:
-            - if: { condition: { eq: [<.diag_on, 0] }, then: [{ return: null }] }
-            # The percentages are computed first: a `"*"` inside a double-quoted
-            # scalar ends that scalar, and the parser then reports a flow error
-            # 130 characters further along.
-            - decl: [closed_pct, i32, { cast: [{ "*": [shape.closed, 100.0] }, i32] }]
-            - decl: [fill_pct, i32, { cast: [{ "*": [shape.fill, 100.0] }, i32] }]
-            - set: [<.diag, "${<.diag}TINTE striche=${total} punkte=${<.ink.count} geschlossen=${closed_pct}% fuellung=${fill_pct}% ecken=${shape.corners} kopf=${shape.has_head} fuss=${shape.has_tail} -> ${what}\n"]
-            - call: [<.exporter.write_file, "diag.log", <.diag]
-
-      # The two ends of the whole group: project every point on the group's own
-      # direction and take the extremes. Taking "first point of the first stroke" and
-      # "tip of the last" assumes the strokes were drawn in order and none overshot --
-      # neither holds for dashes.
-      - def:
-          name: group_ends
-          args: [[ends, ref<Guess>]]
-          body:
-            - if: { condition: { lt: [<.ink.count, 2] }, then: [{ return: null }] }
-            - call: [<.ink.points.seek, 0]
-            - decl: [from_x, f32, { call: [<.ink.points.read, f32] }]
-            - decl: [from_y, f32, { call: [<.ink.points.read, f32] }]
-            - call: [<.ink.points.seek, { "*": [{ -: [<.ink.count, 1] }, 8] }]
-            - decl: [to_x, f32, { call: [<.ink.points.read, f32] }]
-            - decl: [to_y, f32, { call: [<.ink.points.read, f32] }]
-            - decl: [dir_x, f32, { -: [to_x, from_x] }]
-            - decl: [dir_y, f32, { -: [to_y, from_y] }]
-            - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [dir_x, dir_x] }, { "*": [dir_y, dir_y] }] }] }]
-            - if: { condition: { lt: [span, 1.0] }, then: [{ return: null }] }
-            - set: [dir_x, { /: [dir_x, span] }]
-            - set: [dir_y, { /: [dir_y, span] }]
-            - decl: [least, f32, 1000000.0]
-            - decl: [most, f32, -1000000.0]
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, <.ink.count] }
-                body:
-                  - call: [<.ink.points.seek, { "*": [idx, 8] }]
-                  - decl: [spot_x, f32, { call: [<.ink.points.read, f32] }]
-                  - decl: [spot_y, f32, { call: [<.ink.points.read, f32] }]
-                  - decl: [along, f32, { +: [{ "*": [spot_x, dir_x] }, { "*": [spot_y, dir_y] }] }]
-                  - if:
-                      condition: { lt: [along, least] }
-                      then: [{ set: [least, along] }, { set: [ends.pos_x, spot_x] }, { set: [ends.pos_y, spot_y] }]
-                  - if:
-                      condition: { gt: [along, most] }
-                      then: [{ set: [most, along] }, { set: [ends.tip_x, spot_x] }, { set: [ends.tip_y, spot_y] }]
-                  - set: [idx, { +: [idx, 1] }]
-
-      - def:
-          name: stroke_span
-          args: [[which, i32]]
-          return: f32
-          body:
-            - decl: [count, i32, { call: [<.ink.copy, which] }]
-            - return: { call: [<.ink.recognizer.path_length, <.ink.scratch, count] }
-
-      # ── reading the ink (spec §7.5a) ────────────────────────────────────────
-      # Four rules, first match wins.  The group is the unit: a dotted line, a
-      # subroutine and a cylinder are each DRAWN with the pen lifted in between, and
-      # reading stroke by stroke cannot see them at all.
-      - def:
-          name: read_ink
-          static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>]]
-          return: i32
-          body:
-            - decl: [total, i32, <.ink.starts.len]
-            - if: { condition: { eq: [total, 0] }, then: [{ return: 0 }] }
-            - decl: [shape, Guess]
-            - decl: [closed_count, i32, 0]
-            - decl: [first_closed, i32, -1]
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, total] }
-                body:
-                  - decl: [count, i32, { call: [<.ink.copy, idx] }]
-                  - if:
-                      condition: { eq: [{ call: [<.ink.recognizer.guess, <.ink.scratch, count, shape] }, 1] }
-                      then:
-                        - set: [closed_count, { +: [closed_count, 1] }]
-                        - if: { condition: { lt: [first_closed, 0] }, then: [{ set: [first_closed, idx] }] }
-                  - set: [idx, { +: [idx, 1] }]
-
-            # Rule 3: nothing closed -- one connector along the whole ink.
-            - if:
-                condition: { eq: [closed_count, 0] }
-                then:
-                  - decl: [ends, Guess]
-                  - call: [<.group_ends, ends]
-                  # Which is it: dashes, or a line with heads drawn on it? A head is a
-                  # SHORT stroke beside a long one. Counting strokes cannot tell the
-                  # two apart, and a double arrow is three strokes just like a dotted
-                  # line is.
-                  - decl: [longest, f32, 0.0]
-                  - decl: [sum_span, f32, 0.0]
-                  - decl: [line_at, i32, 0]
-                  - set: [idx, 0]
-                  - while:
-                      condition: { lt: [idx, total] }
-                      body:
-                        - decl: [one, f32, { call: [<.stroke_span, idx] }]
-                        - set: [sum_span, { +: [sum_span, one] }]
-                        - if:
-                            condition: { gt: [one, longest] }
-                            then: [{ set: [longest, one] }, { set: [line_at, idx] }]
-                        - set: [idx, { +: [idx, 1] }]
-                  - decl: [line_n, i32, { call: [<.ink.copy, line_at] }]
-                  - call: [<.ink.recognizer.stroke_end, <.ink.scratch, line_n, shape]
-                  - decl: [kind, i32, EdgeKind.open]
-                  - decl: [word, string, "Linie"]
-                  - if:
-                      condition: { "&&": [{ gt: [total, 1] }, { lt: [longest, { "*": [sum_span, 0.40] }] }] }
-                      then:
-                        # every stroke a similar fraction of the whole: dashes
-                        - set: [kind, EdgeKind.dotted]
-                        - set: [word, "gepunktete Linie"]
-                      else:
-                        # one long stroke carries the line; a short stroke whose middle
-                        # sits near an end is the head drawn there
-                        - decl: [head_at_end, i32, shape.has_head]
-                        - decl: [head_at_start, i32, shape.has_tail]
-                        - set: [idx, 0]
-                        - while:
-                            condition: { lt: [idx, total] }
-                            body:
-                              - if:
-                                  condition: { neq: [idx, line_at] }
-                                  then:
-                                    - decl: [mark, Guess]
-                                    - decl: [mark_n, i32, { call: [<.ink.copy, idx] }]
-                                    - decl: [skip, i32, { call: [<.ink.recognizer.guess, <.ink.scratch, mark_n, mark] }]
-                                    - decl: [mid_x, f32, { +: [mark.pos_x, { /: [mark.width, 2.0] }] }]
-                                    - decl: [mid_y, f32, { +: [mark.pos_y, { /: [mark.height, 2.0] }] }]
-                                    - decl: [to_start, f32, { call: [math.sqrt, { +: [{ "*": [{ -: [mid_x, ends.pos_x] }, { -: [mid_x, ends.pos_x] }] }, { "*": [{ -: [mid_y, ends.pos_y] }, { -: [mid_y, ends.pos_y] }] }] }] }]
-                                    - decl: [to_end, f32, { call: [math.sqrt, { +: [{ "*": [{ -: [mid_x, ends.tip_x] }, { -: [mid_x, ends.tip_x] }] }, { "*": [{ -: [mid_y, ends.tip_y] }, { -: [mid_y, ends.tip_y] }] }] }] }]
-                                    - if: { condition: { lt: [to_start, 70.0] }, then: [{ set: [head_at_start, 1] }] }
-                                    - if: { condition: { lt: [to_end, 70.0] }, then: [{ set: [head_at_end, 1] }] }
-                              - set: [idx, { +: [idx, 1] }]
-                        - if:
-                            condition: { "&&": [{ eq: [head_at_end, 1] }, { eq: [head_at_start, 1] }] }
-                            then: [{ set: [kind, EdgeKind.bidirectional] }, { set: [word, "Doppelpfeil"] }]
-                            else:
-                              - if:
-                                  condition: { "||": [{ eq: [head_at_end, 1] }, { eq: [head_at_start, 1] }] }
-                                  then: [{ set: [kind, EdgeKind.arrow] }, { set: [word, "Pfeil"] }]
-                        - set: [shape.has_head, head_at_end]
-                        - set: [shape.has_tail, head_at_start]
-                  # 40 units, not 12: a line is begun beside a shape, not on it
-                  - decl: [src, string, { call: [<.node_near, slide, ends.pos_x, ends.pos_y, 40.0] }]
-                  - decl: [dst, string, { call: [<.node_near, slide, ends.tip_x, ends.tip_y, 40.0] }]
-                  - decl: [made_it, i32, { call: [<.make_edge, slide, src, dst, kind] }]
-                  - if:
-                      condition: { eq: [made_it, 1] }
-                      then: [{ set: [<.status, "${word} erkannt"] }]
-                      else: [{ set: [<.status, "${word}: kein Knoten an den Enden"] }]
-                  - decl: [long_i, i32, { cast: [longest, i32] }]
-                  - decl: [sum_i, i32, { cast: [sum_span, i32] }]
-                  - decl: [note, string, "${word} von ${src} nach ${dst} laengster=${long_i} summe=${sum_i}"]
-                  - call: [<.log_ink, note, shape, total]
-                  - return: made_it
-
-            # Rules 1 and 2: one closed outline, the rest read as marks inside it.
-            - if:
-                condition: { eq: [closed_count, 1] }
-                then:
-                  - decl: [outline_n, i32, { call: [<.ink.copy, first_closed] }]
-                  - decl: [outline_ok, i32, { call: [<.ink.recognizer.guess, <.ink.scratch, outline_n, shape] }]
-                  - decl: [uprights, i32, 0]
-                  - decl: [flat_top, i32, 0]
-                  - set: [idx, 0]
-                  - while:
-                      condition: { lt: [idx, total] }
-                      body:
-                        - if:
-                            condition: { neq: [idx, first_closed] }
-                            then:
-                              - decl: [mark, Guess]
-                              - decl: [mark_n, i32, { call: [<.ink.copy, idx] }]
-                              - decl: [unused, i32, { call: [<.ink.recognizer.guess, <.ink.scratch, mark_n, mark] }]
-                              - decl: [mid_x, f32, { +: [mark.pos_x, { /: [mark.width, 2.0] }] }]
-                              - decl: [mid_y, f32, { +: [mark.pos_y, { /: [mark.height, 2.0] }] }]
-                              - if:
-                                  condition: { "&&": [{ ge: [mid_x, shape.pos_x] }, { "&&": [{ le: [mid_x, { +: [shape.pos_x, shape.width] }] }, { "&&": [{ ge: [mid_y, shape.pos_y] }, { le: [mid_y, { +: [shape.pos_y, shape.height] }] }] }] }] }
-                                  then:
-                                    - if:
-                                        condition: { gt: [mark.height, { "*": [mark.width, 1.6] }] }
-                                        then: [{ set: [uprights, { +: [uprights, 1] }] }]
-                                    - if:
-                                        condition: { gt: [mark.width, { "*": [mark.height, 1.6] }] }
-                                        then:
-                                          - if:
-                                              condition: { lt: [mid_y, { +: [shape.pos_y, { /: [shape.height, 4.0] }] }] }
-                                              then: [{ set: [flat_top, { +: [flat_top, 1] }] }]
-                        - set: [idx, { +: [idx, 1] }]
-                  - decl: [word, string, { call: [enums.name, "NodeKind", shape.kind] }]
-                  - if:
-                      condition: { ge: [uprights, 2] }
-                      then: [{ set: [shape.kind, NodeKind.subroutine] }, { set: [word, "Unterprogramm"] }]
-                      else:
-                        - if:
-                            condition: { ge: [flat_top, 1] }
-                            then: [{ set: [shape.kind, NodeKind.cylinder] }, { set: [word, "Zylinder"] }]
-                  - decl: [made, string, { call: [<.make_node, slide, shape] }]
-                  - set: [<.status, "${word} erkannt"]
-                  - call: [<.log_ink, word, shape, total]
-                  - call: [<.begin_edit, made]
-                  - return: 1
-
-            # Rule 4: several outlines -- each stroke on its own.
-            - set: [idx, 0]
-            - decl: [built, i32, 0]
-            - while:
-                condition: { lt: [idx, total] }
-                body:
-                  - decl: [count, i32, { call: [<.ink.copy, idx] }]
-                  - if:
-                      condition: { eq: [{ call: [<.ink.recognizer.guess, <.ink.scratch, count, shape] }, 1] }
-                      then:
-                        - decl: [ignored, string, { call: [<.make_node, slide, shape] }]
-                        - set: [built, { +: [built, 1] }]
-                  - set: [idx, { +: [idx, 1] }]
-            - set: [<.status, "${built} Formen erkannt"]
-            - call: [<.log_ink, "${built} Formen (Regel 4)", shape, total]
-            - return: built
-
-      - def:
-          name: make_node
-          static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [shape, ref<Guess>]]
-          return: string
-          body:
-            - decl: [fresh, Node]
-            - set: [fresh.ident, "n${slide.next_id}"]
-            - set: [fresh.kind, shape.kind]
-            - set: [fresh.pos_x, shape.pos_x]
-            - set: [fresh.pos_y, shape.pos_y]
-            - set: [fresh.width, shape.width]
-            - set: [fresh.height, shape.height]
-            - call: [slide.nodes.push, fresh]
-            - set: [slide.next_id, { +: [slide.next_id, 1] }]
-            - return: fresh.ident
-
-      - def:
-          name: make_edge
-          static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [src, string], [dst, string], [kind, i32]]
-          return: i32
-          body:
-            - if: { condition: { eq: [src, ""] }, then: [{ return: 0 }] }
-            - if: { condition: { eq: [dst, ""] }, then: [{ return: 0 }] }
-            - if: { condition: { eq: [src, dst] }, then: [{ return: 0 }] }
-            - decl: [edge, Edge]
-            - set: [edge.ident, "e${slide.next_id}"]
-            - set: [edge.from_id, src]
-            - set: [edge.to_id, dst]
-            - set: [edge.kind, kind]
-            - call: [slide.edges.push, edge]
-            - set: [slide.next_id, { +: [slide.next_id, 1] }]
-            - return: 1
 
       # ── keyboard: ONE consumer (spec §6, normative) ────────────────────────
       # Everything comes from the event queue. A key read both as an event and as a
@@ -1310,11 +1059,68 @@
             - if: { condition: { eq: [key, "End"] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }, { call: [<.clear_selection] }, { return: null }] }
             - if: { condition: { eq: [key, "N"] }, then: [{ set: [<.show_notes, { -: [1, <.show_notes] }] }, { return: null }] }
             - if: { condition: { eq: [key, "Delete"] }, then: [{ call: [<.dispatch, 20] }, { return: null }] }
+            - if: { condition: { eq: [key, "S"] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
+            - if: { condition: { eq: [key, "O"] }, then: [{ call: [<.dispatch, 60] }, { return: null }] }
             # Enter opens the selected node for editing (spec §6)
             - if:
                 condition: { eq: [key, "Enter"] }
                 then:
                   - if: { condition: { neq: [<.sel, ""] }, then: [{ call: [<.begin_edit, <.sel] }] }
+
+      # Save goes through Files; the editor keeps only what the editor owns: which
+      # path the deck came from, and whether it still differs from the file.
+      - def:
+          name: save_deck
+          static_off: ["same_arg", "str_cmp"]
+          args: [[where, string]]
+          body:
+            - decl: [written, string, { call: [<.files.save, <.deck, where, <.deck_path] }]
+            - if:
+                condition: { neq: [written, ""] }
+                then:
+                  - set: [<.deck_path, written]
+                  - set: [<.dirty, 0]
+            - set: [<.status, <.files.status]
+
+      # A picture is stored relative to the deck when it lies below it (§16.3): a deck
+      # moved with its images keeps working, and one pointing into a home directory
+      # says so plainly instead of breaking somewhere else.
+      - def:
+          name: set_image
+          static_off: ["same_arg", "str_cmp"]
+          args: [[picture, string]]
+          body:
+            - decl: [kept, string, picture]
+            - decl: [here, path, <.deck_path]
+            - decl: [up_dir, path, { call: [here.parent] }]
+            - decl: [folder, string, { call: [up_dir.to_string] }]
+            - if:
+                condition: { "&&": [{ neq: [folder, ""] }, { eq: [{ call: [picture.starts_with, "${folder}/"] }, 1] }] }
+                then: [{ set: [kept, { call: [picture.substr, { +: [folder.len, 1] }, { -: [picture.len, { +: [folder.len, 1] }] }] }] }]
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, <.sel] }
+                      then:
+                        - if:
+                            condition: { neq: [node.kind, NodeKind.image] }
+                            then:
+                              - set: [<.status, "das gewaehlte Element ist kein Bild"]
+                              - return: null
+                        - set: [node.src, kept]
+                        - set: [<.dirty, 1]
+                        - set: [<.status, "Bild: ${kept}"]
+                        - return: null
+                  - set: [idx, { +: [idx, 1] }]
+
+      - def:
+          name: touch
+          body:
+            - set: [<.dirty, 1]
 
       - def:
           name: clear_selection
@@ -1354,6 +1160,7 @@
           body:
             - set: [<.editing, 0]
             - if: { condition: { eq: [<.edit_id, ""] }, then: [{ return: null }] }
+            - call: [<.touch]
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
             - decl: [idx, i32, 0]
             - while:
@@ -1437,7 +1244,7 @@
                 condition: { eq: [{ call: [<.sheet_io.load, path, <.deck] }, 0] }
                 then: [{ return: 1 }]
             - call: [<.ink.setup]
-            - set: [<.diag_on, opts.diag]
+            - set: [<.diag.wanted, opts.diag]
             - set: [<.settle, { /: [{ cast: [opts.settle, f64] }, 1000.0] }]
             - set: [<.presenting, opts.present]
             - set: [<.show_notes, opts.notes]
@@ -1497,10 +1304,9 @@
                         # unabhaengig von der Maus-Flanke -- sonst haengt der Beweis,
                         # dass ein Knopf feuert, an der Protokollstelle daneben.
                         - if:
-                            condition: { "&&": [{ neq: [action, 0] }, { neq: [<.diag_on, 0] }] }
+                            condition: { "&&": [{ neq: [action, 0] }, { neq: [<.diag.wanted, 0] }] }
                             then:
-                              - set: [<.diag, "${<.diag}LEISTE aktion=${action} hover=${<.bar_hov}\n"]
-                              - call: [<.exporter.write_file, "diag.log", <.diag]
+                              - call: [<.diag.say, "LEISTE aktion=${action} hover=${<.bar_hov}"]
                         - call: [ui.begin_cell, 1, 0, 1, 1]
                         - decl: [cvs_x, f32, { "*": [win_w, 0.18] }]
                         - decl: [cvs_w, f32, { "*": [win_w, 0.82] }]
@@ -1566,9 +1372,14 @@
       - class: SvgOut
         instance: svg
         sees: [pen]
+      - class: ZipOut
+        instance: zip
+      - class: PptxOut
+        instance: pptx
+        sees: [pen, svg, zip]
       - class: Exporter
         instance: exporter
-        sees: [sheet_io, mermaid, markdown, svg]
+        sees: [sheet_io, mermaid, markdown, svg, pptx]
       - class: Recognizer
         instance: recognizer
       - class: Ink
@@ -1578,6 +1389,17 @@
         instance: pen
       - class: Grip
         instance: grip
+      - class: FileBrowser
+        instance: browse
+      - class: Files
+        instance: files
+        sees: [sheet_io, exporter, mermaid, pptx, browse]
+      - class: Diag
+        instance: diag
+        sees: [exporter]
+      - class: Reader
+        instance: reader
+        sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader]

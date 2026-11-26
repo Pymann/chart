@@ -1,0 +1,163 @@
+# Opening and saving files (doc/spec/chart.md §16).
+#
+# The system's own dialog, run through sys.exe, exactly as glbview does it: it is the
+# dialog the author already knows, with their places and their recent folders, and
+# nothing drawn here would ever match it.  When no such program is installed, chart
+# falls back to a list it draws itself (§16.1) -- a machine without zenity must still
+# be able to open and save.
+
+- class:
+    name: FileBrowser
+    description: "The file dialog: the system's if there is one, ours otherwise (spec §16)"
+    members:
+      - [tool, string]        # the dialog program, "" = none found
+      - [kind, i32]           # 1 = zenity/yad/qarma, 2 = kdialog, 0 = none
+      - [dir, string]         # where the next dialog opens
+      - [looked, i32]         # PATH is searched once, not per click
+    methods:
+      - def:
+          name: tool_in_path
+          static_off: ["same_arg", "str_cmp"]
+          args: [[name, string]]
+          return: { type: string, lifetime: producer }
+          body:
+            - decl: [envm, map<string:string>, { call: [sys.env] }]
+            - if: { condition: { eq: [{ call: [envm.contains, "PATH"] }, 0] }, then: [{ return: "" }] }
+            - decl: [raw, string, { call: [envm.get, "PATH"] }]
+            - decl: [parts, list<string>, { call: [raw.split, ":"] }]
+            - decl: [cur, i32, 0]
+            - while:
+                condition: { lt: [cur, parts.len] }
+                body:
+                  - decl: [dir_text, string, { at: [parts, cur] }]
+                  - set: [cur, { +: [cur, 1] }]
+                  - if:
+                      condition: { gt: [dir_text.len, 0] }
+                      then:
+                        - decl: [base, path, dir_text]
+                        - decl: [full, path, { call: [base.join, name] }]
+                        - if: { condition: { neq: [{ call: [io.is_file, full] }, 0] }, then: [{ return: { call: [full.to_string] } }] }
+            - return: ""
+
+      - def:
+          name: find_tool
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.looked, 1] }, then: [{ return: null }] }
+            - set: [<.looked, 1]
+            - decl: [found, string, { call: [<.tool_in_path, "zenity"] }]
+            - if: { condition: { gt: [found.len, 0] }, then: [{ set: [<.tool, found] }, { set: [<.kind, 1] }, { return: null }] }
+            - set: [found, { call: [<.tool_in_path, "kdialog"] }]
+            - if: { condition: { gt: [found.len, 0] }, then: [{ set: [<.tool, found] }, { set: [<.kind, 2] }, { return: null }] }
+            - set: [found, { call: [<.tool_in_path, "yad"] }]
+            - if: { condition: { gt: [found.len, 0] }, then: [{ set: [<.tool, found] }, { set: [<.kind, 1] }, { return: null }] }
+            - set: [found, { call: [<.tool_in_path, "qarma"] }]
+            - if: { condition: { gt: [found.len, 0] }, then: [{ set: [<.tool, found] }, { set: [<.kind, 1] }, { return: null }] }
+
+      - def:
+          name: have_tool
+          return: i32
+          body:
+            - call: [<.find_tool]
+            - if: { condition: { eq: [<.kind, 0] }, then: [{ return: 0 }] }
+            - return: 1
+
+      - def:
+          name: start_in
+          static_off: ["same_arg", "str_cmp"]
+          args: [[where, string]]
+          body:
+            - if: { condition: { eq: [where, ""] }, then: [{ return: null }] }
+            - decl: [full, path, where]
+            - if:
+                condition: { neq: [{ call: [io.is_dir, full] }, 0] }
+                then: [{ set: [<.dir, where] }, { return: null }]
+            - decl: [up_dir, path, { call: [full.parent] }]
+            - set: [<.dir, { call: [up_dir.to_string] }]
+
+      # A yes/no question in the same dialog family.  Two buttons, not three: both
+      # zenity and kdialog spell three-answer dialogs differently and report the third
+      # through the exit code, and a wrong guess there would silently discard work.
+      # The third answer is reached by asking twice (§16.2).
+      - def:
+          name: confirm
+          static_off: ["same_arg", "str_cmp"]
+          args: [[question, string]]
+          return: i32
+          body:
+            - call: [<.find_tool]
+            - if: { condition: { eq: [<.kind, 0] }, then: [{ return: 0 }] }
+            - decl: [argv, list<string>]
+            - call: [argv.push, <.tool]
+            - if:
+                condition: { eq: [<.kind, 2] }
+                then:
+                  - call: [argv.push, "--yesno"]
+                  - call: [argv.push, question]
+                else:
+                  - call: [argv.push, "--question"]
+                  - call: [argv.push, "--text=${question}"]
+            - decl: [proc, process, { call: [sys.exe, argv, {capture: true}] }]
+            - decl: [code, i32, { call: [proc.wait] }]
+            - if: { condition: { eq: [code, 0] }, then: [{ return: 1 }] }
+            - return: 0
+
+      # purpose: 0 = open a deck, 1 = save a deck, 2 = pick an image,
+      #          3 = pick a directory.  "" means the author cancelled -- and a
+      #          cancel must do NOTHING, not export into whatever was open (§16.1).
+      - def:
+          name: ask
+          static_off: ["same_arg", "str_cmp"]
+          args: [[purpose, i32], [suggest, string]]
+          return: { type: string, lifetime: producer }
+          body:
+            - call: [<.find_tool]
+            - if: { condition: { eq: [<.kind, 0] }, then: [{ return: "" }] }
+            - decl: [place, string, <.dir]
+            - if: { condition: { eq: [place, ""] }, then: [{ set: [place, "."] }] }
+            - decl: [argv, list<string>]
+            - call: [argv.push, <.tool]
+            - if:
+                condition: { eq: [<.kind, 2] }
+                then:
+                  - if:
+                      condition: { eq: [purpose, 3] }
+                      then:
+                        - call: [argv.push, "--getexistingdirectory"]
+                        - call: [argv.push, place]
+                      else:
+                        - if:
+                            condition: { eq: [purpose, 1] }
+                            then: [{ call: [argv.push, "--getsavefilename"] }]
+                            else: [{ call: [argv.push, "--getopenfilename"] }]
+                        - call: [argv.push, "${place}/${suggest}"]
+                        - if:
+                            condition: { eq: [purpose, 2] }
+                            then: [{ call: [argv.push, "*.png *.jpg *.jpeg|Bilder"] }]
+                            else: [{ call: [argv.push, "*.chart.yaml *.deck.yaml|chart"] }]
+                else:
+                  - call: [argv.push, "--file-selection"]
+                  - if: { condition: { eq: [purpose, 1] }, then: [{ call: [argv.push, "--save"] }, { call: [argv.push, "--confirm-overwrite"] }] }
+                  - if: { condition: { eq: [purpose, 3] }, then: [{ call: [argv.push, "--directory"] }] }
+                  - call: [argv.push, "--filename=${place}/${suggest}"]
+                  - if:
+                      condition: { eq: [purpose, 2] }
+                      then:
+                        - call: [argv.push, "--file-filter=Bilder | *.png *.jpg *.jpeg"]
+                        - call: [argv.push, "--file-filter=alle Dateien | *"]
+                  - if:
+                      condition: { lt: [purpose, 2] }
+                      then:
+                        - call: [argv.push, "--file-filter=chart | *.chart.yaml *.deck.yaml"]
+                        - call: [argv.push, "--file-filter=alle Dateien | *"]
+            - decl: [proc, process, { call: [sys.exe, argv, {capture: true}] }]
+            - decl: [code, i32, { call: [proc.wait] }]
+            - if: { condition: { neq: [code, 0] }, then: [{ return: "" }] }
+            - decl: [out, string, proc.stdout_buffer]
+            - decl: [answer, string, { call: [out.trim] }]
+            # zenity can hand back several paths separated by "|"; chart asks for one,
+            # so anything after the first separator is not an answer to this question
+            - decl: [bar, i32, { call: [answer.index_of, "|"] }]
+            - if: { condition: { gt: [bar, 0] }, then: [{ set: [answer, { call: [answer.substr, 0, bar] }] }] }
+            - call: [<.start_in, answer]
+            - return: answer

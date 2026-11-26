@@ -6,6 +6,7 @@
 - import: "src/mermaid.aiml"
 - import: "src/markdown.aiml"
 - import: "src/svg.aiml"
+- import: "src/pptx.aiml"
 
 - model:
     name: ChartOptions
@@ -17,6 +18,7 @@
       - [markdown, string, ""]     # output: a directory, one Markdown file per slide (spec §13)
       - [svg, string, ""]          # output: a directory, one SVG per slide (spec §17.1)
       - [html, string, ""]         # output: one self-contained deck file (spec §17.3)
+      - [pptx, string, ""]         # output: one editable PowerPoint file (spec §17.2)
       # Testing and screenshots: run a fixed number of frames, optionally capture the
       # last one.  Without this the editor runs until the window closes, and a test
       # that waits for a human is a test nobody runs (aiml run_all_tests.sh: a
@@ -43,6 +45,7 @@
       - [mermaid, ref<MermaidOut>]
       - [markdown, ref<MarkdownOut>]
       - [svg, ref<SvgOut>]
+      - [pptx, ref<PptxOut>]
     methods:
       # buffer.write_to reports a short write or a failed flush; io.write cannot
       # (aiml spec/23) -- and a half-written diagram must not pass for a written one.
@@ -183,6 +186,18 @@
                 then:
                   - if:
                       condition: { eq: [{ call: [<.write_svg, deck, options.svg] }, 0] }
+                      then: [{ return: 1 }]
+
+            - if:
+                condition: { neq: [options.pptx, ""] }
+                then:
+                  # images hang off the deck file, so the deck's directory travels
+                  # with the call (spec §16.3)
+                  - decl: [here, path, input]
+                  - decl: [up_dir, path, { call: [here.parent] }]
+                  - decl: [folder, string, { call: [up_dir.to_string] }]
+                  - if:
+                      condition: { eq: [{ call: [<.pptx.emit, deck, options.pptx, folder] }, 0] }
                       then: [{ return: 1 }]
 
             - if:

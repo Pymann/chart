@@ -5,7 +5,7 @@
     name: usage
     body:
       - call: [log.error, "usage: chart (--deck FILE | --sheet FILE) [OUTPUT ...]"]
-      - call: [log.error, "       outputs: --mermaid OUT.mmd  --markdown DIR  --svg DIR  --html OUT.html"]
+      - call: [log.error, "       outputs: --mermaid OUT.mmd  --markdown DIR  --svg DIR  --html OUT.html  --pptx OUT.pptx"]
       - call: [log.error, "       without an output option the editor opens (spec §15)"]
       - call: [log.error, "       --frames N --shot FILE.png: N frames, capture the last one"]
 
@@ -31,6 +31,7 @@
       - if: { condition: { neq: [options.markdown, ""] }, then: [{ set: [exporting, 1] }] }
       - if: { condition: { neq: [options.svg, ""] }, then: [{ set: [exporting, 1] }] }
       - if: { condition: { neq: [options.html, ""] }, then: [{ set: [exporting, 1] }] }
+      - if: { condition: { neq: [options.pptx, ""] }, then: [{ set: [exporting, 1] }] }
       - if:
           condition: { eq: [exporting, 1] }
           then: [{ set: [code, { call: [runtime.exporter.run, options] }] }]

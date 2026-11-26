@@ -1,0 +1,268 @@
+# A ZIP writer, because OOXML needs its parts at the archive ROOT and
+# compress.zip puts a directory's contents under that directory's own name
+# (aiml src/sys/compress_runtime.cpp: `arc_base`), which PowerPoint rejects.
+#
+# Entries are STORED, not deflated: an .pptx of plain XML is small, and stored
+# entries plus a fixed 1980-01-01 timestamp make the archive a pure function of its
+# contents -- the same promise §17.1 makes for the SVG, and the only way the test of
+# §17.2 can compare bytes at all.
+
+- class:
+    name: ZipOut
+    description: "A deterministic ZIP archive, written at the root (spec §17.2)"
+    members:
+      - [names, list<string>]       # member names, in archive order
+      - [loads, list<string>]       # text content, or the source path for a file
+      - [kinds, list<i32>]          # 0 = text in `loads`, 1 = file at `loads`
+      - [body, buffer<u8>]          # local headers + data
+      - [central, buffer<u8>]       # the central directory
+    methods:
+      - def:
+          name: reset
+          body:
+            - call: [<.names.clear]
+            - call: [<.loads.clear]
+            - call: [<.kinds.clear]
+
+      - def:
+          name: add_text
+          static_off: ["same_arg", "str_cmp"]
+          args: [[name, string], [content, string]]
+          body:
+            - call: [<.names.push, name]
+            - call: [<.loads.push, content]
+            - call: [<.kinds.push, 0]
+
+      - def:
+          name: add_file
+          static_off: ["same_arg", "str_cmp"]
+          args: [[name, string], [source, string]]
+          body:
+            - call: [<.names.push, name]
+            - call: [<.loads.push, source]
+            - call: [<.kinds.push, 1]
+
+      # Bytes go in little-endian, the only order ZIP knows.  `which` picks the
+      # stream: 0 the body, 1 the central directory -- a buffer cannot be passed by
+      # reference here, and two near-identical writers would be worse.
+      - def:
+          name: put_byte
+          args: [[which, i32], [value, i32]]
+          body:
+            - if:
+                condition: { eq: [which, 0] }
+                then: [{ call: [<.body.push, { band: [value, 255] }] }]
+                else: [{ call: [<.central.push, { band: [value, 255] }] }]
+
+      - def:
+          name: put_word
+          args: [[which, i32], [value, i32]]
+          body:
+            - call: [<.put_byte, which, value]
+            - call: [<.put_byte, which, { ushr: [value, 8] }]
+
+      - def:
+          name: put_long
+          args: [[which, i32], [value, i32]]
+          body:
+            - call: [<.put_byte, which, value]
+            - call: [<.put_byte, which, { ushr: [value, 8] }]
+            - call: [<.put_byte, which, { ushr: [value, 16] }]
+            - call: [<.put_byte, which, { ushr: [value, 24] }]
+
+      - def:
+          name: put_name
+          static_off: ["same_arg", "str_cmp"]
+          args: [[which, i32], [name, string]]
+          body:
+            - decl: [raw, buffer<u8>]
+            - call: [raw.alloc, { +: [{ "*": [name.len, 4] }, 8] }]
+            - call: [raw.write_string, name]
+            - if:
+                condition: { eq: [which, 0] }
+                then: [{ call: [<.body.append, raw] }]
+                else: [{ call: [<.central.append, raw] }]
+
+      # The whole of one file.  Two passes on purpose: the ZIP header carries the
+      # CRC and the size BEFORE the data, so both have to be known first, and a
+      # chunk-wise CRC cannot be combined with what hash offers.
+      - def:
+          name: file_bytes
+          static_off: ["same_arg", "str_cmp"]
+          args: [[source, string], [into, buffer<u8>]]
+          return: i32
+          body:
+            - decl: [measure, file_handle, { call: [io.open_binary, source] }]
+            - if: { condition: { eq: [measure, null] }, then: [{ return: -1 }] }
+            - decl: [total, i32, 0]
+            - decl: [more, i32, 1]
+            - while:
+                condition: { eq: [more, 1] }
+                body:
+                  - decl: [chunk, buffer<u8>, { call: [io.read_bytes, measure, 65536] }]
+                  - set: [total, { +: [total, chunk.len] }]
+                  - if: { condition: { lt: [chunk.len, 65536] }, then: [{ set: [more, 0] }] }
+            - call: [io.close, measure]
+            - call: [into.alloc, { +: [total, 8] }]
+            - decl: [reader, file_handle, { call: [io.open_binary, source] }]
+            - if: { condition: { eq: [reader, null] }, then: [{ return: -1 }] }
+            - set: [more, 1]
+            - while:
+                condition: { eq: [more, 1] }
+                body:
+                  - decl: [chunk, buffer<u8>, { call: [io.read_bytes, reader, 65536] }]
+                  - call: [into.append, chunk]
+                  - if: { condition: { lt: [chunk.len, 65536] }, then: [{ set: [more, 0] }] }
+            - call: [io.close, reader]
+            - return: total
+
+      - def:
+          name: write
+          static_off: ["same_arg", "str_cmp"]
+          args: [[out_path, string]]
+          return: i32
+          body:
+            # capacity first: a buffer cannot grow, and a short write that is only
+            # noticed at the end would leave half an archive behind
+            - decl: [need, i32, 1024]
+            - decl: [need_dir, i32, 1024]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.names.len] }
+                body:
+                  - decl: [name, string, { at: [<.names, idx] }]
+                  - decl: [load, string, { at: [<.loads, idx] }]
+                  - decl: [kind, i32, { at: [<.kinds, idx] }]
+                  - decl: [room, i32, { "*": [load.len, 4] }]
+                  - if: { condition: { eq: [kind, 1] }, then: [{ set: [room, 0] }] }
+                  - set: [need, { +: [need, { +: [{ +: [46, { "*": [name.len, 4] }] }, room] }] }]
+                  - set: [need_dir, { +: [need_dir, { +: [60, { "*": [name.len, 4] }] }] }]
+                  - set: [idx, { +: [idx, 1] }]
+            # a file's size is only known by reading it, so that happens now and the
+            # bytes are kept for the emit pass below
+            - decl: [extra, i32, 0]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, <.names.len] }
+                body:
+                  - if:
+                      condition: { eq: [{ at: [<.kinds, idx] }, 1] }
+                      then:
+                        - decl: [source, string, { at: [<.loads, idx] }]
+                        - decl: [raw, buffer<u8>]
+                        - decl: [got, i32, { call: [<.file_bytes, source, raw] }]
+                        - if:
+                            condition: { lt: [got, 0] }
+                            then:
+                              - call: [log.error, "chart: ${source}: cannot read the file to embed"]
+                              - return: 0
+                        - set: [extra, { +: [extra, got] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - call: [<.body.alloc, { +: [need, extra] }]
+            - call: [<.central.alloc, need_dir]
+
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, <.names.len] }
+                body:
+                  - decl: [name, string, { at: [<.names, idx] }]
+                  - decl: [load, string, { at: [<.loads, idx] }]
+                  - decl: [kind, i32, { at: [<.kinds, idx] }]
+                  - decl: [data, buffer<u8>]
+                  - if:
+                      condition: { eq: [kind, 0] }
+                      then:
+                        - call: [data.alloc, { +: [{ "*": [load.len, 4] }, 8] }]
+                        - call: [data.write_string, load]
+                      else: [{ call: [<.file_bytes, load, data] }]
+                  - decl: [size, i32, data.len]
+                  - decl: [crc, i32, { call: [hash.crc32, data] }]
+                  - decl: [here, i32, <.body.len]
+                  # local file header
+                  - call: [<.put_long, 0, 0x04034B50]
+                  - call: [<.put_word, 0, 20]
+                  - call: [<.put_word, 0, 0x0800]     # names are UTF-8
+                  - call: [<.put_word, 0, 0]          # stored
+                  - call: [<.put_word, 0, 0]          # time: 00:00
+                  - call: [<.put_word, 0, 0x0021]     # date: 1980-01-01, fixed
+                  - call: [<.put_long, 0, crc]
+                  - call: [<.put_long, 0, size]
+                  - call: [<.put_long, 0, size]
+                  - call: [<.put_word, 0, { call: [<.name_bytes, name] }]
+                  - call: [<.put_word, 0, 0]
+                  - call: [<.put_name, 0, name]
+                  - call: [<.body.append, data]
+                  # central directory record
+                  - call: [<.put_long, 1, 0x02014B50]
+                  - call: [<.put_word, 1, 20]
+                  - call: [<.put_word, 1, 20]
+                  - call: [<.put_word, 1, 0x0800]
+                  - call: [<.put_word, 1, 0]
+                  - call: [<.put_word, 1, 0]
+                  - call: [<.put_word, 1, 0x0021]
+                  - call: [<.put_long, 1, crc]
+                  - call: [<.put_long, 1, size]
+                  - call: [<.put_long, 1, size]
+                  - call: [<.put_word, 1, { call: [<.name_bytes, name] }]
+                  - call: [<.put_word, 1, 0]          # extra
+                  - call: [<.put_word, 1, 0]          # comment
+                  - call: [<.put_word, 1, 0]          # disk
+                  - call: [<.put_word, 1, 0]          # internal attrs
+                  - call: [<.put_long, 1, 0]          # external attrs
+                  - call: [<.put_long, 1, here]
+                  - call: [<.put_name, 1, name]
+                  - set: [idx, { +: [idx, 1] }]
+
+            - decl: [handle, file_handle, { call: [io.open, out_path, "wb"] }]
+            - if:
+                condition: { eq: [handle, null] }
+                then:
+                  - call: [log.error, "chart: ${out_path}: cannot write"]
+                  - return: 0
+            - decl: [body_len, i32, <.body.len]
+            - decl: [dir_len, i32, <.central.len]
+            - decl: [tail, buffer<u8>]
+            - call: [tail.alloc, 32]
+            - call: [<.body.write_to, handle]
+            - call: [<.central.write_to, handle]
+            # end of central directory
+            - call: [tail.push, 0x50]
+            - call: [tail.push, 0x4B]
+            - call: [tail.push, 0x05]
+            - call: [tail.push, 0x06]
+            - call: [<.put_tail, tail, 0, 2]
+            - call: [<.put_tail, tail, 0, 2]
+            - call: [<.put_tail, tail, <.names.len, 2]
+            - call: [<.put_tail, tail, <.names.len, 2]
+            - call: [<.put_tail, tail, dir_len, 4]
+            - call: [<.put_tail, tail, body_len, 4]
+            - call: [<.put_tail, tail, 0, 2]
+            - decl: [done, i32, { call: [tail.write_to, handle] }]
+            - call: [io.close, handle]
+            - if: { condition: { lt: [done, 0] }, then: [{ return: 0 }] }
+            - return: 1
+
+      - def:
+          name: put_tail
+          args: [[tail, buffer<u8>], [value, i32], [width, i32]]
+          body:
+            - decl: [step, i32, 0]
+            - while:
+                condition: { lt: [step, width] }
+                body:
+                  - call: [tail.push, { band: [{ ushr: [value, { "*": [step, 8] }] }, 255] }]
+                  - set: [step, { +: [step, 1] }]
+
+      # A member name's length in BYTES: string.len counts code points (aiml spec/09
+      # §string.len), and a name with an umlaut would otherwise declare itself one
+      # byte short and desynchronise every offset after it.
+      - def:
+          name: name_bytes
+          static_off: ["same_arg", "str_cmp"]
+          args: [[name, string]]
+          return: i32
+          body:
+            - decl: [raw, buffer<u8>]
+            - call: [raw.alloc, { +: [{ "*": [name.len, 4] }, 8] }]
+            - call: [raw.write_string, name]
+            - return: raw.len

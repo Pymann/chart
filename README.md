@@ -83,7 +83,20 @@ chart --deck examples/demo.deck.yaml --present 1  # straight into presentation m
 # headless, no window:
 chart --deck examples/demo.deck.yaml --markdown doc/folien   # one .md per slide
 chart --sheet sheets/login.chart.yaml --mermaid doc/login.mmd
+chart --deck examples/demo.deck.yaml --svg doc/bilder        # one .svg per slide
+chart --deck examples/demo.deck.yaml --html doc/deck.html    # one self-contained file
+chart --deck examples/demo.deck.yaml --pptx doc/deck.pptx    # editable PowerPoint
 ```
+
+Several outputs may be named in one run. What each format keeps and drops is in
+`doc/spec/chart.md` §17; the short version: **Mermaid** carries the structure but no
+coordinates, **SVG** carries everything the canvas shows, **PPTX** carries editable
+shapes, **HTML** is the SVGs in one file with arrow keys. There is no `--pdf`: the PPTX
+feeds `soffice --headless --convert-to pdf`, and a PDF writer here would be a second
+renderer to keep in step with the canvas forever.
+
+In the editor the same exports sit under **Datei → Export**, each asking where to write
+with the system's file dialog (zenity, kdialog, yad or qarma; §16).
 
 `--frames N --shot FILE.png` runs N frames and captures the last one — that is how the
 editor is testable at all, and how the pictures above were made.

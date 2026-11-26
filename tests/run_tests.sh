@@ -107,5 +107,58 @@ for fixture in tests/fixture/*.deck.yaml; do
     fi
 done
 
+# PPTX: the parts byte-exact, and a real reader must open the package (spec §17.2).
+if ! command -v unzip >/dev/null; then
+    echo "[ SKIP ] pptx -- no unzip; a silent skip would read like a pass, so this says so"
+else
+    for fixture in tests/fixture/*.deck.yaml tests/fixture/*.chart.yaml; do
+        [ -e "$fixture" ] || continue
+        name=$(basename "$fixture" | sed -E 's/\.(chart|deck)\.yaml$//')
+        case "$fixture" in *.deck.yaml) flag=--deck ;; *) flag=--sheet ;; esac
+        expected="tests/expected/pptx_$name"
+        [ -d "$expected" ] || continue
+        got="tests/out/pptx_$name"
+        file="tests/out/$name.pptx"
+        total=$((total + 1))
+        rm -rf "$got" "$file"
+        if ! "$BIN" "$flag" "$fixture" --pptx "$file"; then
+            echo "[ FAIL ] $name (pptx) -- exporter exited non-zero"
+            failed=$((failed + 1))
+            continue
+        fi
+        mkdir -p "$got"
+        if ! unzip -q -o "$file" -d "$got"; then
+            echo "[ FAIL ] $name (pptx) -- the package does not unpack"
+            failed=$((failed + 1))
+            continue
+        fi
+        if diff -ru "$expected" "$got"; then
+            echo "[  OK  ] $name (pptx parts)"
+        else
+            echo "[ FAIL ] $name -- pptx parts differ from $expected"
+            failed=$((failed + 1))
+        fi
+    done
+fi
+
+# An external reader is the only honest check that the container is valid.
+if ! command -v soffice >/dev/null; then
+    echo "[ SKIP ] pptx reader -- no soffice on this machine"
+else
+    for file in tests/out/*.pptx; do
+        [ -e "$file" ] || continue
+        name=$(basename "$file" .pptx)
+        total=$((total + 1))
+        rm -f "tests/out/$name.pdf"
+        if soffice --headless --convert-to pdf --outdir tests/out "$file" >/dev/null 2>&1 \
+           && [ -s "tests/out/$name.pdf" ]; then
+            echo "[  OK  ] $name (pptx opens in LibreOffice)"
+        else
+            echo "[ FAIL ] $name -- LibreOffice cannot read the package"
+            failed=$((failed + 1))
+        fi
+    done
+fi
+
 echo "chart: $((total - failed))/$total passed"
 [ "$failed" -eq 0 ]

@@ -1,0 +1,409 @@
+# PPTX export (doc/spec/chart.md §17.2).
+#
+# Real p:sp shapes with real text, not one flat picture per slide: the only reason to
+# want a PPTX is that someone can edit it afterwards, and a slide holding a screenshot
+# is a screenshot with extra steps.
+#
+# 9525 EMU per sheet unit: 1280 x 720 units map exactly onto the 12192000 x 6858000
+# EMU of a 16:9 slide, so nothing is scaled and nothing drifts.
+- import: "src/zip.aiml"
+- import: "src/svg.aiml"
+
+- class:
+    name: PptxOut
+    description: "A deck as an editable PowerPoint file (spec §17.2)"
+    members:
+      - [pen, ref<Pen>]
+      - [svg, ref<SvgOut>]            # esc and rgb, shared with the SVG export
+      - [zip, ref<ZipOut>]
+      - [media, i32]                  # images embedded so far, for imageN.png
+      - [rels, string]                # the current slide's relationship file
+      - [base, string]                # the deck's directory: image paths hang off it
+    methods:
+      - def:
+          name: emu
+          args: [[value, f32]]
+          return: i32
+          body:
+            - return: { cast: [{ call: [math.round, { "*": [value, 9525.0] }] }, i32] }
+
+      # "#rrggbb" -> "RRGGBB": DrawingML wants the six digits bare and upper case
+      - def:
+          name: tone
+          static_off: ["same_arg", "str_cmp"]
+          args: [[colour, i32], [fallback, i32]]
+          return: string
+          body:
+            - decl: [text, string, { call: [<.svg.rgb, colour, fallback] }]
+            - decl: [bare, string, { call: [text.substr, 1, 6] }]
+            - return: { call: [bare.upper] }
+
+      - def:
+          name: geom_for
+          args: [[kind, i32]]
+          return: string
+          body:
+            - if: { condition: { eq: [kind, NodeKind.round] }, then: [{ return: "roundRect" }] }
+            - if: { condition: { eq: [kind, NodeKind.stadium] }, then: [{ return: "roundRect" }] }
+            - if: { condition: { eq: [kind, NodeKind.circle] }, then: [{ return: "ellipse" }] }
+            - if: { condition: { eq: [kind, NodeKind.diamond] }, then: [{ return: "diamond" }] }
+            - if: { condition: { eq: [kind, NodeKind.hexagon] }, then: [{ return: "hexagon" }] }
+            - if: { condition: { eq: [kind, NodeKind.cylinder] }, then: [{ return: "can" }] }
+            - if: { condition: { eq: [kind, NodeKind.subroutine] }, then: [{ return: "flowChartPredefinedProcess" }] }
+            - return: "rect"
+
+      # One paragraph per line, centred, in the contrast colour the canvas uses.
+      - def:
+          name: body_xml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [ink, string]]
+          return: string
+          body:
+            - decl: [out, string, "<p:txBody><a:bodyPr anchor=\"ctr\" wrap=\"none\" lIns=\"0\" rIns=\"0\"/><a:lstStyle/>"]
+            - if:
+                condition: { eq: [text, ""] }
+                then: [{ return: "${out}<a:p><a:pPr algn=\"ctr\"/><a:endParaRPr lang=\"de-DE\" sz=\"1125\"/></a:p></p:txBody>" }]
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [row, i32, 0]
+            - while:
+                condition: { lt: [row, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, row] }]
+                  - set: [out, "${out}<a:p><a:pPr algn=\"ctr\"/><a:r><a:rPr lang=\"de-DE\" sz=\"1125\" dirty=\"0\"><a:solidFill><a:srgbClr val=\"${ink}\"/></a:solidFill></a:rPr><a:t>${ { call: [<.svg.esc, line] } }</a:t></a:r></a:p>"]
+                  - set: [row, { +: [row, 1] }]
+            - return: "${out}</p:txBody>"
+
+      - def:
+          name: node_xml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [shape_id, i32]]
+          return: string
+          body:
+            - decl: [paint, i32, node.fill]
+            - if: { condition: { eq: [paint, 0] }, then: [{ set: [paint, 0xF2F5F9FF] }] }
+            - decl: [fill, string, { call: [<.tone, paint, 0xF2F5F9FF] }]
+            - decl: [line, string, { call: [<.tone, node.stroke, 0x3A4A5AFF] }]
+            - decl: [ink, string, { call: [<.tone, { call: [<.pen.ink_for, paint] }, 0x1A2430FF] }]
+            - decl: [spot, string, "<a:off x=\"${ { call: [<.emu, node.pos_x] } }\" y=\"${ { call: [<.emu, node.pos_y] } }\"/><a:ext cx=\"${ { call: [<.emu, node.width] } }\" cy=\"${ { call: [<.emu, node.height] } }\"/>"]
+            - decl: [out, string, "<p:sp><p:nvSpPr><p:cNvPr id=\"${shape_id}\" name=\"${ { call: [<.svg.esc, node.ident] } }\"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>"]
+            - decl: [adjust, string, "<a:avLst/>"]
+            # a stadium is a roundRect pushed to its limit: adj 50000 = fully round ends
+            - if: { condition: { eq: [node.kind, NodeKind.stadium] }, then: [{ set: [adjust, "<a:avLst><a:gd name=\"adj\" fmla=\"val 50000\"/></a:avLst>"] }] }
+            - set: [out, "${out}<p:spPr><a:xfrm>${spot}</a:xfrm><a:prstGeom prst=\"${ { call: [<.geom_for, node.kind] } }\">${adjust}</a:prstGeom>"]
+            - set: [out, "${out}<a:solidFill><a:srgbClr val=\"${fill}\"/></a:solidFill><a:ln w=\"12700\"><a:solidFill><a:srgbClr val=\"${line}\"/></a:solidFill></a:ln></p:spPr>"]
+            - return: "${out}${ { call: [<.body_xml, node.text, ink] } }</p:sp>"
+
+      # An image is a p:pic with the file embedded in ppt/media: a link would break
+      # the moment the deck is mailed, which is the normal fate of a deck.
+      - def:
+          name: image_xml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [shape_id, i32], [rel_id, string]]
+          return: string
+          body:
+            - decl: [spot, string, "<a:off x=\"${ { call: [<.emu, node.pos_x] } }\" y=\"${ { call: [<.emu, node.pos_y] } }\"/><a:ext cx=\"${ { call: [<.emu, node.width] } }\" cy=\"${ { call: [<.emu, node.height] } }\"/>"]
+            - decl: [out, string, "<p:pic><p:nvPicPr><p:cNvPr id=\"${shape_id}\" name=\"${ { call: [<.svg.esc, node.ident] } }\"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>"]
+            - set: [out, "${out}<p:blipFill><a:blip r:embed=\"${rel_id}\"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>"]
+            - return: "${out}<p:spPr><a:xfrm>${spot}</a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:pic>"
+
+      - def:
+          name: caption_xml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [shape_id, i32]]
+          return: string
+          body:
+            - if: { condition: { eq: [node.text, ""] }, then: [{ return: "" }] }
+            - decl: [spot, string, "<a:off x=\"${ { call: [<.emu, node.pos_x] } }\" y=\"${ { call: [<.emu, { +: [node.pos_y, node.height] }] } }\"/><a:ext cx=\"${ { call: [<.emu, node.width] } }\" cy=\"${ { call: [<.emu, 24.0] } }\"/>"]
+            - decl: [out, string, "<p:sp><p:nvSpPr><p:cNvPr id=\"${shape_id}\" name=\"${ { call: [<.svg.esc, node.ident] } }-text\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr>"]
+            - set: [out, "${out}<p:spPr><a:xfrm>${spot}</a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"]
+            - return: "${out}${ { call: [<.body_xml, node.text, \"4A5A6A\"] } }</p:sp>"
+
+      # A straight connector between the two rims, with the same pen.edge_stop the
+      # canvas and the SVG use.  PowerPoint states a line by its box plus flips, so
+      # the direction lives in flipH/flipV rather than in the coordinates.
+      - def:
+          name: edge_xml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [edge, ref<Edge>], [shape_id, i32]]
+          return: string
+          body:
+            - if: { condition: { eq: [edge.kind, EdgeKind.invisible] }, then: [{ return: "" }] }
+            - decl: [found, i32, 0]
+            - decl: [src_cx, f32, 0.0]
+            - decl: [src_cy, f32, 0.0]
+            - decl: [src_hw, f32, 0.0]
+            - decl: [src_hh, f32, 0.0]
+            - decl: [src_kind, i32, 0]
+            - decl: [dst_cx, f32, 0.0]
+            - decl: [dst_cy, f32, 0.0]
+            - decl: [dst_hw, f32, 0.0]
+            - decl: [dst_hh, f32, 0.0]
+            - decl: [dst_kind, i32, 0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, edge.from_id] }
+                      then:
+                        - set: [src_cx, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+                        - set: [src_cy, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+                        - set: [src_hw, { /: [node.width, 2.0] }]
+                        - set: [src_hh, { /: [node.height, 2.0] }]
+                        - set: [src_kind, node.kind]
+                        - set: [found, { +: [found, 1] }]
+                  - if:
+                      condition: { eq: [node.ident, edge.to_id] }
+                      then:
+                        - set: [dst_cx, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+                        - set: [dst_cy, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+                        - set: [dst_hw, { /: [node.width, 2.0] }]
+                        - set: [dst_hh, { /: [node.height, 2.0] }]
+                        - set: [dst_kind, node.kind]
+                        - set: [found, { +: [found, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - if: { condition: { lt: [found, 2] }, then: [{ return: "" }] }
+            - decl: [del_x, f32, { -: [src_cx, dst_cx] }]
+            - decl: [del_y, f32, { -: [src_cy, dst_cy] }]
+            - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
+            - if: { condition: { lt: [span, 1.0] }, then: [{ return: "" }] }
+            - decl: [uni_x, f32, { /: [del_x, span] }]
+            - decl: [uni_y, f32, { /: [del_y, span] }]
+            - decl: [tip_x, f32, { +: [dst_cx, { "*": [uni_x, { call: [<.pen.edge_stop, dst_hw, dst_hh, uni_x, uni_y, dst_kind] }] }] }]
+            - decl: [tip_y, f32, { +: [dst_cy, { "*": [uni_y, { call: [<.pen.edge_stop, dst_hw, dst_hh, uni_x, uni_y, dst_kind] }] }] }]
+            - decl: [end_x, f32, { -: [src_cx, { "*": [uni_x, { call: [<.pen.edge_stop, src_hw, src_hh, uni_x, uni_y, src_kind] }] }] }]
+            - decl: [end_y, f32, { -: [src_cy, { "*": [uni_y, { call: [<.pen.edge_stop, src_hw, src_hh, uni_x, uni_y, src_kind] }] }] }]
+            - decl: [low_x, f32, { call: [math.min, end_x, tip_x] }]
+            - decl: [low_y, f32, { call: [math.min, end_y, tip_y] }]
+            - decl: [flip, string, ""]
+            - if: { condition: { lt: [tip_x, end_x] }, then: [{ set: [flip, "${flip} flipH=\"1\""] }] }
+            - if: { condition: { lt: [tip_y, end_y] }, then: [{ set: [flip, "${flip} flipV=\"1\""] }] }
+            - decl: [wide, f32, { call: [math.abs, { -: [tip_x, end_x] }] }]
+            - decl: [tall, f32, { call: [math.abs, { -: [tip_y, end_y] }] }]
+            - decl: [tint, string, { call: [<.tone, edge.stroke, 0x55687AFF] }]
+            - decl: [thick, string, "19050"]
+            - if: { condition: { eq: [edge.kind, EdgeKind.thick] }, then: [{ set: [thick, "38100"] }] }
+            - decl: [dash, string, ""]
+            - if: { condition: { eq: [edge.kind, EdgeKind.dotted] }, then: [{ set: [dash, "<a:prstDash val=\"dash\"/>"] }] }
+            - decl: [ends, string, "<a:tailEnd type=\"triangle\"/>"]
+            - if: { condition: { eq: [edge.kind, EdgeKind.open] }, then: [{ set: [ends, ""] }] }
+            - if: { condition: { eq: [edge.kind, EdgeKind.bidirectional] }, then: [{ set: [ends, "<a:headEnd type=\"triangle\"/><a:tailEnd type=\"triangle\"/>"] }] }
+            - decl: [out, string, "<p:cxnSp><p:nvCxnSpPr><p:cNvPr id=\"${shape_id}\" name=\"${ { call: [<.svg.esc, edge.ident] } }\"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>"]
+            - set: [out, "${out}<p:spPr><a:xfrm${flip}><a:off x=\"${ { call: [<.emu, low_x] } }\" y=\"${ { call: [<.emu, low_y] } }\"/><a:ext cx=\"${ { call: [<.emu, wide] } }\" cy=\"${ { call: [<.emu, tall] } }\"/></a:xfrm>"]
+            - set: [out, "${out}<a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom><a:ln w=\"${thick}\"><a:solidFill><a:srgbClr val=\"${tint}\"/></a:solidFill>${dash}${ends}</a:ln></p:spPr></p:cxnSp>"]
+            - return: out
+
+      # One slide, and the relationship file that goes with it: the images it
+      # embeds are named here, so both are written in one pass.
+      - def:
+          name: slide_xml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: string
+          body:
+            - set: [<.rels, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/>"]
+            - decl: [out, string, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"]
+            - set: [out, "${out}<p:sld xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:cSld><p:spTree>"]
+            - set: [out, "${out}<p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr>"]
+            - decl: [shape_id, i32, 2]
+            - if:
+                condition: { neq: [sheet.title, ""] }
+                then:
+                  - decl: [head, Node]
+                  - set: [head.pos_x, 52.0]
+                  - set: [head.pos_y, 18.0]
+                  - set: [head.width, 1000.0]
+                  - set: [head.height, 40.0]
+                  - set: [out, "${out}<p:sp><p:nvSpPr><p:cNvPr id=\"${shape_id}\" name=\"title\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"${ { call: [<.emu, head.pos_x] } }\" y=\"${ { call: [<.emu, head.pos_y] } }\"/><a:ext cx=\"${ { call: [<.emu, head.width] } }\" cy=\"${ { call: [<.emu, head.height] } }\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"]
+                  - set: [out, "${out}<p:txBody><a:bodyPr anchor=\"ctr\"/><a:lstStyle/><a:p><a:pPr algn=\"l\"/><a:r><a:rPr lang=\"de-DE\" sz=\"1650\" dirty=\"0\"><a:solidFill><a:srgbClr val=\"101A24\"/></a:solidFill></a:rPr><a:t>${ { call: [<.svg.esc, sheet.title] } }</a:t></a:r></a:p></p:txBody></p:sp>"]
+                  - set: [shape_id, { +: [shape_id, 1] }]
+            - decl: [rel_no, i32, 2]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [node.kind, NodeKind.image] }, { eq: [{ call: [<.picture_there, node.src] }, 1] }] }
+                      then:
+                        - set: [<.media, { +: [<.media, 1] }]
+                        - decl: [tail, string, ".png"]
+                        - decl: [low, string, { call: [node.src.lower] }]
+                        - if: { condition: { eq: [{ call: [low.ends_with, ".jpg"] }, 1] }, then: [{ set: [tail, ".jpeg"] }] }
+                        - if: { condition: { eq: [{ call: [low.ends_with, ".jpeg"] }, 1] }, then: [{ set: [tail, ".jpeg"] }] }
+                        - decl: [member, string, "image${<.media}${tail}"]
+                        - call: [<.zip.add_file, "ppt/media/${member}", { call: [<.full_path, node.src] }]
+                        - set: [<.rels, "${<.rels}<Relationship Id=\"rId${rel_no}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/${member}\"/>"]
+                        - set: [out, "${out}${ { call: [<.image_xml, node, shape_id, \"rId${rel_no}\"] } }"]
+                        - set: [rel_no, { +: [rel_no, 1] }]
+                        - set: [shape_id, { +: [shape_id, 1] }]
+                        - decl: [under, string, { call: [<.caption_xml, node, shape_id] }]
+                        - if:
+                            condition: { neq: [under, ""] }
+                            then:
+                              - set: [out, "${out}${under}"]
+                              - set: [shape_id, { +: [shape_id, 1] }]
+                      else:
+                        - decl: [filler, Node]
+                        - set: [filler.ident, node.ident]
+                        - set: [filler.kind, node.kind]
+                        - set: [filler.pos_x, node.pos_x]
+                        - set: [filler.pos_y, node.pos_y]
+                        - set: [filler.width, node.width]
+                        - set: [filler.height, node.height]
+                        - set: [filler.fill, node.fill]
+                        - set: [filler.stroke, node.stroke]
+                        - set: [filler.text, node.text]
+                        - if:
+                            condition: { eq: [node.kind, NodeKind.image] }
+                            then:
+                              - set: [filler.kind, NodeKind.rect]
+                              - set: [filler.text, "[${node.src}]"]
+                        - set: [out, "${out}${ { call: [<.node_xml, filler, shape_id] } }"]
+                        - set: [shape_id, { +: [shape_id, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.edges.len] }
+                body:
+                  - decl: [edge, ref<Edge>, { at: [sheet.edges, idx] }]
+                  - decl: [piece, string, { call: [<.edge_xml, sheet, edge, shape_id] }]
+                  - if:
+                      condition: { neq: [piece, ""] }
+                      then:
+                        - set: [out, "${out}${piece}"]
+                        - set: [shape_id, { +: [shape_id, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [<.rels, "${<.rels}</Relationships>\n"]
+            - return: "${out}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>\n"
+
+      # A missing picture must not take the whole export with it: the canvas draws a
+      # placeholder carrying the path (§12), so the slide gets the same -- a box whose
+      # text says which file is absent.  Aborting here would mean one stale path costs
+      # the author every other slide.
+      - def:
+          name: picture_there
+          static_off: ["same_arg", "str_cmp"]
+          args: [[src, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [src, ""] }, then: [{ return: 0 }] }
+            - decl: [full, path, { call: [<.full_path, src] }]
+            - if: { condition: { eq: [{ call: [io.is_file, full] }, 0] }, then: [{ return: 0 }] }
+            - return: 1
+
+      # An image path in the sheet is relative to the DECK (spec §16.3), not to the
+      # process's working directory -- exporting from another folder must not turn
+      # every picture into a missing file.
+      - def:
+          name: full_path
+          static_off: ["same_arg", "str_cmp"]
+          args: [[src, string]]
+          return: string
+          body:
+            - if: { condition: { eq: [{ call: [src.starts_with, "/"] }, 1] }, then: [{ return: src }] }
+            - if: { condition: { eq: [<.base, ""] }, then: [{ return: src }] }
+            - return: "${<.base}/${src}"
+
+      # The fixed parts of the package.  They never vary with the deck, but they are
+      # not optional: without a theme and a master, PowerPoint refuses the file --
+      # LibreOffice opens it, which is exactly why §17.2 tests with a real reader.
+      - def:
+          name: theme_xml
+          return: string
+          body:
+            - decl: [out, string, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"chart\"><a:themeElements>"]
+            - set: [out, "${out}<a:clrScheme name=\"chart\"><a:dk1><a:sysClr val=\"windowText\" lastClr=\"000000\"/></a:dk1><a:lt1><a:sysClr val=\"window\" lastClr=\"FFFFFF\"/></a:lt1><a:dk2><a:srgbClr val=\"1A2430\"/></a:dk2><a:lt2><a:srgbClr val=\"F2F5F9\"/></a:lt2>"]
+            - set: [out, "${out}<a:accent1><a:srgbClr val=\"2F80ED\"/></a:accent1><a:accent2><a:srgbClr val=\"55687A\"/></a:accent2><a:accent3><a:srgbClr val=\"40A0C0\"/></a:accent3><a:accent4><a:srgbClr val=\"806030\"/></a:accent4><a:accent5><a:srgbClr val=\"2E4A7A\"/></a:accent5><a:accent6><a:srgbClr val=\"7788AA\"/></a:accent6>"]
+            - set: [out, "${out}<a:hlink><a:srgbClr val=\"0563C1\"/></a:hlink><a:folHlink><a:srgbClr val=\"954F72\"/></a:folHlink></a:clrScheme>"]
+            - set: [out, "${out}<a:fontScheme name=\"chart\"><a:majorFont><a:latin typeface=\"Calibri\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont><a:latin typeface=\"Calibri\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme>"]
+            - decl: [one_fill, string, "<a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>"]
+            - decl: [one_line, string, "<a:ln w=\"12700\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill><a:prstDash val=\"solid\"/></a:ln>"]
+            - set: [out, "${out}<a:fmtScheme name=\"chart\"><a:fillStyleLst>${one_fill}${one_fill}${one_fill}</a:fillStyleLst><a:lnStyleLst>${one_line}${one_line}${one_line}</a:lnStyleLst>"]
+            - set: [out, "${out}<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>"]
+            - return: "${out}<a:bgFillStyleLst>${one_fill}${one_fill}${one_fill}</a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraLst/></a:theme>\n"
+
+      - def:
+          name: empty_tree
+          return: string
+          body:
+            - return: "<p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/><a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr></p:spTree>"
+
+      - def:
+          name: add_frame
+          static_off: ["same_arg", "str_cmp"]
+          args: [[count, i32]]
+          body:
+            - decl: [heads, string, "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\""]
+            - decl: [decl_line, string, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"]
+            - decl: [rel_head, string, "${decl_line}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"]
+            - decl: [rel_base, string, "http://schemas.openxmlformats.org/officeDocument/2006/relationships"]
+
+            # [Content_Types].xml -- every part declares its type or the package is
+            # not a package
+            - decl: [types, string, "${decl_line}<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>"]
+            - decl: [office, string, "application/vnd.openxmlformats-officedocument"]
+            - set: [types, "${types}<Override PartName=\"/ppt/presentation.xml\" ContentType=\"${office}.presentationml.presentation.main+xml\"/>"]
+            - set: [types, "${types}<Override PartName=\"/ppt/slideMasters/slideMaster1.xml\" ContentType=\"${office}.presentationml.slideMaster+xml\"/>"]
+            - set: [types, "${types}<Override PartName=\"/ppt/slideLayouts/slideLayout1.xml\" ContentType=\"${office}.presentationml.slideLayout+xml\"/>"]
+            - set: [types, "${types}<Override PartName=\"/ppt/theme/theme1.xml\" ContentType=\"${office}.theme+xml\"/>"]
+            - decl: [num, i32, 1]
+            - while:
+                condition: { le: [num, count] }
+                body:
+                  - set: [types, "${types}<Override PartName=\"/ppt/slides/slide${num}.xml\" ContentType=\"${office}.presentationml.slide+xml\"/>"]
+                  - set: [num, { +: [num, 1] }]
+            - call: [<.zip.add_text, "[Content_Types].xml", "${types}</Types>\n"]
+
+            - call: [<.zip.add_text, "_rels/.rels", "${rel_head}<Relationship Id=\"rId1\" Type=\"${rel_base}/officeDocument\" Target=\"ppt/presentation.xml\"/></Relationships>\n"]
+
+            # presentation.xml: 12192000 x 6858000 EMU is 1280 x 720 sheet units
+            - decl: [pres, string, "${decl_line}<p:presentation ${heads}><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rId1\"/></p:sldMasterIdLst><p:sldIdLst>"]
+            - decl: [rels, string, "${rel_head}<Relationship Id=\"rId1\" Type=\"${rel_base}/slideMaster\" Target=\"slideMasters/slideMaster1.xml\"/>"]
+            - set: [num, 1]
+            - while:
+                condition: { le: [num, count] }
+                body:
+                  - decl: [slot, i32, { +: [num, 1] }]
+                  - set: [pres, "${pres}<p:sldId id=\"${ { +: [255, slot] } }\" r:id=\"rId${slot}\"/>"]
+                  - set: [rels, "${rels}<Relationship Id=\"rId${slot}\" Type=\"${rel_base}/slide\" Target=\"slides/slide${num}.xml\"/>"]
+                  - set: [num, { +: [num, 1] }]
+            - decl: [last, i32, { +: [count, 2] }]
+            - set: [rels, "${rels}<Relationship Id=\"rId${last}\" Type=\"${rel_base}/theme\" Target=\"theme/theme1.xml\"/></Relationships>\n"]
+            - set: [pres, "${pres}</p:sldIdLst><p:sldSz cx=\"12192000\" cy=\"6858000\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>\n"]
+            - call: [<.zip.add_text, "ppt/presentation.xml", pres]
+            - call: [<.zip.add_text, "ppt/_rels/presentation.xml.rels", rels]
+
+            - decl: [master, string, "${decl_line}<p:sldMaster ${heads}><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>${ { call: [<.empty_tree] } }</p:cSld>"]
+            - set: [master, "${master}<p:clrMap bg1=\"lt1\" tx1=\"dk1\" bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" folHlink=\"folHlink\"/>"]
+            - set: [master, "${master}<p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rId1\"/></p:sldLayoutIdLst></p:sldMaster>\n"]
+            - call: [<.zip.add_text, "ppt/slideMasters/slideMaster1.xml", master]
+            - call: [<.zip.add_text, "ppt/slideMasters/_rels/slideMaster1.xml.rels", "${rel_head}<Relationship Id=\"rId1\" Type=\"${rel_base}/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/><Relationship Id=\"rId2\" Type=\"${rel_base}/theme\" Target=\"../theme/theme1.xml\"/></Relationships>\n"]
+
+            - decl: [layout, string, "${decl_line}<p:sldLayout ${heads} type=\"blank\" preserve=\"1\"><p:cSld name=\"Leer\">${ { call: [<.empty_tree] } }</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>\n"]
+            - call: [<.zip.add_text, "ppt/slideLayouts/slideLayout1.xml", layout]
+            - call: [<.zip.add_text, "ppt/slideLayouts/_rels/slideLayout1.xml.rels", "${rel_head}<Relationship Id=\"rId1\" Type=\"${rel_base}/slideMaster\" Target=\"../slideMasters/slideMaster1.xml\"/></Relationships>\n"]
+            - call: [<.zip.add_text, "ppt/theme/theme1.xml", { call: [<.theme_xml] }]
+
+      - def:
+          name: emit
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [out_path, string], [deck_dir, string]]
+          return: i32
+          body:
+            - set: [<.base, deck_dir]
+            - set: [<.media, 0]
+            - call: [<.zip.reset]
+            - call: [<.add_frame, deck.slides.len]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [slide, Sheet, { at: [deck.slides, idx] }]
+                  - decl: [num, i32, { +: [idx, 1] }]
+                  - decl: [page, string, { call: [<.slide_xml, slide] }]
+                  - call: [<.zip.add_text, "ppt/slides/slide${num}.xml", page]
+                  - call: [<.zip.add_text, "ppt/slides/_rels/slide${num}.xml.rels", <.rels]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: { call: [<.zip.write, out_path] }
