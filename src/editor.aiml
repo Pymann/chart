@@ -70,8 +70,8 @@
           args: [[half_w, f32], [half_h, f32], [uni_x, f32], [uni_y, f32]]
           return: f32
           body:
-            - decl: [abs_x, f32, { call: [math.max, uni_x, { -: [0.0, uni_x] }] }]
-            - decl: [abs_y, f32, { call: [math.max, uni_y, { -: [0.0, uni_y] }] }]
+            - decl: [abs_x, f32, { call: [math.abs, uni_x] }]
+            - decl: [abs_y, f32, { call: [math.abs, uni_y] }]
             - decl: [span, f32, 100000.0]
             - if:
                 condition: { gt: [abs_x, 0.001] }
@@ -93,33 +93,26 @@
             - call: [ui.draw_line, right, bottom, box.pos_x, bottom, box.thick, box.tint]
             - call: [ui.draw_line, box.pos_x, bottom, box.pos_x, box.pos_y, box.thick, box.tint]
 
-      # A closed polyline around the ellipse inscribed in the box.  aiml's math
-      # namespace has no cos/sin, so the unit circle is a table -- 16 segments read
-      # as round at slide scale.
+      # A closed polyline around the ellipse inscribed in the box.
       - def:
           name: ellipse
           args: [[box, ref<Shape>]]
           body:
-            - decl: [unit, list<f32>, [1.0, 0.0, 0.9239, 0.3827, 0.7071, 0.7071, 0.3827, 0.9239,
-                                       0.0, 1.0, -0.3827, 0.9239, -0.7071, 0.7071, -0.9239, 0.3827,
-                                       -1.0, 0.0, -0.9239, -0.3827, -0.7071, -0.7071, -0.3827, -0.9239,
-                                       0.0, -1.0, 0.3827, -0.9239, 0.7071, -0.7071, 0.9239, -0.3827,
-                                       1.0, 0.0]]
+            - decl: [steps, i32, 36]
             - decl: [rad_x, f32, { /: [box.width, 2.0] }]
             - decl: [rad_y, f32, { /: [box.height, 2.0] }]
             - decl: [mid_x, f32, { +: [box.pos_x, rad_x] }]
             - decl: [mid_y, f32, { +: [box.pos_y, rad_y] }]
             - decl: [pts, buffer<f32>]
-            - call: [pts.alloc, 160]
+            - call: [pts.alloc, 320]
             - decl: [idx, i32, 0]
             - while:
-                condition: { lt: [idx, unit.len] }
+                condition: { le: [idx, steps] }
                 body:
-                  - decl: [unit_x, f32, { at: [unit, idx] }]
-                  - decl: [unit_y, f32, { at: [unit, { +: [idx, 1] }] }]
-                  - call: [pts.write, { +: [mid_x, { "*": [rad_x, unit_x] }] }, f32]
-                  - call: [pts.write, { +: [mid_y, { "*": [rad_y, unit_y] }] }, f32]
-                  - set: [idx, { +: [idx, 2] }]
+                  - decl: [turn, f32, { /: [{ "*": [6.2831853, { cast: [idx, f32] }] }, { cast: [steps, f32] }] }]
+                  - call: [pts.write, { +: [mid_x, { "*": [rad_x, { call: [math.cos, turn] }] }] }, f32]
+                  - call: [pts.write, { +: [mid_y, { "*": [rad_y, { call: [math.sin, turn] }] }] }, f32]
+                  - set: [idx, { +: [idx, 1] }]
             - call: [ui.draw_polyline, pts, box.thick, box.tint]
 
       - def:
@@ -180,13 +173,7 @@
             - if: { condition: { eq: [text, ""] }, then: [{ return: null }] }
             - decl: [lines, list<string>, { call: [text.split, "\n"] }]
             - decl: [line_h, f32, { call: [ui.text_height] }]
-            - decl: [total, f32, 0.0]
-            - decl: [count, i32, 0]
-            - while:
-                condition: { lt: [count, lines.len] }
-                body:
-                  - set: [total, { +: [total, line_h] }]
-                  - set: [count, { +: [count, 1] }]
+            - decl: [total, f32, { "*": [line_h, { cast: [lines.len, f32] }] }]
             - decl: [line_y, f32, { +: [box.pos_y, { /: [{ -: [box.height, total] }, 2.0] }] }]
             - decl: [idx, i32, 0]
             - while:
@@ -333,7 +320,7 @@
                         - decl: [to_cy, f32, { +: [org_y, { "*": [{ +: [tail_node.pos_y, { /: [tail_node.height, 2.0] }] }, scale] }] }]
                         - decl: [del_x, f32, { -: [from_cx, to_cx] }]
                         - decl: [del_y, f32, { -: [from_cy, to_cy] }]
-                        - decl: [span, f32, { call: [math.pow, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }, 0.5] }]
+                        - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
                         - if:
                             condition: { gt: [span, 1.0] }
                             then:
