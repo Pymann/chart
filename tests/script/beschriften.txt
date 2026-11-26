@@ -1,0 +1,17 @@
+# Einen Knoten anwaehlen, beschriften, Marke bewegen, einfuegen, speichern.
+# Schritte sind Folienkoordinaten; ein Schritt je Bild (spec §9.1).
+at 620 345
+down 0
+up 0
+wait 2
+key Enter
+wait 2
+type XY
+wait 2
+key Home
+type A
+wait 2
+key Enter
+wait 2
+save
+wait 2

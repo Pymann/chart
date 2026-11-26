@@ -23,6 +23,7 @@
       - [pptx, string, ""]         # output: one editable PowerPoint file (spec §17.2)
       - [import, string, ""]   # input: read Mermaid back in (spec §18)
       - [out, string, ""]          # where the imported sheet is written
+      - [script, string, ""]       # a file of input steps (spec §9.1)
       # Testing and screenshots: run a fixed number of frames, optionally capture the
       # last one.  Without this the editor runs until the window closes, and a test
       # that waits for a human is a test nobody runs (aiml run_all_tests.sh: a

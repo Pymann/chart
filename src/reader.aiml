@@ -320,6 +320,11 @@
             - set: [fresh.height, shape.height]
             - call: [slide.nodes.push, fresh]
             - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - decl: [spot_x, i32, { cast: [fresh.pos_x, i32] }]
+            - decl: [spot_y, i32, { cast: [fresh.pos_y, i32] }]
+            - decl: [size_w, i32, { cast: [fresh.width, i32] }]
+            - decl: [size_h, i32, { cast: [fresh.height, i32] }]
+            - call: [<.diag.say, "ANGELEGT ${fresh.ident} art=${fresh.kind} bei ${spot_x},${spot_y} ${size_w}x${size_h} knoten=${slide.nodes.len}"]
             - return: fresh.ident
 
       - def:

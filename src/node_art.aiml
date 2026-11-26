@@ -1,0 +1,219 @@
+# Drawing ONE node (doc/spec/chart.md §15.2), with its shape, its colour and its
+# label -- including the live one with a caret while it is being edited.
+#
+# Its own class because the editor may not pass 1499 lines (aiml spec/49 §3) and
+# because this is a different job from running a surface: it needs a pen, the label
+# being edited and the loaded images, and nothing else about the editor.
+- import: "src/pen.aiml"
+- import: "src/label.aiml"
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: NodeArt
+    description: "Draws a node: shape, colour, label (spec §15.2)"
+    members:
+      - [pen, ref<Pen>]
+      - [label, ref<LabelEdit>]
+      - [textures, map<string:gl_texture>]
+      - [live_id, string]          # the node being edited, "" = none
+    methods:
+      # Plain text, or the live one with its caret and selection (§6).
+      - def:
+          name: draw_label
+          static_off: ["same_arg", "str_cmp"]
+          args: [[box, ref<Shape>], [text, string], [live, i32]]
+          body:
+            - if:
+                condition: { eq: [live, 1] }
+                then: [{ call: [<.label.draw_in, box] }]
+                else: [{ call: [<.pen.text_block, box, text] }]
+
+      # Every image on the deck, loaded once (§12): a texture per frame would
+      # reload the file sixty times a second.
+      - def:
+          name: load_images
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>]]
+          body:
+            - decl: [sidx, i32, 0]
+            - while:
+                condition: { lt: [sidx, deck.slides.len] }
+                body:
+                  - decl: [slide, ref<Sheet>, { at: [deck.slides, sidx] }]
+                  - decl: [nidx, i32, 0]
+                  - while:
+                      condition: { lt: [nidx, slide.nodes.len] }
+                      body:
+                        - decl: [node, ref<Node>, { at: [slide.nodes, nidx] }]
+                        - if:
+                            condition: { "&&": [{ eq: [node.kind, NodeKind.image] }, { neq: [node.src, ""] }] }
+                            then:
+                              - if:
+                                  condition: { eq: [{ call: [<.textures.contains, node.src] }, 0] }
+                                  then:
+                                    - decl: [tex, gl_texture, { call: [gl.load_texture, node.src] }]
+                                    - if:
+                                        condition: { neq: [tex, null] }
+                                        then: [{ call: [<.textures.put, node.src, tex] }]
+                                        else: [{ call: [log.error, "chart: ${node.src}: cannot load image"] }]
+                        - set: [nidx, { +: [nidx, 1] }]
+                  - set: [sidx, { +: [sidx, 1] }]
+
+      # ── nodes and edges ─────────────────────────────────────────────────────
+      - def:
+          name: draw_node
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [org_x, f32], [org_y, f32], [scale, f32]]
+          body:
+            - decl: [box, Shape]
+            - set: [box.pos_x, { +: [org_x, { "*": [node.pos_x, scale] }] }]
+            - set: [box.pos_y, { +: [org_y, { "*": [node.pos_y, scale] }] }]
+            - set: [box.width, { "*": [node.width, scale] }]
+            - set: [box.height, { "*": [node.height, scale] }]
+            - set: [box.thick, 2.0]
+            - decl: [label, string, node.text]
+            - decl: [live, i32, 0]
+            - if:
+                condition: { "&&": [{ neq: [<.live_id, ""] }, { eq: [node.ident, <.live_id] }] }
+                then: [{ set: [label, <.label.text] }, { set: [live, 1] }]
+            - decl: [fill, i32, node.fill]
+            - if: { condition: { eq: [fill, 0] }, then: [{ set: [fill, 0xF2F5F9FF] }] }
+            - decl: [stroke, i32, node.stroke]
+            - if: { condition: { eq: [stroke, 0] }, then: [{ set: [stroke, 0x3A4A5AFF] }] }
+
+            # prose: no frame, no fill, left-aligned (§3.2)
+            - if:
+                condition: { eq: [node.kind, NodeKind.text] }
+                then:
+                  - set: [box.tint, { call: [<.pen.ink_for, 0xF2F5F9FF] }]
+                  - if: { condition: { neq: [node.fill, 0] }, then: [{ set: [box.tint, node.fill] }] }
+                  - if:
+                      condition: { eq: [live, 1] }
+                      then: [{ call: [<.label.draw_in, box] }]
+                      else: [{ call: [<.pen.text_flow, box, label] }]
+                  - return: null
+
+            - if:
+                condition: { eq: [node.kind, NodeKind.image] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.textures.contains, node.src] }, 1] }
+                      then:
+                        - decl: [tex, gl_texture, { call: [<.textures.get, node.src] }]
+                        - call: [ui.draw_image, box.pos_x, box.pos_y, box.width, box.height, tex]
+                      else:
+                        # A missing file is a placeholder carrying the path (spec §12):
+                        # a blank box would hide WHICH file is absent.
+                        - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, 0xE8E2D8FF]
+                        - set: [box.tint, 0x806030FF]
+                        - call: [<.pen.text_block, box, "[${node.src}]"]
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.frame, box]
+                  - if:
+                      condition: { neq: [node.text, ""] }
+                      then:
+                        - decl: [cap, Shape]
+                        - set: [cap.pos_x, box.pos_x]
+                        - set: [cap.pos_y, { +: [box.pos_y, box.height] }]
+                        - set: [cap.width, box.width]
+                        - set: [cap.height, { "*": [24.0, scale] }]
+                        - set: [cap.tint, 0x4A5A6AFF]
+                        - call: [<.draw_label, cap, label, live]
+                  - return: null
+
+            # the slanted family and the stick figure (§5.2)
+            - decl: [slant_top, f32, 0.0]
+            - decl: [slant_low, f32, 0.0]
+            - decl: [slanted, i32, 0]
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid] }, then: [{ set: [slanted, 1] }, { set: [slant_top, 0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.trapezoid_alt] }, then: [{ set: [slanted, 1] }, { set: [slant_low, 0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram] }, then: [{ set: [slanted, 1] }, { set: [slant_top, 0.18] }, { set: [slant_low, -0.18] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.parallelogram_alt] }, then: [{ set: [slanted, 1] }, { set: [slant_top, -0.18] }, { set: [slant_low, 0.18] }] }
+            - if:
+                condition: { eq: [slanted, 1] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.slanted, box, slant_top, slant_low]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.asymmetric] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.asymmetric, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.actor] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.actor, box]
+                  - decl: [name_box, Shape]
+                  - set: [name_box.pos_x, box.pos_x]
+                  - set: [name_box.pos_y, { +: [box.pos_y, box.height] }]
+                  - set: [name_box.width, box.width]
+                  - set: [name_box.height, { "*": [22.0, scale] }]
+                  - set: [name_box.tint, { call: [<.pen.ink_for, 0xF2F5F9FF] }]
+                  - call: [<.draw_label, name_box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.double_circle] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.ellipse, box]
+                  - decl: [inner, Shape]
+                  - decl: [gap_in, f32, { "*": [6.0, scale] }]
+                  - set: [inner.pos_x, { +: [box.pos_x, gap_in] }]
+                  - set: [inner.pos_y, { +: [box.pos_y, gap_in] }]
+                  - set: [inner.width, { -: [box.width, { "*": [gap_in, 2.0] }] }]
+                  - set: [inner.height, { -: [box.height, { "*": [gap_in, 2.0] }] }]
+                  - set: [inner.tint, stroke]
+                  - set: [inner.thick, box.thick]
+                  - call: [<.pen.ellipse, inner]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+
+            - if:
+                condition: { eq: [node.kind, NodeKind.diamond] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.diamond, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+            - if:
+                condition: { eq: [node.kind, NodeKind.hexagon] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.hexagon, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+            - decl: [rounded, i32, 0]
+            - if: { condition: { eq: [node.kind, NodeKind.circle] }, then: [{ set: [rounded, 1] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.round] }, then: [{ set: [rounded, 1] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.stadium] }, then: [{ set: [rounded, 1] }] }
+            - if:
+                condition: { eq: [rounded, 1] }
+                then:
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.ellipse, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.draw_label, box, label, live]
+                  - return: null
+
+            # rect, cylinder, subroutine
+            - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, fill]
+            - set: [box.tint, stroke]
+            - call: [<.pen.frame, box]
+            - if:
+                condition: { eq: [node.kind, NodeKind.subroutine] }
+                then:
+                  - decl: [inset, f32, { "*": [9.0, scale] }]
+                  - call: [ui.draw_line, { +: [box.pos_x, inset] }, box.pos_y, { +: [box.pos_x, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
+                  - call: [ui.draw_line, { -: [{ +: [box.pos_x, box.width] }, inset] }, box.pos_y, { -: [{ +: [box.pos_x, box.width] }, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
+            - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+            - call: [<.draw_label, box, label, live]

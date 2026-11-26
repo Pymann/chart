@@ -1,0 +1,180 @@
+# Driving the editor from a file (doc/spec/chart.md §9.1).
+#
+# The engine can post input events (aiml spec/44_0 §post_*), so a test can click and
+# type IN PROCESS -- no X11 robot, no screen-scraping, and the same code path a hand
+# takes.  A step runs per frame, because that is how a hand's input arrives too: a
+# press and the release after it are different frames, and anything that collapses
+# them tests something the editor never sees.
+#
+# Coordinates are SLIDE units, not window pixels: a test that hard-codes pixels breaks
+# when the window size changes, and then it is testing the window manager.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: Script
+    description: "A list of input steps, one per frame (spec §9.1)"
+    members:
+      - [steps, list<string>]
+      - [step_at, i32]            # the next step
+      - [waiting, i32]            # frames still to idle
+      - [arg, string]             # the file name of a `shot` step
+      - [shot_due, i32]           # 1 = capture at the END of this frame
+      - [running, i32]
+      - [last_x, f32]             # where the pointer was put, in window pixels
+      - [last_y, f32]
+      - [warm, i32]               # frames to let the window settle first
+    methods:
+      - def:
+          name: load
+          static_off: ["same_arg", "str_cmp"]
+          args: [[path, string]]
+          return: i32
+          body:
+            - decl: [handle, file_handle, { call: [io.open, path, "r"] }]
+            - if:
+                condition: { eq: [handle, null] }
+                then:
+                  - call: [log.error, "chart: ${path}: Skript nicht lesbar"]
+                  - return: 0
+            - decl: [text, string, { call: [io.read_all, handle] }]
+            - call: [io.close, handle]
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, lines.len] }
+                body:
+                  - decl: [raw, string, { at: [lines, idx] }]
+                  - decl: [line, string, { call: [raw.trim] }]
+                  - set: [idx, { +: [idx, 1] }]
+                  # aiml has no `continue`: a `return` here would end the WHOLE load
+                  # at the first blank line, which is what it did for one build
+                  - decl: [keep, i32, 1]
+                  - if: { condition: { eq: [line, ""] }, then: [{ set: [keep, 0] }] }
+                  - if: { condition: { eq: [{ call: [line.starts_with, "#"] }, 1] }, then: [{ set: [keep, 0] }] }
+                  - if: { condition: { eq: [keep, 1] }, then: [{ call: [<.steps.push, line] }] }
+            - set: [<.running, 1]
+            - set: [<.step_at, 0]
+            # The window needs a few frames to map, and mapping produces real input:
+            # a focus event, an enter event, a cursor position.  A script that starts
+            # before that is overwritten by it -- which looked like "works with
+            # --diag, does nothing without", because the logging slowed the frames
+            # down enough to hide it.
+            - set: [<.warm, 20]
+            - return: 1
+
+      # The word before the first space, and what follows it.
+      - def:
+          name: head_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[line, string]]
+          return: string
+          body:
+            - decl: [space, i32, { call: [line.index_of, " "] }]
+            - if: { condition: { lt: [space, 0] }, then: [{ return: line }] }
+            - return: { call: [line.substr, 0, space] }
+
+      - def:
+          name: rest_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[line, string]]
+          return: string
+          body:
+            - decl: [space, i32, { call: [line.index_of, " "] }]
+            - if: { condition: { lt: [space, 0] }, then: [{ return: "" }] }
+            - decl: [after, i32, { +: [space, 1] }]
+            - decl: [tail, string, { call: [line.substr, after, { -: [line.len, after] }] }]
+            - return: { call: [tail.trim] }
+
+      - def:
+          name: number_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [which, i32]]
+          return: f32
+          body:
+            - decl: [parts, list<string>, { call: [text.split, " "] }]
+            - if: { condition: { ge: [which, parts.len] }, then: [{ return: 0.0 }] }
+            - decl: [one, string, { at: [parts, which] }]
+            - return: { call: [one.parse_f32] }
+
+      # One step, or none when the script is waiting.  Returns:
+      #   0 nothing to do   1 handled   2 save   3 shot (<.arg)   4 finished
+      - def:
+          name: tick
+          static_off: ["same_arg", "str_cmp"]
+          args: [[org_x, f32], [org_y, f32], [scale, f32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [<.running, 0] }, then: [{ return: 4 }] }
+            - if:
+                condition: { gt: [<.warm, 0] }
+                then:
+                  - set: [<.warm, { -: [<.warm, 1] }]
+                  - return: 0
+            - if:
+                condition: { gt: [<.waiting, 0] }
+                then:
+                  - set: [<.waiting, { -: [<.waiting, 1] }]
+                  - return: 0
+            - if:
+                condition: { ge: [<.step_at, <.steps.len] }
+                then:
+                  - set: [<.running, 0]
+                  - return: 4
+            - decl: [line, string, { at: [<.steps, <.step_at] }]
+            - set: [<.step_at, { +: [<.step_at, 1] }]
+            - decl: [word, string, { call: [<.head_of, line] }]
+            - decl: [rest, string, { call: [<.rest_of, line] }]
+
+            # `at X Y` -- slide units, converted the way the canvas converts them
+            - if:
+                condition: { eq: [word, "at"] }
+                then:
+                  - decl: [slide_x, f32, { call: [<.number_at, rest, 0] }]
+                  - decl: [slide_y, f32, { call: [<.number_at, rest, 1] }]
+                  - set: [<.last_x, { +: [org_x, { "*": [slide_x, scale] }] }]
+                  - set: [<.last_y, { +: [org_y, { "*": [slide_y, scale] }] }]
+                  - call: [input.post_mouse_move, <.last_x, <.last_y]
+                  - return: 1
+            # `at_win X Y` -- window pixels, for the action bar
+            - if:
+                condition: { eq: [word, "at_win"] }
+                then:
+                  - set: [<.last_x, { call: [<.number_at, rest, 0] }]
+                  - set: [<.last_y, { call: [<.number_at, rest, 1] }]
+                  - call: [input.post_mouse_move, <.last_x, <.last_y]
+                  - return: 1
+            - if:
+                condition: { eq: [word, "down"] }
+                then:
+                  - call: [input.post_mouse_move, <.last_x, <.last_y]
+                  - call: [input.post_mouse_down, { cast: [{ call: [<.number_at, rest, 0] }, i32] }]
+                  - return: 1
+            - if:
+                condition: { eq: [word, "up"] }
+                then:
+                  - call: [input.post_mouse_move, <.last_x, <.last_y]
+                  - call: [input.post_mouse_up, { cast: [{ call: [<.number_at, rest, 0] }, i32] }]
+                  - return: 1
+            - if: { condition: { eq: [word, "key"] }, then: [{ call: [input.post_key_down, rest] }, { call: [input.post_key_up, rest] }, { return: 1 }] }
+            - if: { condition: { eq: [word, "hold"] }, then: [{ call: [input.post_key_repeat, rest] }, { return: 1 }] }
+            - if: { condition: { eq: [word, "type"] }, then: [{ call: [input.post_text, rest] }, { return: 1 }] }
+            - if:
+                condition: { eq: [word, "wait"] }
+                then:
+                  - set: [<.waiting, { cast: [{ call: [<.number_at, rest, 0] }, i32] }]
+                  - return: 1
+            - if: { condition: { eq: [word, "save"] }, then: [{ return: 2 }] }
+            - if:
+                condition: { eq: [word, "shot"] }
+                then:
+                  - set: [<.arg, rest]
+                  # the frame has not been drawn yet when a step runs (§9.1): a
+                  # capture here would be of a cleared buffer, which is what the
+                  # first all-dark screenshot was
+                  - set: [<.shot_due, 1]
+                  - return: 3
+            # An unknown step is an error, not a shrug: a test that silently skipped
+            # half its steps would pass while checking nothing.
+            - call: [log.error, "chart: Skriptschritt unbekannt: '${line}'"]
+            - set: [<.running, 0]
+            - return: 4

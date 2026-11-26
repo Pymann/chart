@@ -1,0 +1,6 @@
+title: "Skriptprobe"
+slides:
+  - title: "Skriptprobe"
+    next_id: 2
+    nodes:
+      - { id: n1, kind: rect, x: 500, y: 300, w: 240, h: 90, text: "abc" }

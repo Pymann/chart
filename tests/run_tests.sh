@@ -232,5 +232,33 @@ else
     done
 fi
 
+# The editor, driven from a script (spec §9.1).  Needs a display; the steps are
+# posted in-process, so this checks the real input path and not a mock.
+if ! command -v xvfb-run >/dev/null; then
+    echo "[ SKIP ] script tests -- no xvfb-run; a silent skip would read like a pass"
+else
+    for script in tests/script/*.txt; do
+        [ -e "$script" ] || continue
+        name=$(basename "$script" .txt)
+        start="tests/fixture/script_${name}.deck.yaml"
+        [ -e "$start" ] || start="tests/fixture/script_probe.deck.yaml"
+        expected="tests/expected/script_$name.deck.yaml"
+        got="tests/out/script_$name.deck.yaml"
+        total=$((total + 1))
+        cp "$start" "$got"
+        if ! xvfb-run -a "$BIN" --deck "$got" --script "$script" >/dev/null 2>&1; then
+            echo "[ FAIL ] $name (script) -- chart exited non-zero"
+            failed=$((failed + 1))
+            continue
+        fi
+        if diff -u "$expected" "$got"; then
+            echo "[  OK  ] $name (script)"
+        else
+            echo "[ FAIL ] $name -- the sheet after the script differs from $expected"
+            failed=$((failed + 1))
+        fi
+    done
+fi
+
 echo "chart: $((total - failed))/$total passed"
 [ "$failed" -eq 0 ]

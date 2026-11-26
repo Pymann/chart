@@ -715,6 +715,35 @@ in this file.
 
 ---
 
+### 9.1 Driving the editor from a file (normative)
+
+`chart --script FILE` replays input steps, **one per frame**, and then exits. The engine
+can post input events (aiml spec/44_0 `input.post_*`), so a test clicks and types in the
+same process and through the same code path a hand takes -- no X11 robot, no reading
+pixels back.
+
+- A step is one line: `at X Y` (slide units), `at_win X Y` (window pixels, for the
+  action bar), `down`/`up [button]`, `key NAME`, `hold NAME` (a repeat), `type TEXT`,
+  `wait N` (frames), `shot FILE`, `save`. `#` is a comment.
+- **Coordinates are slide units.** A test that hard-codes window pixels breaks when the
+  window size changes and then tests the window manager instead of the editor.
+- **One step per frame**, because that is how a hand's input arrives: a press and the
+  release after it are different frames, and collapsing them would test something the
+  editor never sees.
+- Steps run **before** the frame reads its events. `aiml_input_update` clears the event
+  queue at the start of every frame, so a key posted after that point is wiped unread --
+  the clicks still worked (they are latches), which is exactly the kind of half-working
+  that wastes an afternoon.
+- A press **re-posts the pointer** first. The window manager moves the real pointer when
+  the window maps, and a button posted afterwards lands wherever that left it.
+- An unknown step is an **error**, not a shrug: a script that silently skipped half its
+  steps would pass while checking nothing.
+
+The test then compares the **saved sheet** against an expected file -- the editor's own
+output, not a screenshot, so a failure names the field that changed.
+
+---
+
 ## 10. Engine support this needs
 
 Two things were missing in AIML when this spec was written, and both are being added to

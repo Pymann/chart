@@ -1,0 +1,19 @@
+# Einen Kasten freihand ziehen, die Tinte mit der rechten Taste lesen lassen,
+# dann speichern.  Ein Schritt je Bild (spec §9.1).
+wait 3
+at 300 200
+down 0
+at 560 200
+at 560 360
+at 300 360
+at 300 205
+up 0
+wait 2
+at 900 500
+down 1
+up 1
+wait 4
+shot tests/out/freihand_skript.png
+wait 2
+save
+wait 2

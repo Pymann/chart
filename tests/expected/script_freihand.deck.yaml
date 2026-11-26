@@ -1,0 +1,8 @@
+title: "Freihand"
+slides:
+  - title: "Freihand"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    nodes:
+      - { id: n1, kind: round, x: 263.602, y: 166.662, w: 280.795, h: 196.676, text: "" }
