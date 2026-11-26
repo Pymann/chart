@@ -131,6 +131,44 @@
                   - set: [idx, { +: [idx, 1] }]
             - return: -1
 
+      # Which step is under a point, -1 for none.  Rows are 42 apart, so a reach of
+      # 14 cannot claim two rows at once.
+      - def:
+          name: step_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [sheet.steps, idx] }]
+                  - decl: [line_y, f32, { call: [<.row_y, idx] }]
+                  - decl: [gap, f32, { call: [math.abs, { -: [spot_y, line_y] }] }]
+                  - if:
+                      condition: { lt: [gap, 14.0] }
+                      then:
+                        - decl: [from_x, f32, { call: [<.centre_of, sheet, step.from_id] }]
+                        - decl: [to_x, f32, { call: [<.centre_of, sheet, step.to_id] }]
+                        - if: { condition: { eq: [step.to_id, ""] }, then: [{ set: [to_x, from_x] }] }
+                        - decl: [left, f32, from_x]
+                        - decl: [right, f32, to_x]
+                        - if:
+                            condition: { gt: [left, right] }
+                            then: [{ set: [left, to_x] }, { set: [right, from_x] }]
+                        # a block spans the whole width: its keyword line is its handle
+                        - if:
+                            condition: { neq: [step.kind, StepKind.message] }
+                            then:
+                              - set: [left, { -: [left, 70.0] }]
+                              - set: [right, { +: [right, 70.0] }]
+                        - if:
+                            condition: { "&&": [{ ge: [spot_x, left] }, { le: [spot_x, right] }] }
+                            then: [{ return: idx }]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
       # The centre of a participant's column, in design coordinates.
       - def:
           name: centre_of

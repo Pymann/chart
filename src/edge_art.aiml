@@ -1,0 +1,126 @@
+# Drawing the connectors of a sheet (doc/spec/chart.md §5.3, §5.8.2).
+#
+# Out of the editor because a file may not exceed 1499 lines (aiml spec/49 §3), and
+# because this is a pure function of the sheet and the selection: it decides nothing.
+- import: "src/pen.aiml"
+- import: "src/grip.aiml"
+
+- class:
+    name: EdgeArt
+    description: "Edges, their caps and what a class relation makes of them"
+    members:
+      - [pen, ref<Pen>]
+      - [grip, ref<Grip>]
+    methods:
+      - def:
+          name: draw_edges
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [chosen, string]]
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.edges.len] }
+                body:
+                  - decl: [edge, ref<Edge>, { at: [slide.edges, idx] }]
+                  - decl: [head_node, Node]
+                  - decl: [tail_node, Node]
+                  - decl: [found, i32, { call: [<.grip.node_by_id, slide, edge.from_id, head_node] }]
+                  - if:
+                      condition: { eq: [found, 1] }
+                      then: [{ set: [found, { call: [<.grip.node_by_id, slide, edge.to_id, tail_node] }] }]
+                  - if: { condition: { eq: [edge.line, LineStyle.invisible] }, then: [{ set: [found, 0] }] }
+                  - if:
+                      condition: { eq: [found, 1] }
+                      then:
+                        - decl: [from_cx, f32, { +: [org_x, { "*": [{ +: [head_node.pos_x, { /: [head_node.width, 2.0] }] }, scale] }] }]
+                        - decl: [from_cy, f32, { +: [org_y, { "*": [{ +: [head_node.pos_y, { /: [head_node.height, 2.0] }] }, scale] }] }]
+                        - decl: [to_cx, f32, { +: [org_x, { "*": [{ +: [tail_node.pos_x, { /: [tail_node.width, 2.0] }] }, scale] }] }]
+                        - decl: [to_cy, f32, { +: [org_y, { "*": [{ +: [tail_node.pos_y, { /: [tail_node.height, 2.0] }] }, scale] }] }]
+                        - decl: [del_x, f32, { -: [from_cx, to_cx] }]
+                        - decl: [del_y, f32, { -: [from_cy, to_cy] }]
+                        - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
+                        - if:
+                            condition: { gt: [span, 1.0] }
+                            then:
+                              - decl: [uni_x, f32, { /: [del_x, span] }]
+                              - decl: [uni_y, f32, { /: [del_y, span] }]
+                              - decl: [stop_to, f32, { call: [<.pen.edge_stop, { "*": [{ /: [tail_node.width, 2.0] }, scale] }, { "*": [{ /: [tail_node.height, 2.0] }, scale] }, uni_x, uni_y, tail_node.kind] }]
+                              - decl: [stop_from, f32, { call: [<.pen.edge_stop, { "*": [{ /: [head_node.width, 2.0] }, scale] }, { "*": [{ /: [head_node.height, 2.0] }, scale] }, uni_x, uni_y, head_node.kind] }]
+                              - decl: [tip_x, f32, { +: [to_cx, { "*": [uni_x, stop_to] }] }]
+                              - decl: [tip_y, f32, { +: [to_cy, { "*": [uni_y, stop_to] }] }]
+                              - decl: [tail_x, f32, { -: [from_cx, { "*": [uni_x, stop_from] }] }]
+                              - decl: [tail_y, f32, { -: [from_cy, { "*": [uni_y, stop_from] }] }]
+                              - decl: [tint, i32, 0x55687AFF]
+                              - decl: [thick, f32, 2.0]
+                              - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [thick, 4.5] }] }
+                              - if: { condition: { eq: [edge.ident, chosen] }, then: [{ set: [tint, 0x2F80EDFF] }, { set: [thick, { +: [thick, 1.5] }] }] }
+                              - decl: [seg, Segment]
+                              - set: [seg.from_x, tail_x]
+                              - set: [seg.from_y, tail_y]
+                              - set: [seg.to_x, tip_x]
+                              - set: [seg.to_y, tip_y]
+                              - set: [seg.tint, tint]
+                              - set: [seg.thick, thick]
+                              # In a class diagram the MEANING draws the connector
+                              # (§5.8.2) -- the same rule the export follows, or the
+                              # picture and the .mmd would disagree.
+                              - decl: [head_cap, i32, edge.head]
+                              - decl: [tail_cap, i32, edge.tail]
+                              - decl: [dotted, i32, 0]
+                              - decl: [rhomb, i32, -1]
+                              - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [dotted, 1] }] }
+                              - if:
+                                  condition: { neq: [edge.rel, RelKind.plain] }
+                                  then:
+                                    - set: [head_cap, EndCap.arrow]
+                                    - set: [tail_cap, EndCap.none]
+                                    - if: { condition: { eq: [edge.rel, RelKind.inherit] }, then: [{ set: [head_cap, EndCap.hollow] }] }
+                                    - if:
+                                        condition: { eq: [edge.rel, RelKind.realize] }
+                                        then: [{ set: [head_cap, EndCap.hollow] }, { set: [dotted, 1] }]
+                                    - if: { condition: { eq: [edge.rel, RelKind.depend] }, then: [{ set: [dotted, 1] }] }
+                                    - if:
+                                        condition: { eq: [edge.rel, RelKind.compose] }
+                                        then: [{ set: [head_cap, EndCap.none] }, { set: [rhomb, 1] }]
+                                    - if:
+                                        condition: { eq: [edge.rel, RelKind.aggregate] }
+                                        then: [{ set: [head_cap, EndCap.none] }, { set: [rhomb, 0] }]
+                              - if:
+                                  condition: { eq: [dotted, 1] }
+                                  then: [{ call: [<.pen.dashed, seg] }]
+                                  else: [{ call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, thick, tint] }]
+                              # one cap per end (§5.3): the sheet says what sits there,
+                              # and the canvas has to show it or the author reads the
+                              # file to see what they drew
+                              - call: [<.pen.cap, seg, 1, head_cap]
+                              - call: [<.pen.cap, seg, 0, tail_cap]
+                              - if: { condition: { ge: [rhomb, 0] }, then: [{ call: [<.pen.rhombus, seg, 0, rhomb] }] }
+                              - if:
+                                  condition: { neq: [edge.from_text, ""] }
+                                  then:
+                                    - decl: [from_lx, f32, { -: [tail_x, { "*": [uni_x, 38.0] }] }]
+                                    - decl: [from_ly, f32, { -: [tail_y, { "*": [uni_y, 38.0] }] }]
+                                    - call: [ui.draw_text, from_lx, from_ly, edge.from_text, 0x33404DFF]
+                              - if:
+                                  condition: { neq: [edge.to_text, ""] }
+                                  then:
+                                    # outward along the line: a label at the very tip
+                                    # disappears under the box it points at
+                                    - decl: [to_lx, f32, { +: [tip_x, { "*": [uni_x, 26.0] }] }]
+                                    - decl: [to_ly, f32, { +: [tip_y, { "*": [uni_y, 26.0] }] }]
+                                    - call: [ui.draw_text, to_lx, to_ly, edge.to_text, 0x33404DFF]
+                              - if:
+                                  condition: { neq: [edge.text, ""] }
+                                  then:
+                                    - decl: [lab, Shape]
+                                    - decl: [lab_w, f32, { call: [ui.measure_text, edge.text] }]
+                                    - decl: [lab_h, f32, { call: [ui.text_height] }]
+                                    - decl: [pad, f32, 7.0]
+                                    - set: [lab.pos_x, { -: [{ /: [{ +: [tail_x, tip_x] }, 2.0] }, { +: [{ /: [lab_w, 2.0] }, pad] }] }]
+                                    - set: [lab.pos_y, { -: [{ /: [{ +: [tail_y, tip_y] }, 2.0] }, { /: [lab_h, 2.0] }] }]
+                                    - set: [lab.width, { +: [lab_w, { "*": [pad, 2.0] }] }]
+                                    - set: [lab.height, lab_h]
+                                    - set: [lab.tint, 0x33455AFF]
+                                    - call: [ui.draw_rect, lab.pos_x, lab.pos_y, lab.width, lab.height, 0xFFFFFFF2]
+                                    - call: [<.pen.text_block, lab, edge.text]
+                  - set: [idx, { +: [idx, 1] }]

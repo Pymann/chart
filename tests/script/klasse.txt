@@ -1,0 +1,23 @@
+# Eine Klasse wird als EIN Text bearbeitet: Name in der ersten Zeile, Faecher
+# darunter (spec §5.8.2).  Der Test fuehrt den Weg hin und zurueck.
+wait 3
+at 430 250
+down 0
+up 0
+wait 2
+at_win 120 14
+down 0
+up 0
+wait 2
+at_win 200 46
+down 0
+up 0
+wait 2
+type f64
+wait 2
+key Return
+wait 3
+shot tests/out/preview/klasse_editiert.png
+wait 2
+save
+wait 2

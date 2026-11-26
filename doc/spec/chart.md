@@ -975,6 +975,12 @@ pixels back.
   the window maps, and a button posted afterwards lands wherever that left it.
 - An unknown step is an **error**, not a shrug: a script that silently skipped half its
   steps would pass while checking nothing.
+- `type TEXT` takes the **rest of the line verbatim**, quotes included. `type " EUR"`
+  types the quotation marks too. Written down because it looks like a shell argument
+  and is not one.
+- A script's **start deck** lives in `tests/fixture/script/`, not beside the export
+  fixtures: the export tests take every `tests/fixture/*.deck.yaml`, and a start deck
+  is an input for the editor, not something anybody expects a `.mmd` of.
 
 The test then compares the **saved sheet** against an expected file -- the editor's own
 output, not a screenshot, so a failure names the field that changed.

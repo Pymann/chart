@@ -12,12 +12,14 @@
     members:
       - [seq, ref<SeqLayout>]
       - [pen, ref<Pen>]
+      - [chosen, string]          # the selected step, "" = none
     methods:
       - def:
           name: draw
           static_off: ["same_arg", "str_cmp"]
-          args: [[sheet, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32]]
+          args: [[sheet, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [chosen, string]]
           body:
+            - set: [<.chosen, chosen]
             - decl: [order, list<i32>, { call: [<.seq.columns, sheet] }]
             - decl: [foot, f32, { +: [org_y, { "*": [690.0, scale] }] }]
             - decl: [idx, i32, 0]
@@ -128,10 +130,15 @@
                   - call: [ui.draw_text, { -: [{ /: [{ +: [left, right] }, 2.0] }, { /: [note_w, 2.0] }] }, { -: [line_y, 8.0] }, step.text, 0x4A4330FF]
                   - return: null
             # a message: the line, its head, and the label above it
+            - decl: [tint, i32, 0x2F4A68FF]
+            - decl: [thick, f32, 1.5]
+            - if:
+                condition: { "&&": [{ neq: [<.chosen, ""] }, { eq: [step.ident, <.chosen] }] }
+                then: [{ set: [tint, 0x2F80EDFF] }, { set: [thick, 3.0] }]
             - if:
                 condition: { eq: [step.line, LineStyle.dotted] }
                 then: [{ call: [<.dashed_across, from_x, to_x, line_y] }]
-                else: [{ call: [ui.draw_line, from_x, line_y, to_x, line_y, 1.5, 0x2F4A68FF] }]
+                else: [{ call: [ui.draw_line, from_x, line_y, to_x, line_y, thick, tint] }]
             - if:
                 condition: { neq: [step.head, EndCap.none] }
                 then:

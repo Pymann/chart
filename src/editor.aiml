@@ -17,6 +17,7 @@
 - import: "src/topbar.aiml"
 - import: "src/toolbar.aiml"
 - import: "src/seq_art.aiml"
+- import: "src/edge_art.aiml"
 
 - class:
     name: Editor
@@ -49,6 +50,7 @@
       - [edit_id, string]              # "#titel" edits the slide heading
       - [link_from, string]             # source node while an edge is being dragged
       - [sel_edge, string]
+      - [sel_step, string]              # selected step of a sequence (spec §5.8.3)
       - [last_scale, f32]               # slide scale of the last frame, for auto-grow
       - [diag, ref<Diag>]               # --diag 1: the shared log
       - [reader, ref<Reader>]           # turns ink into sheet elements (spec §7)
@@ -56,6 +58,7 @@
       - [read_at, i32]                  # ink size when it was last read
       - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [art, ref<NodeArt>]            # draws one node (spec §15.2)
+      - [edge_art, ref<EdgeArt>]       # draws the connectors (spec §5.3)
       - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
       - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
       - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
@@ -72,119 +75,6 @@
             - decl: [scale_y, f32, { /: [{ "*": [avail_h, margin] }, 720.0] }]
             - if: { condition: { lt: [scale_x, scale_y] }, then: [{ return: scale_x }] }
             - return: scale_y
-
-      - def:
-          name: draw_edges
-          static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32]]
-          body:
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, slide.edges.len] }
-                body:
-                  - decl: [edge, ref<Edge>, { at: [slide.edges, idx] }]
-                  - decl: [head_node, Node]
-                  - decl: [tail_node, Node]
-                  - decl: [found, i32, { call: [<.grip.node_by_id, slide, edge.from_id, head_node] }]
-                  - if:
-                      condition: { eq: [found, 1] }
-                      then: [{ set: [found, { call: [<.grip.node_by_id, slide, edge.to_id, tail_node] }] }]
-                  - if: { condition: { eq: [edge.line, LineStyle.invisible] }, then: [{ set: [found, 0] }] }
-                  - if:
-                      condition: { eq: [found, 1] }
-                      then:
-                        - decl: [from_cx, f32, { +: [org_x, { "*": [{ +: [head_node.pos_x, { /: [head_node.width, 2.0] }] }, scale] }] }]
-                        - decl: [from_cy, f32, { +: [org_y, { "*": [{ +: [head_node.pos_y, { /: [head_node.height, 2.0] }] }, scale] }] }]
-                        - decl: [to_cx, f32, { +: [org_x, { "*": [{ +: [tail_node.pos_x, { /: [tail_node.width, 2.0] }] }, scale] }] }]
-                        - decl: [to_cy, f32, { +: [org_y, { "*": [{ +: [tail_node.pos_y, { /: [tail_node.height, 2.0] }] }, scale] }] }]
-                        - decl: [del_x, f32, { -: [from_cx, to_cx] }]
-                        - decl: [del_y, f32, { -: [from_cy, to_cy] }]
-                        - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
-                        - if:
-                            condition: { gt: [span, 1.0] }
-                            then:
-                              - decl: [uni_x, f32, { /: [del_x, span] }]
-                              - decl: [uni_y, f32, { /: [del_y, span] }]
-                              - decl: [stop_to, f32, { call: [<.pen.edge_stop, { "*": [{ /: [tail_node.width, 2.0] }, scale] }, { "*": [{ /: [tail_node.height, 2.0] }, scale] }, uni_x, uni_y, tail_node.kind] }]
-                              - decl: [stop_from, f32, { call: [<.pen.edge_stop, { "*": [{ /: [head_node.width, 2.0] }, scale] }, { "*": [{ /: [head_node.height, 2.0] }, scale] }, uni_x, uni_y, head_node.kind] }]
-                              - decl: [tip_x, f32, { +: [to_cx, { "*": [uni_x, stop_to] }] }]
-                              - decl: [tip_y, f32, { +: [to_cy, { "*": [uni_y, stop_to] }] }]
-                              - decl: [tail_x, f32, { -: [from_cx, { "*": [uni_x, stop_from] }] }]
-                              - decl: [tail_y, f32, { -: [from_cy, { "*": [uni_y, stop_from] }] }]
-                              - decl: [tint, i32, 0x55687AFF]
-                              - decl: [thick, f32, 2.0]
-                              - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [thick, 4.5] }] }
-                              - if: { condition: { eq: [edge.ident, <.sel_edge] }, then: [{ set: [tint, 0x2F80EDFF] }, { set: [thick, { +: [thick, 1.5] }] }] }
-                              - decl: [seg, Segment]
-                              - set: [seg.from_x, tail_x]
-                              - set: [seg.from_y, tail_y]
-                              - set: [seg.to_x, tip_x]
-                              - set: [seg.to_y, tip_y]
-                              - set: [seg.tint, tint]
-                              - set: [seg.thick, thick]
-                              # In a class diagram the MEANING draws the connector
-                              # (§5.8.2) -- the same rule the export follows, or the
-                              # picture and the .mmd would disagree.
-                              - decl: [head_cap, i32, edge.head]
-                              - decl: [tail_cap, i32, edge.tail]
-                              - decl: [dotted, i32, 0]
-                              - decl: [rhomb, i32, -1]
-                              - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [dotted, 1] }] }
-                              - if:
-                                  condition: { neq: [edge.rel, RelKind.plain] }
-                                  then:
-                                    - set: [head_cap, EndCap.arrow]
-                                    - set: [tail_cap, EndCap.none]
-                                    - if: { condition: { eq: [edge.rel, RelKind.inherit] }, then: [{ set: [head_cap, EndCap.hollow] }] }
-                                    - if:
-                                        condition: { eq: [edge.rel, RelKind.realize] }
-                                        then: [{ set: [head_cap, EndCap.hollow] }, { set: [dotted, 1] }]
-                                    - if: { condition: { eq: [edge.rel, RelKind.depend] }, then: [{ set: [dotted, 1] }] }
-                                    - if:
-                                        condition: { eq: [edge.rel, RelKind.compose] }
-                                        then: [{ set: [head_cap, EndCap.none] }, { set: [rhomb, 1] }]
-                                    - if:
-                                        condition: { eq: [edge.rel, RelKind.aggregate] }
-                                        then: [{ set: [head_cap, EndCap.none] }, { set: [rhomb, 0] }]
-                              - if:
-                                  condition: { eq: [dotted, 1] }
-                                  then: [{ call: [<.pen.dashed, seg] }]
-                                  else: [{ call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, thick, tint] }]
-                              # one cap per end (§5.3): the sheet says what sits there,
-                              # and the canvas has to show it or the author reads the
-                              # file to see what they drew
-                              - call: [<.pen.cap, seg, 1, head_cap]
-                              - call: [<.pen.cap, seg, 0, tail_cap]
-                              - if: { condition: { ge: [rhomb, 0] }, then: [{ call: [<.pen.rhombus, seg, 0, rhomb] }] }
-                              - if:
-                                  condition: { neq: [edge.from_text, ""] }
-                                  then:
-                                    - decl: [from_lx, f32, { -: [tail_x, { "*": [uni_x, 38.0] }] }]
-                                    - decl: [from_ly, f32, { -: [tail_y, { "*": [uni_y, 38.0] }] }]
-                                    - call: [ui.draw_text, from_lx, from_ly, edge.from_text, 0x33404DFF]
-                              - if:
-                                  condition: { neq: [edge.to_text, ""] }
-                                  then:
-                                    # outward along the line: a label at the very tip
-                                    # disappears under the box it points at
-                                    - decl: [to_lx, f32, { +: [tip_x, { "*": [uni_x, 26.0] }] }]
-                                    - decl: [to_ly, f32, { +: [tip_y, { "*": [uni_y, 26.0] }] }]
-                                    - call: [ui.draw_text, to_lx, to_ly, edge.to_text, 0x33404DFF]
-                              - if:
-                                  condition: { neq: [edge.text, ""] }
-                                  then:
-                                    - decl: [lab, Shape]
-                                    - decl: [lab_w, f32, { call: [ui.measure_text, edge.text] }]
-                                    - decl: [lab_h, f32, { call: [ui.text_height] }]
-                                    - decl: [pad, f32, 7.0]
-                                    - set: [lab.pos_x, { -: [{ /: [{ +: [tail_x, tip_x] }, 2.0] }, { +: [{ /: [lab_w, 2.0] }, pad] }] }]
-                                    - set: [lab.pos_y, { -: [{ /: [{ +: [tail_y, tip_y] }, 2.0] }, { /: [lab_h, 2.0] }] }]
-                                    - set: [lab.width, { +: [lab_w, { "*": [pad, 2.0] }] }]
-                                    - set: [lab.height, lab_h]
-                                    - set: [lab.tint, 0x33455AFF]
-                                    - call: [ui.draw_rect, lab.pos_x, lab.pos_y, lab.width, lab.height, 0xFFFFFFF2]
-                                    - call: [<.pen.text_block, lab, edge.text]
-                  - set: [idx, { +: [idx, 1] }]
 
       # ── the page ────────────────────────────────────────────────────────────
       - def:
@@ -237,8 +127,8 @@
                 condition: { eq: [is_seq, 1] }
                 then:
                   - call: [<.seq.apply, slide]
-                  - call: [<.seq_art.draw, slide, org_x, org_y, scale]
-                else: [{ call: [<.draw_edges, slide, org_x, org_y, scale] }]
+                  - call: [<.seq_art.draw, slide, org_x, org_y, scale, <.sel_step]
+                else: [{ call: [<.edge_art.draw_edges, slide, org_x, org_y, scale, <.sel_edge] }]
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, slide.nodes.len] }
@@ -368,6 +258,133 @@
                   - set: [idx, { +: [idx, 1] }]
 
 
+      # What a connect gesture MAKES depends on the diagram (spec §5.8.3): in a
+      # sequence it is a message at the end of the step list -- the list is the time
+      # axis -- and everywhere else an edge.  Its own method because canvas_input may
+      # not grow past 300 lines (aiml spec/49 §3).
+      - def:
+          name: join_two
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [from_id, string], [to_id, string]]
+          body:
+            - if:
+                condition: { eq: [slide.dtype, DiagramType.sequence] }
+                then:
+                  - decl: [step, Step]
+                  - set: [step.ident, "s${slide.next_id}"]
+                  - set: [step.kind, StepKind.message]
+                  - set: [step.from_id, from_id]
+                  - set: [step.to_id, to_id]
+                  - call: [slide.steps.push, step]
+                  - call: [<.touch]
+                  - set: [slide.next_id, { +: [slide.next_id, 1] }]
+                  - set: [<.status, "Nachricht angelegt"]
+                  - return: null
+            - decl: [edge, Edge]
+            - set: [edge.ident, "e${slide.next_id}"]
+            - set: [edge.from_id, from_id]
+            - set: [edge.to_id, to_id]
+            - set: [edge.line, LineStyle.solid]
+            - set: [edge.head, EndCap.arrow]
+            - call: [slide.edges.push, edge]
+            - call: [<.touch]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - set: [<.sel_edge, edge.ident]
+            - set: [<.status, "Kante gezogen"]
+
+      # A note or a block, appended to the step list (spec §5.8.3).  A note needs a
+      # participant to hang on; a block is a pair, opened and closed at once, so the
+      # file is never half a block.
+      - def:
+          name: add_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { neq: [slide.dtype, DiagramType.sequence] }
+                then:
+                  - set: [<.status, "Notiz und Block gibt es nur in einer Sequenz (spec 5.8.3)"]
+                  - return: null
+            - if:
+                condition: { eq: [action, 202] }
+                then:
+                  - decl: [opener, Step]
+                  - set: [opener.ident, "s${slide.next_id}"]
+                  - set: [opener.kind, StepKind.block_open]
+                  - set: [opener.word, "loop"]
+                  - call: [slide.steps.push, opener]
+                  - set: [slide.next_id, { +: [slide.next_id, 1] }]
+                  - decl: [closer, Step]
+                  - set: [closer.ident, "s${slide.next_id}"]
+                  - set: [closer.kind, StepKind.block_close]
+                  - call: [slide.steps.push, closer]
+                  - set: [slide.next_id, { +: [slide.next_id, 1] }]
+                  - call: [<.touch]
+                  - set: [<.sel_step, opener.ident]
+                  - call: [<.edit_step]
+                  - return: null
+            - decl: [host, string, <.sel]
+            - if:
+                condition: { eq: [host, ""] }
+                then:
+                  - if: { condition: { eq: [slide.nodes.len, 0] }, then: [{ set: [<.status, "erst einen Teilnehmer anlegen"] }, { return: null }] }
+                  - decl: [first, ref<Node>, { at: [slide.nodes, 0] }]
+                  - set: [host, first.ident]
+            - decl: [note, Step]
+            - set: [note.ident, "s${slide.next_id}"]
+            - set: [note.kind, StepKind.note]
+            - set: [note.from_id, host]
+            - call: [slide.steps.push, note]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - call: [<.touch]
+            - set: [<.sel_step, note.ident]
+            - call: [<.edit_step]
+
+      - def:
+          name: drop_step
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
+                  - if:
+                      condition: { eq: [step.ident, <.sel_step] }
+                      then:
+                        - call: [slide.steps.remove, idx]
+                        - set: [<.sel_step, ""]
+                        - call: [<.touch]
+                        - set: [<.status, "Schritt entfernt"]
+                        - return: null
+                  - set: [idx, { +: [idx, 1] }]
+
+      # A step's text is edited with the same editor as a label (§6).  The id is
+      # prefixed so commit_label can tell a step from a node without guessing.
+      - def:
+          name: edit_step
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.sel_step, ""] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
+                  - if:
+                      condition: { eq: [step.ident, <.sel_step] }
+                      then:
+                        - set: [<.editing, 1]
+                        - set: [<.edit_id, "#step:${step.ident}"]
+                        - call: [<.label.begin, step.ident, step.text]
+                        - set: [<.status, "tippen, Enter uebernimmt"]
+                        - return: null
+                  - set: [idx, { +: [idx, 1] }]
+
       # ── dispatch ────────────────────────────────────────────────────────────
       - def:
           name: dispatch
@@ -440,7 +457,14 @@
             - if:
                 condition: { eq: [action, 26] }
                 then:
+                  - if: { condition: { neq: [<.sel_step, ""] }, then: [{ call: [<.edit_step] }, { return: null }] }
                   - if: { condition: { neq: [<.sel, ""] }, then: [{ call: [<.begin_edit, <.sel] }] }
+                  - return: null
+            # 201/202: the parts of a sequence that are not nodes (spec §5.8.3)
+            - if:
+                condition: { "||": [{ eq: [action, 201] }, { eq: [action, 202] }] }
+                then:
+                  - call: [<.add_step, action]
                   - return: null
             # The selected edge's connector (spec §5.3): line 50..53, head 54..58,
             # tail 80..84.  The tail used to start at 59, where 60 and 61 are open
@@ -517,6 +541,11 @@
             - if:
                 condition: { eq: [action, 20] }
                 then:
+                  - if:
+                      condition: { neq: [<.sel_step, ""] }
+                      then:
+                        - call: [<.drop_step]
+                        - return: null
                   - if:
                       condition: { neq: [<.sel_edge, ""] }
                       then:
@@ -796,6 +825,26 @@
                         # empty canvas IS the stroke. Drawing is what the surface is
                         # for, so it costs no mode: a stroke too short to recognise
                         # does nothing, which is what a stray click should do anyway.
+                        # In a sequence the thing under the cursor is a STEP: there
+                        # are no edges, and a message is what a click on a line means
+                        # (spec §5.8.3).
+                        - if:
+                            condition: { eq: [slide.dtype, DiagramType.sequence] }
+                            then:
+                              - decl: [near_step, i32, { call: [<.seq.step_at, slide, slide_x, slide_y] }]
+                              - set: [<.sel, ""]
+                              - set: [<.sel_edge, ""]
+                              - set: [<.sel_step, ""]
+                              - if:
+                                  condition: { ge: [near_step, 0] }
+                                  then:
+                                    - decl: [picked, ref<Step>, { at: [slide.steps, near_step] }]
+                                    - set: [<.sel_step, picked.ident]
+                                    - set: [<.status, "Schritt gewaehlt"]
+                                    - call: [<.drop_ink]
+                                    - return: null
+                              - call: [<.ink.begin_stroke, slide_x, slide_y]
+                              - return: null
                         - decl: [near_edge, string, { call: [<.grip.edge_at, slide, slide_x, slide_y, 12.0] }]
                         - if:
                             condition: { neq: [near_edge, ""] }
@@ -949,18 +998,7 @@
                         - decl: [dst, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                         - if:
                             condition: { "&&": [{ neq: [dst, ""] }, { neq: [dst, <.link_from] }] }
-                            then:
-                              - decl: [edge, Edge]
-                              - set: [edge.ident, "e${slide.next_id}"]
-                              - set: [edge.from_id, <.link_from]
-                              - set: [edge.to_id, dst]
-                              - set: [edge.line, LineStyle.solid]
-                              - set: [edge.head, EndCap.arrow]
-                              - call: [slide.edges.push, edge]
-                              - call: [<.touch]
-                              - set: [slide.next_id, { +: [slide.next_id, 1] }]
-                              - set: [<.sel_edge, edge.ident]
-                              - set: [<.status, "Kante gezogen"]
+                            then: [{ call: [<.join_two, slide, <.link_from, dst] }]
                             else:
                               # released on nothing: a dangling edge has no Mermaid form
                               - set: [<.status, "auf keinem Knoten losgelassen -- nichts angelegt"]
@@ -1247,6 +1285,7 @@
       - def:
           name: clear_selection
           body:
+            - set: [<.sel_step, ""]
             - set: [<.sel, ""]
             - set: [<.sel_edge, ""]
             - set: [<.editing, 0]
@@ -1269,7 +1308,18 @@
                       then:
                         - set: [<.editing, 1]
                         - set: [<.edit_id, ident]
-                        - call: [<.label.begin, ident, node.text]
+                        # A class is edited as ONE text: the name on the first line,
+                        # a member per line after it (spec §5.8.2).  No second editor,
+                        # and the compartments cannot drift away from the name.
+                        - decl: [whole, string, node.text]
+                        - decl: [ridx, i32, 0]
+                        - while:
+                            condition: { lt: [ridx, node.rows.len] }
+                            body:
+                              - decl: [row, string, { at: [node.rows, ridx] }]
+                              - set: [whole, "${whole}\n${row}"]
+                              - set: [ridx, { +: [ridx, 1] }]
+                        - call: [<.label.begin, ident, whole]
                         - set: [<.sel, ident]
                         - set: [<.status, "tippen, Enter uebernimmt"]
                         - return: null
@@ -1293,6 +1343,23 @@
                   - call: [<.label.stop]
                   - set: [<.status, "Ueberschrift uebernommen"]
                   - return: null
+            - if:
+                condition: { call: [<.edit_id.starts_with, "#step:"] }
+                then:
+                  - decl: [want, string, { call: [<.edit_id.substr, 6, { -: [<.edit_id.len, 6] }] }]
+                  - decl: [sdx, i32, 0]
+                  - while:
+                      condition: { lt: [sdx, slide.steps.len] }
+                      body:
+                        - decl: [step, ref<Step>, { at: [slide.steps, sdx] }]
+                        - if:
+                            condition: { eq: [step.ident, want] }
+                            then: [{ set: [step.text, <.label.text] }]
+                        - set: [sdx, { +: [sdx, 1] }]
+                  - set: [<.edit_id, ""]
+                  - call: [<.label.stop]
+                  - set: [<.status, "uebernommen"]
+                  - return: null
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, slide.nodes.len] }
@@ -1301,6 +1368,14 @@
                   - if:
                       condition: { eq: [node.ident, <.edit_id] }
                       then:
+                        - if:
+                            condition: { eq: [slide.dtype, DiagramType.class_diagram] }
+                            then:
+                              - call: [<.fill_rows, node]
+                              - set: [<.edit_id, ""]
+                              - call: [<.label.stop]
+                              - set: [<.status, "uebernommen"]
+                              - return: null
                         - set: [node.text, <.label.text]
                         - if:
                             condition: { gt: [<.last_scale, 0.0] }
@@ -1323,6 +1398,38 @@
                         - return: null
                   - set: [idx, { +: [idx, 1] }]
             - set: [<.edit_id, ""]
+
+      # First line is the class name, the rest are its members (spec §5.8.2).  The
+      # box grows to hold them: a compartment that is drawn outside its own frame is
+      # worse than no compartment.
+      - def:
+          name: fill_rows
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>]]
+          body:
+            - decl: [lines, list<string>, { call: [<.label.text.split, "\n"] }]
+            - call: [node.rows.clear]
+            - set: [node.text, ""]
+            - decl: [idx, i32, 0]
+            - decl: [widest, f32, 0.0]
+            - while:
+                condition: { lt: [idx, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, idx] }]
+                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                  - if: { condition: { gt: [line_w, widest] }, then: [{ set: [widest, line_w] }] }
+                  - if:
+                      condition: { eq: [idx, 0] }
+                      then: [{ set: [node.text, line] }]
+                      else: [{ call: [node.rows.push, line] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [want_h, f32, { +: [36.0, { "*": [20.0, { cast: [node.rows.len, f32] }] }] }]
+            - if: { condition: { gt: [want_h, node.height] }, then: [{ set: [node.height, want_h] }] }
+            - if:
+                condition: { gt: [<.last_scale, 0.0] }
+                then:
+                  - decl: [want_w, f32, { +: [{ /: [widest, <.last_scale] }, 40.0] }]
+                  - if: { condition: { gt: [want_w, node.width] }, then: [{ set: [node.width, want_w] }] }
 
       # ── images ──────────────────────────────────────────────────────────────
       # Loaded once per distinct path when the deck is opened: a texture per frame
@@ -1509,6 +1616,9 @@
       - class: SeqArt
         instance: seq_art
         sees: [seq, pen]
+      - class: EdgeArt
+        instance: edge_art
+        sees: [pen, grip]
       - class: MermaidOut
         instance: mermaid
         sees: [seq]
@@ -1567,4 +1677,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art, edge_art]
