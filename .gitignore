@@ -3,3 +3,5 @@ __aiml_cache/
 __exodus_cache/
 chart
 tests/out/
+.aimlvenv/
+tools/kontor.conf

@@ -31,15 +31,25 @@ that treated the Mermaid as its document would lose the arrangement on every reo
 
 `exodus-chart.json` names the toolchain as `$AIML` and `$AIML_VENV/lib`, never a path, so
 the same config builds on a workstation and in CI (aiml spec/68 §3). The compiler builds it
-itself — **no exodus, no Python** (spec/68 §7):
+itself — **no exodus, no Python** (spec/68 §7).
+
+**No aiml clone either.** kontor's generic store keeps the finished, relocatable venv that
+aiml's CI puts there, under each commit and under `latest`:
 
 ```bash
-# once, from an aiml build tree
-<aiml>/out/aiml/aiml venv <aiml>/out/venv
-
-. <aiml>/out/venv/env                # sets AIML, AIML_VENV, PATH
-cd <this repo>
+tools/aiml_from_kontor.sh            # -> ./.aimlvenv   (or: … <commit-sha> <dir>)
+. ./.aimlvenv/env                    # sets AIML, AIML_VENV, PATH
 aiml build -c exodus-chart.json      # produces ./chart
+```
+
+The script needs `tools/kontor.conf` (URL + CA path, not checked in) and a token file,
+`~/.kontor-ci.token` by default — this instance answers `401` anonymously. **A reader
+token is enough**; nothing here writes to kontor.
+
+With a local aiml build tree instead, the venv comes from there:
+
+```bash
+<aiml>/out/aiml/aiml venv <aiml>/out/venv && . <aiml>/out/venv/env
 ```
 
 Or let a venv install it, which builds it with the compiler it will live next to:
