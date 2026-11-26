@@ -1,0 +1,18 @@
+classDiagram
+    class n1["Konto"] {
+        +nummer: string
+        +betrag: f64
+        +buchen(wert: f64)
+    }
+    class n2["Buchung"] {
+        +wert: f64
+        +datum: string
+    }
+    class n3["Sparkonto"] {
+        +zins: f64
+    }
+    class n4["Buchbar"]
+    n1 "1" *-- "0..*" n2 : hat
+    n3 --|> n1
+    n1 ..|> n4
+    n2 ..> n1 : bucht auf

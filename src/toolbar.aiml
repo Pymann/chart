@@ -11,6 +11,7 @@
       - [deed, i32]               # the action a click produced, 0 = none
       - [type_open, i32]          # the type dropdown is open
       - [hot, i32]
+      - [dtype, i32]              # the type the palette belongs to, set in draw
     methods:
       - def:
           name: height
@@ -24,15 +25,60 @@
           body:
             - return: 190.0
 
+      # The palette IS the diagram type's vocabulary (spec §8.0/§5.8).  Each entry is
+      # "Label|action", like the menu strip's: one place decides what a button says
+      # AND what it makes, so a renamed button cannot start making something else.
+      # A button names what it makes in THAT diagram, not the geometric shape it
+      # happens to use -- "Zustand", not "Rund".
       - def:
           name: shapes
           return: list<string>
           body:
-            - decl: [out, list<string>, ["Kasten", "Rund", "Kapsel", "Kreis", "Raute", "Sechseck",
-                                         "Zylinder", "Unterprog.", "Bild", "Text",
-                                         "Asym.", "Trapez", "Trapez2", "Parall.", "Parall2",
-                                         "Doppelkr.", "Akteur"]]
+            - if:
+                condition: { eq: [<.dtype, DiagramType.state] }
+                then:
+                  - decl: [state_tools, list<string>, ["Zustand|111", "Start/Ende|126", "Wahl|114", "Notiz|119"]]
+                  - return: state_tools
+            - if:
+                condition: { eq: [<.dtype, DiagramType.class_diagram] }
+                then:
+                  - decl: [class_tools, list<string>, ["Klasse|110", "Schnittstelle|117", "Notiz|119"]]
+                  - return: class_tools
+            - if:
+                condition: { eq: [<.dtype, DiagramType.sequence] }
+                then:
+                  - decl: [seq_tools, list<string>, ["Teilnehmer|110", "Akteur|126", "Nachricht|19",
+                                                     "Notiz|201", "Block|202"]]
+                  - return: seq_tools
+            - decl: [out, list<string>, ["Kasten|110", "Rund|111", "Kapsel|112", "Kreis|113",
+                                         "Raute|114", "Sechseck|115", "Zylinder|116",
+                                         "Unterprog.|117", "Bild|118", "Text|119",
+                                         "Asym.|120", "Trapez|121", "Trapez2|122",
+                                         "Parall.|123", "Parall2|124", "Doppelkr.|125",
+                                         "Akteur|126"]]
             - return: out
+
+      - def:
+          name: label_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[entry, string]]
+          return: string
+          body:
+            - decl: [bar, i32, { call: [entry.index_of, "|"] }]
+            - if: { condition: { lt: [bar, 0] }, then: [{ return: entry }] }
+            - return: { call: [entry.substr, 0, bar] }
+
+      - def:
+          name: action_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[entry, string]]
+          return: i32
+          body:
+            - decl: [bar, i32, { call: [entry.index_of, "|"] }]
+            - if: { condition: { lt: [bar, 0] }, then: [{ return: 0 }] }
+            - decl: [after, i32, { +: [bar, 1] }]
+            - decl: [digits, string, { call: [entry.substr, after, { -: [entry.len, after] }] }]
+            - return: { call: [digits.parse_i32] }
 
       - def:
           name: type_words
@@ -51,7 +97,7 @@
           body:
             - decl: [names, list<string>, { call: [<.shapes] }]
             - if: { condition: { ge: [which, names.len] }, then: [{ return: 0.0 }] }
-            - decl: [name, string, { at: [names, which] }]
+            - decl: [name, string, { call: [<.label_of, { at: [names, which] }] }]
             - decl: [wide, f32, { +: [{ call: [ui.measure_text, name] }, 18.0] }]
             - if: { condition: { lt: [wide, 64.0] }, then: [{ set: [wide, 64.0] }] }
             - return: wide
@@ -76,6 +122,7 @@
           static_off: ["same_arg", "str_cmp"]
           args: [[win_w, f32], [top, f32], [dtype, i32], [at_x, f32], [at_y, f32]]
           body:
+            - set: [<.dtype, dtype]
             - decl: [tall, f32, { call: [<.height] }]
             - call: [ui.draw_rect, 0.0, top, win_w, tall, 0x1E2A36FF]
             - call: [ui.draw_rect, 0.0, { -: [{ +: [top, tall] }, 1.0] }, win_w, 1.0, 0x2A3744FF]
@@ -90,7 +137,7 @@
             - while:
                 condition: { lt: [idx, names.len] }
                 body:
-                  - decl: [name, string, { at: [names, idx] }]
+                  - decl: [name, string, { call: [<.label_of, { at: [names, idx] }] }]
                   - decl: [left, f32, { call: [<.shape_x, idx] }]
                   - decl: [wide, f32, { call: [<.shape_w, idx] }]
                   - if:
@@ -137,9 +184,10 @@
                   - call: [ui.draw_text, 18.0, { +: [row_y, 4.0] }, word, 0xD8E2ECFF]
                   - set: [idx, { +: [idx, 1] }]
 
-      # Returns 1 when the press was ours.  Actions: 110+n for a shape -- NOT 10+n
-      # like the left bar, because that range ends at 18 and 20..30 are already the
-      # selection and slide actions; 70+n picks a diagram type.
+      # Returns 1 when the press was ours.  The action comes from the entry itself
+      # (§8.3): 110+NodeKind arms a shape, 70+n picks a diagram type, and a palette
+      # may carry an action that is not a shape at all -- a sequence's "Nachricht"
+      # arms the connect gesture.
       - def:
           name: press
           static_off: ["same_arg", "str_cmp"]
@@ -176,7 +224,7 @@
                   - if:
                       condition: { "&&": [{ ge: [at_x, left] }, { lt: [at_x, { +: [left, wide] }] }] }
                       then:
-                        - set: [<.deed, { +: [110, idx] }]
+                        - set: [<.deed, { call: [<.action_of, { at: [names, idx] }] }]
                         - return: 1
                   - set: [idx, { +: [idx, 1] }]
             - return: 1

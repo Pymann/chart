@@ -1,0 +1,183 @@
+# Drawing a sequence diagram on the canvas (doc/spec/chart.md §5.8.3).
+#
+# The participants are ordinary nodes by the time this runs -- SeqLayout.apply has
+# written their column geometry -- so this class draws only what has no node: the
+# lifelines, the messages, the notes and the block frames.
+- import: "src/seq.aiml"
+- import: "src/pen.aiml"
+
+- class:
+    name: SeqArt
+    description: "Lifelines, messages, notes and blocks on the canvas (spec §5.8.3)"
+    members:
+      - [seq, ref<SeqLayout>]
+      - [pen, ref<Pen>]
+    methods:
+      - def:
+          name: draw
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32]]
+          body:
+            - decl: [order, list<i32>, { call: [<.seq.columns, sheet] }]
+            - decl: [foot, f32, { +: [org_y, { "*": [690.0, scale] }] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - decl: [mid, f32, { +: [org_x, { "*": [{ +: [node.pos_x, { /: [node.width, 2.0] }] }, scale] }] }]
+                  - decl: [from_y, f32, { +: [org_y, { "*": [{ +: [node.pos_y, node.height] }, scale] }] }]
+                  - call: [<.dashed, mid, from_y, foot]
+                  - set: [idx, { +: [idx, 1] }]
+            - call: [<.draw_blocks, sheet, org_x, org_y, scale]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [sheet.steps, idx] }]
+                  # the row's y is computed here: a method takes at most five
+                  # arguments (aiml spec/49), and row + org_y are one number anyway
+                  - decl: [line_y, f32, { +: [org_y, { "*": [{ call: [<.seq.row_y, idx] }, scale] }] }]
+                  - call: [<.draw_step, sheet, step, line_y, org_x, scale]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # A dashed vertical line, drawn as segments: ui.draw_line has no dash pattern.
+      - def:
+          name: dashed
+          args: [[at_x, f32], [from_y, f32], [to_y, f32]]
+          body:
+            - decl: [spot, f32, from_y]
+            - while:
+                condition: { lt: [spot, to_y] }
+                body:
+                  - decl: [stop, f32, { +: [spot, 6.0] }]
+                  - if: { condition: { gt: [stop, to_y] }, then: [{ set: [stop, to_y] }] }
+                  - call: [ui.draw_line, at_x, spot, at_x, stop, 1.0, 0x8899A6FF]
+                  - set: [spot, { +: [spot, 12.0] }]
+
+      - def:
+          name: draw_blocks
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32]]
+          body:
+            - decl: [order, list<i32>, { call: [<.seq.columns, sheet] }]
+            - if: { condition: { eq: [order.len, 0] }, then: [{ return: null }] }
+            - decl: [opens, list<i32>]
+            - decl: [left_des, f32, { -: [{ call: [<.seq.col_x, 0] }, 20.0] }]
+            - decl: [right_des, f32, { +: [{ call: [<.seq.col_x, { -: [order.len, 1] }] }, { call: [<.seq.box_w] }] }]
+            - decl: [left, f32, { +: [org_x, { "*": [left_des, scale] }] }]
+            - decl: [right, f32, { +: [org_x, { "*": [right_des, scale] }] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [sheet.steps, idx] }]
+                  - if: { condition: { eq: [step.kind, StepKind.block_open] }, then: [{ call: [opens.push, idx] }] }
+                  - if:
+                      condition: { "&&": [{ eq: [step.kind, StepKind.block_close] }, { gt: [opens.len, 0] }] }
+                      then:
+                        - decl: [from_row, i32, { call: [opens.pop] }]
+                        - decl: [top, f32, { +: [org_y, { "*": [{ -: [{ call: [<.seq.row_y, from_row] }, 22.0] }, scale] }] }]
+                        - decl: [low, f32, { +: [org_y, { "*": [{ +: [{ call: [<.seq.row_y, idx] }, 10.0] }, scale] }] }]
+                        - decl: [frame, Shape]
+                        - set: [frame.pos_x, left]
+                        - set: [frame.pos_y, top]
+                        - set: [frame.width, { -: [right, left] }]
+                        - set: [frame.height, { -: [low, top] }]
+                        - set: [frame.tint, 0x8899A6FF]
+                        - set: [frame.thick, 1.0]
+                        - call: [<.pen.frame, frame]
+                        - decl: [opener, ref<Step>, { at: [sheet.steps, from_row] }]
+                        - decl: [word, string, opener.word]
+                        - if: { condition: { eq: [word, ""] }, then: [{ set: [word, "loop"] }] }
+                        - decl: [tag, string, word]
+                        - if: { condition: { neq: [opener.text, ""] }, then: [{ set: [tag, "${word} ${opener.text}"] }] }
+                        - call: [ui.draw_text, { +: [left, 8.0] }, { +: [top, 4.0] }, tag, 0x53626FFF]
+                  - set: [idx, { +: [idx, 1] }]
+
+      - def:
+          name: draw_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [step, ref<Step>], [line_y, f32], [org_x, f32], [scale, f32]]
+          body:
+            - if: { condition: { eq: [step.kind, StepKind.block_open] }, then: [{ return: null }] }
+            - if: { condition: { eq: [step.kind, StepKind.block_close] }, then: [{ return: null }] }
+            - decl: [from_x, f32, { +: [org_x, { "*": [{ call: [<.seq.centre_of, sheet, step.from_id] }, scale] }] }]
+            - decl: [to_x, f32, { +: [org_x, { "*": [{ call: [<.seq.centre_of, sheet, step.to_id] }, scale] }] }]
+            - if:
+                condition: { eq: [step.kind, StepKind.note] }
+                then:
+                  - decl: [left, f32, { -: [from_x, { "*": [70.0, scale] }] }]
+                  - decl: [right, f32, { +: [from_x, { "*": [70.0, scale] }] }]
+                  - if:
+                      condition: { neq: [step.to_id, ""] }
+                      then:
+                        - set: [left, { -: [from_x, { "*": [40.0, scale] }] }]
+                        - set: [right, { +: [to_x, { "*": [40.0, scale] }] }]
+                  - decl: [note_h, f32, { "*": [26.0, scale] }]
+                  - call: [ui.draw_rect, left, { -: [line_y, { /: [note_h, 2.0] }] }, { -: [right, left] }, note_h, 0xFDF6D8FF]
+                  - decl: [note_box, Shape]
+                  - set: [note_box.pos_x, left]
+                  - set: [note_box.pos_y, { -: [line_y, { /: [note_h, 2.0] }] }]
+                  - set: [note_box.width, { -: [right, left] }]
+                  - set: [note_box.height, note_h]
+                  - set: [note_box.tint, 0xC9B457FF]
+                  - set: [note_box.thick, 1.0]
+                  - call: [<.pen.frame, note_box]
+                  - decl: [note_w, f32, { call: [ui.measure_text, step.text] }]
+                  - call: [ui.draw_text, { -: [{ /: [{ +: [left, right] }, 2.0] }, { /: [note_w, 2.0] }] }, { -: [line_y, 8.0] }, step.text, 0x4A4330FF]
+                  - return: null
+            # a message: the line, its head, and the label above it
+            - if:
+                condition: { eq: [step.line, LineStyle.dotted] }
+                then: [{ call: [<.dashed_across, from_x, to_x, line_y] }]
+                else: [{ call: [ui.draw_line, from_x, line_y, to_x, line_y, 1.5, 0x2F4A68FF] }]
+            - if:
+                condition: { neq: [step.head, EndCap.none] }
+                then:
+                  - decl: [span, f32, 10.0]
+                  - if: { condition: { lt: [to_x, from_x] }, then: [{ set: [span, -10.0] }] }
+                  - decl: [back, f32, { -: [to_x, span] }]
+                  - if:
+                      condition: { eq: [step.head, EndCap.cross] }
+                      then:
+                        - call: [ui.draw_line, back, { -: [line_y, 5.0] }, to_x, { +: [line_y, 5.0] }, 1.5, 0x2F4A68FF]
+                        - call: [ui.draw_line, back, { +: [line_y, 5.0] }, to_x, { -: [line_y, 5.0] }, 1.5, 0x2F4A68FF]
+                      else:
+                        - call: [ui.draw_line, back, { -: [line_y, 5.0] }, to_x, line_y, 1.5, 0x2F4A68FF]
+                        - call: [ui.draw_line, back, { +: [line_y, 5.0] }, to_x, line_y, 1.5, 0x2F4A68FF]
+            - if:
+                condition: { neq: [step.text, ""] }
+                then:
+                  - decl: [label_w, f32, { call: [ui.measure_text, step.text] }]
+                  - decl: [label_x, f32, { -: [{ /: [{ +: [from_x, to_x] }, 2.0] }, { /: [label_w, 2.0] }] }]
+                  - call: [ui.draw_text, label_x, { -: [line_y, 20.0] }, step.text, 0x2A3744FF]
+
+      - def:
+          name: dashed_across
+          args: [[from_x, f32], [to_x, f32], [at_y, f32]]
+          body:
+            - decl: [step_x, f32, 12.0]
+            - if: { condition: { lt: [to_x, from_x] }, then: [{ set: [step_x, -12.0] }] }
+            - decl: [spot, f32, from_x]
+            - decl: [guard, i32, 0]
+            - while:
+                condition: { lt: [guard, 200] }
+                body:
+                  - decl: [stop, f32, { +: [spot, { /: [step_x, 2.0] }] }]
+                  - decl: [done, i32, 0]
+                  - if:
+                      condition: { gt: [step_x, 0.0] }
+                      then:
+                        - if: { condition: { ge: [spot, to_x] }, then: [{ set: [done, 1] }] }
+                        - if: { condition: { gt: [stop, to_x] }, then: [{ set: [stop, to_x] }] }
+                      else:
+                        - if: { condition: { le: [spot, to_x] }, then: [{ set: [done, 1] }] }
+                        - if: { condition: { lt: [stop, to_x] }, then: [{ set: [stop, to_x] }] }
+                  - if: { condition: { eq: [done, 1] }, then: [{ set: [guard, 200] }] }
+                  - if:
+                      condition: { eq: [done, 0] }
+                      then:
+                        - call: [ui.draw_line, spot, at_y, stop, at_y, 1.5, 0x2F4A68FF]
+                        - set: [spot, { +: [spot, step_x] }]
+                        - set: [guard, { +: [guard, 1] }]

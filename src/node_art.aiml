@@ -93,6 +93,59 @@
                       else: [{ call: [<.pen.text_flow, box, label] }]
                   - return: null
 
+            # a state chart's terminal: a filled dot (spec §5.8.1)
+            - if:
+                condition: { eq: [node.kind, NodeKind.terminal] }
+                then:
+                  - decl: [span, f32, box.width]
+                  - if: { condition: { lt: [box.height, span] }, then: [{ set: [span, box.height] }] }
+                  - decl: [dot, Shape]
+                  - set: [dot.pos_x, { +: [box.pos_x, { /: [{ -: [box.width, span] }, 2.0] }] }]
+                  - set: [dot.pos_y, { +: [box.pos_y, { /: [{ -: [box.height, span] }, 2.0] }] }]
+                  - set: [dot.width, span]
+                  - set: [dot.height, span]
+                  - set: [dot.tint, stroke]
+                  - set: [dot.thick, 2.0]
+                  # filled by drawing the ellipse again and again, smaller: there is
+                  # no filled-circle call, and a rectangle would not be a dot
+                  - decl: [shrink, f32, 0.0]
+                  - while:
+                      condition: { lt: [shrink, { /: [span, 2.0] }] }
+                      body:
+                        - decl: [ring, Shape]
+                        - set: [ring.pos_x, { +: [dot.pos_x, shrink] }]
+                        - set: [ring.pos_y, { +: [dot.pos_y, shrink] }]
+                        - set: [ring.width, { -: [span, { "*": [shrink, 2.0] }] }]
+                        - set: [ring.height, { -: [span, { "*": [shrink, 2.0] }] }]
+                        - set: [ring.tint, stroke]
+                        - set: [ring.thick, 2.0]
+                        - call: [<.pen.ellipse, ring]
+                        - set: [shrink, { +: [shrink, 1.5] }]
+                  - return: null
+
+            # a class with compartments: name, rule, rows (spec §5.8.2)
+            - if:
+                condition: { gt: [node.rows.len, 0] }
+                then:
+                  - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, fill]
+                  - set: [box.tint, stroke]
+                  - call: [<.pen.frame, box]
+                  - decl: [ink, i32, { call: [<.pen.ink_for, fill] }]
+                  - decl: [name_w, f32, { call: [ui.measure_text, label] }]
+                  - call: [ui.draw_text, { -: [{ +: [box.pos_x, { /: [box.width, 2.0] }] }, { /: [name_w, 2.0] }] }, { +: [box.pos_y, 7.0] }, label, ink]
+                  - decl: [rule_y, f32, { +: [box.pos_y, { "*": [30.0, scale] }] }]
+                  - call: [ui.draw_line, box.pos_x, rule_y, { +: [box.pos_x, box.width] }, rule_y, 1.0, stroke]
+                  - decl: [row_y, f32, { +: [rule_y, 6.0] }]
+                  - decl: [ridx, i32, 0]
+                  - while:
+                      condition: { lt: [ridx, node.rows.len] }
+                      body:
+                        - decl: [row_text, string, { at: [node.rows, ridx] }]
+                        - call: [ui.draw_text, { +: [box.pos_x, { "*": [12.0, scale] }] }, row_y, row_text, ink]
+                        - set: [row_y, { +: [row_y, { "*": [20.0, scale] }] }]
+                        - set: [ridx, { +: [ridx, 1] }]
+                  - return: null
+
             - if:
                 condition: { eq: [node.kind, NodeKind.image] }
                 then:

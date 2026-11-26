@@ -266,6 +266,60 @@
       # the direction is taken from the segment itself, so a tail cap is the head's
       # mirror and neither can drift from the line it belongs to.
       - def:
+          name: rhombus
+          args: [[seg, ref<Segment>], [at_head, i32], [filled, i32]]
+          body:
+            - decl: [del_x, f32, { -: [seg.from_x, seg.to_x] }]
+            - decl: [del_y, f32, { -: [seg.from_y, seg.to_y] }]
+            - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
+            - if: { condition: { lt: [span, 0.001] }, then: [{ return: null }] }
+            - decl: [uni_x, f32, { /: [del_x, span] }]
+            - decl: [uni_y, f32, { /: [del_y, span] }]
+            - decl: [at_x, f32, seg.to_x]
+            - decl: [at_y, f32, seg.to_y]
+            - if:
+                condition: { eq: [at_head, 0] }
+                then:
+                  - set: [at_x, seg.from_x]
+                  - set: [at_y, seg.from_y]
+                  - set: [uni_x, { -: [0.0, uni_x] }]
+                  - set: [uni_y, { -: [0.0, uni_y] }]
+            - decl: [reach, f32, 20.0]
+            - decl: [mid_x, f32, { +: [at_x, { "*": [uni_x, { /: [reach, 2.0] }] }] }]
+            - decl: [mid_y, f32, { +: [at_y, { "*": [uni_y, { /: [reach, 2.0] }] }] }]
+            - decl: [far_x, f32, { +: [at_x, { "*": [uni_x, reach] }] }]
+            - decl: [far_y, f32, { +: [at_y, { "*": [uni_y, reach] }] }]
+            - decl: [side_x, f32, { "*": [{ -: [0.0, uni_y] }, 8.0] }]
+            - decl: [side_y, f32, { "*": [uni_x, 8.0] }]
+            - decl: [one_x, f32, { +: [mid_x, side_x] }]
+            - decl: [one_y, f32, { +: [mid_y, side_y] }]
+            - decl: [two_x, f32, { -: [mid_x, side_x] }]
+            - decl: [two_y, f32, { -: [mid_y, side_y] }]
+            - call: [ui.draw_line, at_x, at_y, one_x, one_y, seg.thick, seg.tint]
+            - call: [ui.draw_line, one_x, one_y, far_x, far_y, seg.thick, seg.tint]
+            - call: [ui.draw_line, far_x, far_y, two_x, two_y, seg.thick, seg.tint]
+            - call: [ui.draw_line, two_x, two_y, at_x, at_y, seg.thick, seg.tint]
+            # filled: strokes across the shape, there being no filled polygon call
+            - if:
+                condition: { eq: [filled, 1] }
+                then:
+                  - decl: [step, f32, 0.1]
+                  - while:
+                      condition: { lt: [step, 0.95] }
+                      body:
+                        - decl: [near_x, f32, { +: [at_x, { "*": [{ -: [one_x, at_x] }, step] }] }]
+                        - decl: [near_y, f32, { +: [at_y, { "*": [{ -: [one_y, at_y] }, step] }] }]
+                        - decl: [back_x, f32, { +: [at_x, { "*": [{ -: [two_x, at_x] }, step] }] }]
+                        - decl: [back_y, f32, { +: [at_y, { "*": [{ -: [two_y, at_y] }, step] }] }]
+                        - call: [ui.draw_line, near_x, near_y, back_x, back_y, 1.5, seg.tint]
+                        - decl: [tip_x, f32, { +: [far_x, { "*": [{ -: [one_x, far_x] }, step] }] }]
+                        - decl: [tip_y, f32, { +: [far_y, { "*": [{ -: [one_y, far_y] }, step] }] }]
+                        - decl: [end_x, f32, { +: [far_x, { "*": [{ -: [two_x, far_x] }, step] }] }]
+                        - decl: [end_y, f32, { +: [far_y, { "*": [{ -: [two_y, far_y] }, step] }] }]
+                        - call: [ui.draw_line, tip_x, tip_y, end_x, end_y, 1.5, seg.tint]
+                        - set: [step, { +: [step, 0.1] }]
+
+      - def:
           name: cap
           args: [[seg, ref<Segment>], [at_head, i32], [cap, i32]]
           body:

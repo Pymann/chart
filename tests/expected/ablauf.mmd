@@ -1,0 +1,11 @@
+sequenceDiagram
+    actor n1 as Nutzer
+    participant n2 as Client
+    participant n3 as Server
+    n1->>n2: Kennwort eingeben
+    loop bis es stimmt
+        n2->>n3: pruefen
+        n3-->>n2: falsch
+    end
+    n3-->n2: Sitzung
+    Note over n2,n3: ab hier verschluesselt

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" font-family="DejaVu Sans, Helvetica, Arial, sans-serif" font-size="15">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <text x="52" y="38" font-size="22" fill="#101a24">Anmeldung</text>
+  <circle cx="80" cy="320" r="10" fill="#3a4a5a"/>
+  <ellipse cx="290" cy="320" rx="90" ry="40" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="290" y="325" fill="#1a2430" text-anchor="middle">Abgemeldet</text>
+  <polygon points="530,280 600,320 530,360 460,320" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="530" y="325" fill="#1a2430" text-anchor="middle">geprueft?</text>
+  <ellipse cx="770" cy="320" rx="90" ry="40" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="770" y="325" fill="#1a2430" text-anchor="middle">Angemeldet</text>
+  <circle cx="980" cy="320" r="10" fill="#3a4a5a"/>
+  <line x1="100" y1="320" x2="200" y2="320" stroke="#55687a" stroke-width="2"/>
+  <polygon points="200,320 185.3,313.6 185.3,326.4" fill="#55687a"/>
+  <line x1="380" y1="320" x2="460" y2="320" stroke="#55687a" stroke-width="2"/>
+  <polygon points="460,320 445.3,313.6 445.3,326.4" fill="#55687a"/>
+  <text x="420" y="320" text-anchor="middle" font-size="13" fill="none" stroke="#ffffff" stroke-width="3">anmelden</text>
+  <text x="420" y="320" text-anchor="middle" font-size="13" fill="#33404d">anmelden</text>
+  <line x1="600" y1="320" x2="680" y2="320" stroke="#55687a" stroke-width="2"/>
+  <polygon points="680,320 665.3,313.6 665.3,326.4" fill="#55687a"/>
+  <text x="640" y="320" text-anchor="middle" font-size="13" fill="none" stroke="#ffffff" stroke-width="3">ja</text>
+  <text x="640" y="320" text-anchor="middle" font-size="13" fill="#33404d">ja</text>
+  <line x1="460" y1="320" x2="380" y2="320" stroke="#55687a" stroke-width="2"/>
+  <polygon points="380,320 394.7,326.4 394.7,313.6" fill="#55687a"/>
+  <text x="420" y="320" text-anchor="middle" font-size="13" fill="none" stroke="#ffffff" stroke-width="3">nein</text>
+  <text x="420" y="320" text-anchor="middle" font-size="13" fill="#33404d">nein</text>
+  <line x1="860" y1="320" x2="960" y2="320" stroke="#55687a" stroke-width="2"/>
+  <polygon points="960,320 945.3,313.6 945.3,326.4" fill="#55687a"/>
+  <text x="910" y="320" text-anchor="middle" font-size="13" fill="none" stroke="#ffffff" stroke-width="3">abmelden</text>
+  <text x="910" y="320" text-anchor="middle" font-size="13" fill="#33404d">abmelden</text>
+</svg>

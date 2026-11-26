@@ -10,8 +10,25 @@
     # `text` is prose on the slide, not a box in the graph (spec §3.2): no frame,
     # left-aligned, and §5.7 leaves it out of the Mermaid projection.  Appended, never
     # inserted -- the position is the value on disk.
+    # `terminal` is the filled dot a state chart starts and ends with -- ONE kind,
+    # because Mermaid writes `[*]` for both and the edge's direction says which it is
+    # (spec §5.8.1).  Two kinds could contradict each other; one cannot.
     values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text,
-             asymmetric, trapezoid, trapezoid_alt, parallelogram, parallelogram_alt, double_circle, actor]
+             asymmetric, trapezoid, trapezoid_alt, parallelogram, parallelogram_alt, double_circle, actor,
+             terminal]
+
+# What a connector MEANS, as opposed to how it looks (spec §5.8.2).  A class diagram
+# tells six apart; a flowchart has one and ignores the field.
+- enum:
+    name: RelKind
+    wire: true
+    values: [plain, inherit, compose, aggregate, depend, realize]
+
+# One line of a sequence (spec §5.8.3).
+- enum:
+    name: StepKind
+    wire: true
+    values: [message, note, block_open, block_close]
 
 # An edge is TWO independent things (spec §3.2): how the line looks, and what sits at
 # each end.  One enum for both could not express `--o` at all and made `<-.->`
@@ -53,6 +70,7 @@
       - [width, f32, 120.0]
       - [height, f32, 60.0]
       - [text, string, ""]            # may contain "\n"; the caption of an image (spec §12)
+      - [rows, list<string>]          # class compartments (spec §5.8.2), empty otherwise
       - [src, string, ""]             # image file, relative to the deck (spec §12)
       - [fill, i32, 0]                # 0xRRGGBBAA; 0 = inherit the theme
       - [stroke, i32, 0]
@@ -69,6 +87,9 @@
       - [head, EndCap, EndCap.arrow]   # the cap at to_id
       - [tail, EndCap, EndCap.none]    # the cap at from_id
       - [text, string, ""]            # "" = no label
+      - [rel, RelKind, RelKind.plain]  # what it MEANS (spec §5.8.2); flowchart ignores it
+      - [from_text, string, ""]       # end labels: multiplicities in a class diagram
+      - [to_text, string, ""]
       - [stroke, i32, 0]
 
 - model:

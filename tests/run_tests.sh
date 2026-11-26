@@ -155,6 +155,13 @@ done
 for original in tests/expected/*.mmd; do
     [ -e "$original" ] || continue
     name=$(basename "$original" .mmd)
+    # The importer reads flowcharts (spec §18.2); state, class and sequence are
+    # exported but not yet read back.  Said out loud -- a silent skip reads like a
+    # pass, and this is exactly the gap somebody will close later.
+    case $(head -n 1 "$original") in
+        flowchart*) ;;
+        *) echo "[ SKIP ] $name (mmd -> sheet -> mmd) -- $(head -n 1 "$original" | cut -d' ' -f1) wird noch nicht eingelesen (spec §18.2)"; continue ;;
+    esac
     total=$((total + 1))
     rm -f "tests/out/rt_$name.deck.yaml" "tests/out/rt_$name.mmd"
     if "$BIN" --import "$original" --out "tests/out/rt_$name.deck.yaml" >/dev/null 2>&1 \
@@ -240,8 +247,11 @@ else
     for script in tests/script/*.txt; do
         [ -e "$script" ] || continue
         name=$(basename "$script" .txt)
-        start="tests/fixture/script_${name}.deck.yaml"
-        [ -e "$start" ] || start="tests/fixture/script_probe.deck.yaml"
+        # in their own directory: the export loops above take every
+        # tests/fixture/*.deck.yaml, and a script's START deck is an input for the
+        # editor, not a fixture anybody expects a .mmd or an .html of
+        start="tests/fixture/script/${name}.deck.yaml"
+        [ -e "$start" ] || start="tests/fixture/script/probe.deck.yaml"
         expected="tests/expected/script_$name.deck.yaml"
         got="tests/out/script_$name.deck.yaml"
         total=$((total + 1))

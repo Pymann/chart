@@ -25,7 +25,7 @@ One surface, three jobs:
 |---|---|
 | Handwriting recognition | Labels are typed (§6). The feature is not deferred for cost reasons alone — a typed label is *exactly* right, a recognised one is 90% right, and a diagram with a wrong word in it is worse than no diagram. |
 | Mermaid **import** | Export is one-way (§2). A best-effort importer may come later; it can never be the document path. |
-| Diagram types beyond `flowchart` | `Sheet.dtype` (§3.1) exists so `sequence`/`state`/`class` can be added without a format break. Only `flowchart` is emitted. |
+| Nesting beyond one level in a sequence (`alt` inside `loop` inside `opt`) | Blocks are a flat list of open/close steps (§5.8.3). Deeper nesting is readable but not offered by the editor in v1. |
 | Auto-layout | Positions belong to the user. Mermaid re-lays out on render, and that is accepted (§5.7). |
 
 ---
@@ -64,6 +64,7 @@ carefully.
       - [nodes, list<Node>]
       - [edges, list<Edge>]
       - [groups, list<Group>]
+      - [steps, list<Step>]            # sequence only (§5.8.3): ORDER is the document
       - [next_id, i32, 1]              # monotonic; never reused, so ids stay stable (§5.1)
 
 - model:
@@ -76,6 +77,7 @@ carefully.
       - [width, f32, 120.0]
       - [height, f32, 60.0]
       - [text, string, ""]             # may contain "\n"; the caption of an image (§12)
+      - [rows, list<string>]           # class compartments (§5.8.2); empty for every other type
       - [src, string, ""]              # image file, relative to the deck (§12); "" for every other kind
       - [fill, i32, 0]                 # 0xRRGGBBAA; 0 = inherit theme (§5.6)
       - [stroke, i32, 0]
@@ -89,7 +91,23 @@ carefully.
       - [to_id, string, ""]
       - [kind, EdgeKind, arrow]
       - [text, string, ""]             # edge label, "" = none
+      - [rel, RelKind, plain]          # what the connector MEANS (§5.8.2); flowchart ignores it
+      - [from_text, string, ""]        # end labels: multiplicities in a class diagram
+      - [to_text, string, ""]
       - [stroke, i32, 0]
+
+- model:
+    name: Step
+    description: "One line of a sequence diagram (§5.8.3). The list order IS the time."
+    fields:
+      - [ident, string, ""]
+      - [kind, StepKind, message]
+      - [from_id, string, ""]          # participant Node.ident
+      - [to_id, string, ""]
+      - [text, string, ""]             # the message, the note, or the block's condition
+      - [line, LineStyle, solid]       # solid `->>`, dotted `-->>`
+      - [head, EndCap, arrow]          # arrow `->>`, none `->`, cross `-x`
+      - [word, string, ""]             # block keyword: loop / alt / else / opt / par
 
 - model:
     name: Group
@@ -117,6 +135,11 @@ the system boundary. chart carries the figure as a shape of its own and exports 
 Mermaid as a `stadium` (§5.7) -- there is nothing closer, and a drawn actor must not
 vanish on export.
 
+`NodeKind.terminal` is the filled dot a state diagram starts and ends with. It is one
+kind, not two: Mermaid writes `[*]` for both, and which one it is follows from the
+direction of the edge touching it (§5.8.1). A document that stored "start" and "end"
+separately could contradict itself; this one cannot.
+
 `NodeKind.text` is the odd one and is listed last for that reason. It is **prose on the
 slide**, not a box in the graph: drawn with no frame and no fill, left-aligned, and
 skipped by the Mermaid projection (§5.7) because Mermaid has no frameless text. It
@@ -127,7 +150,21 @@ exists so a Markdown file can be read in whole (§18.4) instead of only its diag
     name: NodeKind
     wire: true
     values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text,
-             asymmetric, trapezoid, trapezoid_alt, parallelogram, parallelogram_alt, double_circle, actor]
+             asymmetric, trapezoid, trapezoid_alt, parallelogram, parallelogram_alt, double_circle, actor,
+             terminal]
+
+# What a connector MEANS, as opposed to what it looks like (§5.8.2).  A class diagram
+# distinguishes six; a flowchart has one and ignores the field.
+- enum:
+    name: RelKind
+    wire: true
+    values: [plain, inherit, compose, aggregate, depend, realize]
+
+# One line of a sequence (§5.8.3).
+- enum:
+    name: StepKind
+    wire: true
+    values: [message, note, block_open, block_close]
 
 # An edge is TWO independent things, and one enum for both was a modelling error:
 # "dotted" and "bidirectional" are not alternatives -- `<-.->` is both at once, and
@@ -148,10 +185,13 @@ exists so a Markdown file can be read in whole (§18.4) instead of only its diag
     wire: true
     values: [arrow, open, dotted, thick, bidirectional, invisible]
 
+# `class_diagram`, not `class`: `class` is taken by the language (aiml spec/49), and a
+# wire word must be spellable as a member.  The YAML on disk says `class_diagram` too --
+# one spelling, not two.
 - enum:
     name: DiagramType
     wire: true
-    values: [flowchart, sequence, state, class]
+    values: [flowchart, sequence, state, class_diagram]
 
 - enum:
     name: Direction
@@ -340,8 +380,125 @@ flattened.
   put a paragraph into the graph as a node that nobody drew. Markdown, SVG, PPTX and
   HTML all carry it.
 
+- **A sequence in PPTX** (§17.2): the PowerPoint export writes the participants, not
+  the messages, notes or blocks -- it draws from the node layer, and a sequence's
+  document is `steps`. Said here rather than left to be discovered: SVG and HTML carry
+  the whole diagram.
+- **What belongs to another type** (§5.8): a flowchart export drops `rows` (class
+  compartments), `rel` and the end labels, and it drops `steps` entirely. They are not
+  "lost" in the sense of being dropped on the floor -- a flowchart has no place for
+  them -- but a sheet that carries both a flowchart and class compartments keeps them
+  in the sheet and shows none of them in the `.mmd`.
+
 `x`, `y`, `w`, `h`, alpha, anchor sides, group bounding boxes, `next_id`. This list is
 the justification for §2 and must be kept current when the model grows.
+
+### 5.8 The other three diagram types (normative)
+
+`Sheet.dtype` was a field only `flowchart` honoured; the tool strip offered the same
+seventeen shapes whatever it said. A shape palette that does not change with the type
+is a promise the window does not keep, so each type now has its own vocabulary, its own
+projection, and its own palette (§8.0).
+
+What they share: one file format (§4), one id scheme (§5.1), one colour model (§5.6),
+one rule that the sheet is canonical (§2). What differs is listed here, and the list is
+exhaustive -- a type that needs a field no other type reads says so.
+
+#### 5.8.1 `state` -> `stateDiagram-v2`
+
+A state chart is a drawing: positions are stored, exactly as in a flowchart.
+
+| offered | is |
+|---|---|
+| `round` | a state |
+| `terminal` | `[*]`, start or end |
+| `diamond` | a choice |
+| `text` | prose on the slide -- **not** projected (§5.7), because a Mermaid state note needs a state to hang on and free-floating prose has none |
+| a group | a composite state |
+
+```
+stateDiagram-v2
+  direction TD
+  state "Angemeldet" as n2
+  [*] --> n2 : login
+  n2 --> [*] : logout
+```
+
+- A `terminal` node is **never declared**; every edge touching one writes `[*]` where
+  that node would stand. Which end it is follows from the edge's direction, so the
+  document cannot contradict itself.
+- A group becomes `state "Titel" as g1 { ... }` around its members (§5.5).
+- The label of an edge is `: text`. A state transition has **one** arrow: line style
+  and end caps are lost (§5.7).
+- A `diamond` is written `state n3 <<choice>>` and carries no label, which is what a
+  choice pseudo-state is.
+
+#### 5.8.2 `class_diagram` -> `classDiagram`
+
+Also a drawing, so positions are stored. A class node is a box with **compartments**:
+`Node.text` is the name, `Node.rows` are the lines under the rule.
+
+`Edge.rel` says what a connector *means*; `from_text`/`to_text` are the multiplicities:
+
+The arrow is written **in the order it was drawn** -- `from OP to`, never swapped --
+so the id on the left of the `.mmd` is the id the author started the drag on:
+
+| `rel` | Mermaid | drag from ... to ... |
+|---|---|---|
+| `inherit` | `from --\|> to` | child to parent |
+| `realize` | `from ..\|> to` | implementation to interface |
+| `compose` | `from *-- to` | owner to part; the part dies with it |
+| `aggregate` | `from o-- to` | holder to held; the held outlives it |
+| `depend` | `from ..> to` | user to used |
+| `plain` | `from --> to` | association |
+
+```
+classDiagram
+  class n1["Konto"] {
+    +betrag: f64
+    +buchen(wert: f64)
+  }
+  n1 "1" *-- "0..*" n2 : hat
+```
+
+Mermaid accepts both spellings of every relation (`<|--` and `--|>`); chart writes the
+one that keeps the author's direction, because a round trip (§18) must not mirror the
+drawing.
+
+- The label-in-brackets form needs Mermaid 10 or newer. It is used anyway: the
+  alternative is to put the user's class name into an id, and §5.1 exists because ids
+  have to stay stable while names change.
+- An empty `rows` emits `class n1["Konto"]` on one line, without a block: an empty pair
+  of braces renders as an empty compartment, which claims the class has no members
+  rather than that none were written down.
+
+#### 5.8.3 `sequence` -> `sequenceDiagram`
+
+**Here geometry is derived, not stored**, and that is the one real break with §3. A
+sequence diagram has no free positions: a participant's place is its column, a
+message's place is its row, and both come from order. The sheet therefore carries
+`Sheet.steps`, and **the list order is the time axis**.
+
+- **Participants** are the sheet's nodes, taken in `pos_x` order. Kind `actor` emits
+  `actor n1`, anything else `participant n1`.
+- `pos_y`, `width` and `height` of a participant are **not meaningful**. The editor
+  keeps writing them -- one file format, not two -- and the reader ignores them.
+  Dragging a participant sideways reorders the columns; dragging it up and down does
+  nothing, and the pointer says so (§15.1a).
+- A **message** is `from ->> to : text`, with the arrow chosen by line and head:
+  `->>` solid arrow, `-->>` dotted arrow, `->` solid without head, `-x` cross,
+  `--x` dotted cross.
+- A **note** with both ends is `Note over n1,n2: text`, with one end
+  `Note right of n1: text`.
+- A **block** is `block_open` with its keyword in `word` and its condition in `text`
+  (`loop every minute`, `alt ok`, `else failed`, `opt`, `par`), and `block_close`
+  writes `end`. Steps between them are indented one level. The editor offers one
+  level of nesting (§1.1); a file with more is read and written unchanged.
+- An unbalanced block is an **error at export**, named with the step, not a silently
+  closed one: Mermaid would render something, and it would not be the author's
+  diagram.
+
+
 
 ---
 
@@ -651,9 +808,18 @@ Two strips at the top, a status strip at the bottom, the canvas between:
   type sits there because it is the one choice that changes what every other control in
   the strip means, and because a drawing surface should say what kind of drawing this is
   without opening a menu.
-- Only `flowchart` is projected (§1.1). The control offers the other types, sets them,
-  and the status strip says the export will refuse -- stating it is better than hiding a
-  choice the model already has.
+- **The palette is the type's vocabulary** (§5.8), and changes with it:
+
+  | type | palette |
+  |---|---|
+  | `flowchart` | the seventeen shapes |
+  | `state` | Zustand, Start/Ende, Wahl, Notiz |
+  | `class_diagram` | Klasse, Schnittstelle, Notiz |
+  | `sequence` | Teilnehmer, Akteur, Nachricht, Notiz, Block |
+
+  A button names what it makes in *that* diagram, not the geometric shape it happens to
+  use. "Zustand" is a rounded box, but calling it "Rund" in a state chart would be like
+  labelling a form field by its font.
 - The **status strip** carries, left, the last thing that happened (what every `status`
   message in the editor goes to), and right, the slide number plus `*` while there are
   unsaved changes (§16.2). It is drawn, not built from widgets, and claims no input: a

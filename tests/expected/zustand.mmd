@@ -1,0 +1,10 @@
+stateDiagram-v2
+    direction LR
+    state "Abgemeldet" as n2
+    state n3 <<choice>>
+    state "Angemeldet" as n4
+    [*] --> n2
+    n2 --> n3 : anmelden
+    n3 --> n4 : ja
+    n3 --> n2 : nein
+    n4 --> [*] : abmelden

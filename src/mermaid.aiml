@@ -1,10 +1,13 @@
 # Projecting a Sheet to Mermaid (doc/spec/chart.md §5).  Pure: same sheet in, same
 # bytes out (§2) -- which is why the output order in §5.5a is fixed, not incidental.
 - import: "src/sheet_model.aiml"
+- import: "src/seq.aiml"
 
 - class:
     name: MermaidOut
     description: "The lossy projection of a sheet; never read back as the document"
+    members:
+      - [seq, ref<SeqLayout>]      # borrow, wired by the classgroup: the column order
     methods:
       # Label text.  Quoted unconditionally by the caller, so only the quote itself
       # and the line break need handling (spec §5.2).
@@ -207,17 +210,262 @@
             - return: "${out}${pad}end\n"
 
       # The whole projection (§5.5a fixes the order).
+      # ── the other three diagram types (spec §5.8) ───────────────────────────
+      # Each is its own projection, not a variation of the flowchart: a state
+      # chart has terminals, a class diagram has compartments, and a sequence has
+      # no positions at all.
+
+      # A state chart (spec §5.8.1).  Positions are stored as in a flowchart; what
+      # differs is the vocabulary.
+      - def:
+          name: emit_state
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: string
+          body:
+            - decl: [dir_name, string, { call: [enums.name, "Direction", sheet.dir] }]
+            - decl: [out, string, "stateDiagram-v2\n    direction ${dir_name}\n"]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - set: [out, "${out}${ { call: [<.state_decl, node] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.edges.len] }
+                body:
+                  - decl: [edge, Edge, { at: [sheet.edges, idx] }]
+                  - decl: [from_word, string, { call: [<.state_ref, sheet, edge.from_id] }]
+                  - decl: [to_word, string, { call: [<.state_ref, sheet, edge.to_id] }]
+                  - set: [out, "${out}    ${from_word} --> ${to_word}"]
+                  - if:
+                      condition: { neq: [edge.text, ""] }
+                      then: [{ set: [out, "${out} : ${ { call: [<.esc, edge.text] } }"] }]
+                  - set: [out, "${out}\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out
+
+      # A terminal is never declared: it stands as `[*]` wherever an edge touches
+      # it (spec §5.8.1), so start and end cannot disagree with the arrows.
+      - def:
+          name: state_decl
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, Node]]
+          return: string
+          body:
+            - if: { condition: { eq: [node.kind, NodeKind.terminal] }, then: [{ return: "" }] }
+            # prose has no state to hang on (§5.7)
+            - if: { condition: { eq: [node.kind, NodeKind.text] }, then: [{ return: "" }] }
+            - if:
+                condition: { eq: [node.kind, NodeKind.diamond] }
+                then: [{ return: "    state ${node.ident} <<choice>>\n" }]
+            - if: { condition: { eq: [node.text, ""] }, then: [{ return: "" }] }
+            - return: "    state \"${ { call: [<.esc, node.text] } }\" as ${node.ident}\n"
+
+      - def:
+          name: state_ref
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [ident, string]]
+          return: string
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - if: { condition: { eq: [node.kind, NodeKind.terminal] }, then: [{ return: "[*]" }] }
+                        - return: ident
+                  - set: [idx, { +: [idx, 1] }]
+            - return: ident
+
+      # A class diagram (spec §5.8.2).
+      - def:
+          name: emit_class
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: string
+          body:
+            - decl: [out, string, "classDiagram\n"]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { neq: [node.kind, NodeKind.text] }
+                      then:
+                        - decl: [name, string, node.text]
+                        - if: { condition: { eq: [name, ""] }, then: [{ set: [name, node.ident] }] }
+                        - decl: [head, string, "    class ${node.ident}[\"${ { call: [<.esc, name] } }\"]"]
+                        - if:
+                            condition: { eq: [node.rows.len, 0] }
+                            then: [{ set: [out, "${out}${head}\n"] }]
+                            else:
+                              - set: [out, "${out}${head} {\n"]
+                              - decl: [ridx, i32, 0]
+                              - while:
+                                  condition: { lt: [ridx, node.rows.len] }
+                                  body:
+                                    - decl: [row, string, { at: [node.rows, ridx] }]
+                                    - set: [out, "${out}        ${row}\n"]
+                                    - set: [ridx, { +: [ridx, 1] }]
+                              - set: [out, "${out}    }\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.edges.len] }
+                body:
+                  - decl: [edge, Edge, { at: [sheet.edges, idx] }]
+                  - set: [out, "${out}${ { call: [<.class_line, edge] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out
+
+      - def:
+          name: class_line
+          static_off: ["same_arg", "str_cmp"]
+          args: [[edge, Edge]]
+          return: string
+          body:
+            - decl: [oper, string, "-->"]
+            - if: { condition: { eq: [edge.rel, RelKind.inherit] },   then: [{ set: [oper, "--|>"] }] }
+            - if: { condition: { eq: [edge.rel, RelKind.realize] },   then: [{ set: [oper, "..|>"] }] }
+            - if: { condition: { eq: [edge.rel, RelKind.compose] },   then: [{ set: [oper, "*--"] }] }
+            - if: { condition: { eq: [edge.rel, RelKind.aggregate] }, then: [{ set: [oper, "o--"] }] }
+            - if: { condition: { eq: [edge.rel, RelKind.depend] },    then: [{ set: [oper, "..>"] }] }
+            - decl: [left, string, edge.from_id]
+            - if:
+                condition: { neq: [edge.from_text, ""] }
+                then: [{ set: [left, "${left} \"${ { call: [<.esc, edge.from_text] } }\""] }]
+            - decl: [right, string, edge.to_id]
+            - if:
+                condition: { neq: [edge.to_text, ""] }
+                then: [{ set: [right, "\"${ { call: [<.esc, edge.to_text] } }\" ${right}"] }]
+            - decl: [out, string, "    ${left} ${oper} ${right}"]
+            - if:
+                condition: { neq: [edge.text, ""] }
+                then: [{ set: [out, "${out} : ${ { call: [<.esc, edge.text] } }"] }]
+            - return: "${out}\n"
+
+      # A sequence (spec §5.8.3).  The participants come from the nodes in x order
+      # -- their column -- and the steps are the document, in their own order.
+      - def:
+          name: emit_sequence
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: string
+          body:
+            - decl: [out, string, "sequenceDiagram\n"]
+            - decl: [order, list<i32>, { call: [<.seq.columns, sheet] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - if:
+                      condition: { neq: [node.kind, NodeKind.text] }
+                      then:
+                        - decl: [word, string, "participant"]
+                        - if: { condition: { eq: [node.kind, NodeKind.actor] }, then: [{ set: [word, "actor"] }] }
+                        - set: [out, "${out}    ${word} ${node.ident}"]
+                        - if:
+                            condition: { neq: [node.text, ""] }
+                            then: [{ set: [out, "${out} as ${ { call: [<.esc, node.text] } }"] }]
+                        - set: [out, "${out}\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [depth, i32, 0]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.steps.len] }
+                body:
+                  - decl: [step, Step, { at: [sheet.steps, idx] }]
+                  - if:
+                      condition: { eq: [step.kind, StepKind.block_close] }
+                      then:
+                        - if:
+                            condition: { le: [depth, 0] }
+                            then:
+                              - call: [log.error, "chart: step '${step.ident}': 'end' ohne offenen Block (spec §5.8.3)"]
+                              - return: ""
+                        - set: [depth, { -: [depth, 1] }]
+                  - decl: [pad, string, { call: [<.indent, depth] }]
+                  - set: [out, "${out}${pad}${ { call: [<.step_line, step] } }"]
+                  - if:
+                      condition: { eq: [step.kind, StepKind.block_open] }
+                      then: [{ set: [depth, { +: [depth, 1] }] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - if:
+                condition: { gt: [depth, 0] }
+                then:
+                  - call: [log.error, "chart: ${depth} Block(e) ohne 'end' -- Mermaid wuerde etwas zeichnen, nur nicht dieses Diagramm (spec §5.8.3)"]
+                  - return: ""
+            - return: out
+
+      - def:
+          name: indent
+          args: [[depth, i32]]
+          return: string
+          body:
+            - decl: [out, string, "    "]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, depth] }
+                body:
+                  - set: [out, "${out}    "]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out
+
+      - def:
+          name: step_line
+          static_off: ["same_arg", "str_cmp"]
+          args: [[step, Step]]
+          return: string
+          body:
+            - if:
+                condition: { eq: [step.kind, StepKind.block_close] }
+                then: [{ return: "end\n" }]
+            - if:
+                condition: { eq: [step.kind, StepKind.block_open] }
+                then:
+                  - decl: [word, string, step.word]
+                  - if: { condition: { eq: [word, ""] }, then: [{ set: [word, "loop"] }] }
+                  - if: { condition: { eq: [step.text, ""] }, then: [{ return: "${word}\n" }] }
+                  - return: "${word} ${ { call: [<.esc, step.text] } }\n"
+            - if:
+                condition: { eq: [step.kind, StepKind.note] }
+                then:
+                  - if:
+                      condition: { eq: [step.to_id, ""] }
+                      then: [{ return: "Note right of ${step.from_id}: ${ { call: [<.esc, step.text] } }\n" }]
+                  - return: "Note over ${step.from_id},${step.to_id}: ${ { call: [<.esc, step.text] } }\n"
+            - decl: [arrow, string, "->>"]
+            - decl: [dotted, i32, 0]
+            - if: { condition: { eq: [step.line, LineStyle.dotted] }, then: [{ set: [dotted, 1] }] }
+            - if:
+                condition: { eq: [dotted, 1] }
+                then:
+                  - set: [arrow, "-->>"]
+                  - if: { condition: { eq: [step.head, EndCap.none] },  then: [{ set: [arrow, "-->"] }] }
+                  - if: { condition: { eq: [step.head, EndCap.cross] }, then: [{ set: [arrow, "--x"] }] }
+                else:
+                  - if: { condition: { eq: [step.head, EndCap.none] },  then: [{ set: [arrow, "->"] }] }
+                  - if: { condition: { eq: [step.head, EndCap.cross] }, then: [{ set: [arrow, "-x"] }] }
+            - return: "${step.from_id}${arrow}${step.to_id}: ${ { call: [<.esc, step.text] } }\n"
+
       - def:
           name: emit
           static_off: ["same_arg", "str_cmp"]
           args: [[sheet, ref<Sheet>]]
           return: string
           body:
-            - if:
-                condition: { neq: [sheet.dtype, DiagramType.flowchart] }
-                then:
-                  - call: [log.error, "chart: only 'flowchart' is emitted in v1 (spec §1.1)"]
-                  - return: ""
+            # each type is its own projection (spec §5.8)
+            - if: { condition: { eq: [sheet.dtype, DiagramType.state] },          then: [{ return: { call: [<.emit_state, sheet] } }] }
+            - if: { condition: { eq: [sheet.dtype, DiagramType.class_diagram] },  then: [{ return: { call: [<.emit_class, sheet] } }] }
+            - if: { condition: { eq: [sheet.dtype, DiagramType.sequence] },       then: [{ return: { call: [<.emit_sequence, sheet] } }] }
             - decl: [dir_name, string, { call: [enums.name, "Direction", sheet.dir] }]
             - decl: [out, string, "flowchart ${dir_name}\n"]
 

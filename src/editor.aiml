@@ -16,6 +16,7 @@
 - import: "src/node_art.aiml"
 - import: "src/topbar.aiml"
 - import: "src/toolbar.aiml"
+- import: "src/seq_art.aiml"
 
 - class:
     name: Editor
@@ -55,6 +56,8 @@
       - [read_at, i32]                  # ink size when it was last read
       - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [art, ref<NodeArt>]            # draws one node (spec §15.2)
+      - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
+      - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
       - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
       - [tools, ref<ToolBar>]          # the tool strip
     methods:
@@ -119,15 +122,54 @@
                               - set: [seg.to_y, tip_y]
                               - set: [seg.tint, tint]
                               - set: [seg.thick, thick]
+                              # In a class diagram the MEANING draws the connector
+                              # (§5.8.2) -- the same rule the export follows, or the
+                              # picture and the .mmd would disagree.
+                              - decl: [head_cap, i32, edge.head]
+                              - decl: [tail_cap, i32, edge.tail]
+                              - decl: [dotted, i32, 0]
+                              - decl: [rhomb, i32, -1]
+                              - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [dotted, 1] }] }
                               - if:
-                                  condition: { eq: [edge.line, LineStyle.dotted] }
+                                  condition: { neq: [edge.rel, RelKind.plain] }
+                                  then:
+                                    - set: [head_cap, EndCap.arrow]
+                                    - set: [tail_cap, EndCap.none]
+                                    - if: { condition: { eq: [edge.rel, RelKind.inherit] }, then: [{ set: [head_cap, EndCap.hollow] }] }
+                                    - if:
+                                        condition: { eq: [edge.rel, RelKind.realize] }
+                                        then: [{ set: [head_cap, EndCap.hollow] }, { set: [dotted, 1] }]
+                                    - if: { condition: { eq: [edge.rel, RelKind.depend] }, then: [{ set: [dotted, 1] }] }
+                                    - if:
+                                        condition: { eq: [edge.rel, RelKind.compose] }
+                                        then: [{ set: [head_cap, EndCap.none] }, { set: [rhomb, 1] }]
+                                    - if:
+                                        condition: { eq: [edge.rel, RelKind.aggregate] }
+                                        then: [{ set: [head_cap, EndCap.none] }, { set: [rhomb, 0] }]
+                              - if:
+                                  condition: { eq: [dotted, 1] }
                                   then: [{ call: [<.pen.dashed, seg] }]
                                   else: [{ call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, thick, tint] }]
                               # one cap per end (§5.3): the sheet says what sits there,
                               # and the canvas has to show it or the author reads the
                               # file to see what they drew
-                              - call: [<.pen.cap, seg, 1, edge.head]
-                              - call: [<.pen.cap, seg, 0, edge.tail]
+                              - call: [<.pen.cap, seg, 1, head_cap]
+                              - call: [<.pen.cap, seg, 0, tail_cap]
+                              - if: { condition: { ge: [rhomb, 0] }, then: [{ call: [<.pen.rhombus, seg, 0, rhomb] }] }
+                              - if:
+                                  condition: { neq: [edge.from_text, ""] }
+                                  then:
+                                    - decl: [from_lx, f32, { -: [tail_x, { "*": [uni_x, 38.0] }] }]
+                                    - decl: [from_ly, f32, { -: [tail_y, { "*": [uni_y, 38.0] }] }]
+                                    - call: [ui.draw_text, from_lx, from_ly, edge.from_text, 0x33404DFF]
+                              - if:
+                                  condition: { neq: [edge.to_text, ""] }
+                                  then:
+                                    # outward along the line: a label at the very tip
+                                    # disappears under the box it points at
+                                    - decl: [to_lx, f32, { +: [tip_x, { "*": [uni_x, 26.0] }] }]
+                                    - decl: [to_ly, f32, { +: [tip_y, { "*": [uni_y, 26.0] }] }]
+                                    - call: [ui.draw_text, to_lx, to_ly, edge.to_text, 0x33404DFF]
                               - if:
                                   condition: { neq: [edge.text, ""] }
                                   then:
@@ -186,7 +228,17 @@
                   - call: [<.label.title_box, org_x, org_y, scale, head_box]
                   - call: [<.label.draw_in, head_box]
                   - call: [ui.draw_line, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, { -: [{ +: [org_x, page_w] }, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, 1.0, 0xD8DEE6FF]
-            - call: [<.draw_edges, slide, org_x, org_y, scale]
+            # A sequence is laid out, not placed (spec §5.8.3): the derived geometry
+            # goes INTO the nodes first, so hit testing, dragging and the label
+            # editor keep working on ordinary rectangles.
+            - decl: [is_seq, i32, 0]
+            - if: { condition: { eq: [slide.dtype, DiagramType.sequence] }, then: [{ set: [is_seq, 1] }] }
+            - if:
+                condition: { eq: [is_seq, 1] }
+                then:
+                  - call: [<.seq.apply, slide]
+                  - call: [<.seq_art.draw, slide, org_x, org_y, scale]
+                else: [{ call: [<.draw_edges, slide, org_x, org_y, scale] }]
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, slide.nodes.len] }
@@ -1452,13 +1504,19 @@
     instances:
       - class: SheetIO
         instance: sheet_io
+      - class: SeqLayout
+        instance: seq
+      - class: SeqArt
+        instance: seq_art
+        sees: [seq, pen]
       - class: MermaidOut
         instance: mermaid
+        sees: [seq]
       - class: MarkdownOut
         instance: markdown
       - class: SvgOut
         instance: svg
-        sees: [pen]
+        sees: [pen, seq]
       - class: ZipOut
         instance: zip
       - class: PptxOut
@@ -1509,4 +1567,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art]

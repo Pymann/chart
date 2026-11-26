@@ -8,11 +8,13 @@
 # they never saw (§14, same reason).
 - import: "src/pen.aiml"
 - import: "src/sheet_model.aiml"
+- import: "src/seq.aiml"
 
 - class:
     name: SvgOut
     description: "One slide as an SVG document (spec §17.1)"
     members:
+      - [seq, ref<SeqLayout>]      # the derived geometry of a sequence (§5.8.3)
       - [pen, ref<Pen>]               # borrow: edge_stop and ink_for are pure
     methods:
       # A number with at most one decimal, never an exponent and never a trailing
@@ -134,6 +136,42 @@
                         - set: [out, "${out}  <text x=\"${pos_x}\" y=\"${ { call: [<.num, line_y] } }\" fill=\"${ink}\">${ { call: [<.esc, prose_line] } }</text>\n"]
                         - set: [line_y, { +: [line_y, 22.0] }]
                         - set: [row, { +: [row, 1] }]
+                  - return: out
+
+            # A terminal is the filled dot a state chart begins and ends with
+            # (§5.8.1): a disc, and for an end state a ring around it.
+            - if:
+                condition: { eq: [node.kind, NodeKind.terminal] }
+                then:
+                  - decl: [span, f32, node.width]
+                  - if: { condition: { lt: [node.height, span] }, then: [{ set: [span, node.height] }] }
+                  - decl: [disc, f32, { /: [span, 2.0] }]
+                  - decl: [dot, f32, { /: [span, 4.0] }]
+                  - decl: [dot_text, string, { call: [<.num, dot] }]
+                  - set: [out, "${out}  <circle cx=\"${ { call: [<.num, mid_x] } }\" cy=\"${ { call: [<.num, mid_y] } }\" r=\"${dot_text}\" fill=\"${line}\"/>\n"]
+                  - return: out
+
+            # A class with compartments (§5.8.2): the name, a rule, then the rows,
+            # left-aligned -- a member list centred would be unreadable.
+            - if:
+                condition: { gt: [node.rows.len, 0] }
+                then:
+                  - decl: [head_h, f32, 30.0]
+                  - set: [out, "${out}  <rect x=\"${pos_x}\" y=\"${pos_y}\" width=\"${wide}\" height=\"${tall}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - decl: [name_y, f32, { +: [node.pos_y, 21.0] }]
+                  - set: [out, "${out}  <text x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, name_y] } }\" fill=\"${ink}\" text-anchor=\"middle\" font-weight=\"bold\">${ { call: [<.esc, node.text] } }</text>\n"]
+                  - decl: [rule_y, f32, { +: [node.pos_y, head_h] }]
+                  - set: [out, "${out}  <line x1=\"${pos_x}\" y1=\"${ { call: [<.num, rule_y] } }\" x2=\"${ { call: [<.num, { +: [node.pos_x, node.width] }] } }\" y2=\"${ { call: [<.num, rule_y] } }\" stroke=\"${line}\"/>\n"]
+                  - decl: [row_y, f32, { +: [rule_y, 20.0] }]
+                  - decl: [row_x, f32, { +: [node.pos_x, 12.0] }]
+                  - decl: [ridx, i32, 0]
+                  - while:
+                      condition: { lt: [ridx, node.rows.len] }
+                      body:
+                        - decl: [row_text, string, { at: [node.rows, ridx] }]
+                        - set: [out, "${out}  <text x=\"${ { call: [<.num, row_x] } }\" y=\"${ { call: [<.num, row_y] } }\" fill=\"${ink}\">${ { call: [<.esc, row_text] } }</text>\n"]
+                        - set: [row_y, { +: [row_y, 20.0] }]
+                        - set: [ridx, { +: [ridx, 1] }]
                   - return: out
 
             # An image carries its file and its caption BELOW the box, as the canvas
@@ -338,9 +376,40 @@
             - if: { condition: { eq: [edge.line, LineStyle.thick] }, then: [{ set: [thick, "4.5"] }] }
             - decl: [dash, string, ""]
             - if: { condition: { eq: [edge.line, LineStyle.dotted] }, then: [{ set: [dash, " stroke-dasharray=\"7 6\""] }] }
+            # In a class diagram the MEANING draws the line (§5.8.2): `rel` decides,
+            # and line/head/tail are not consulted -- two vocabularies for one
+            # connector would otherwise contradict each other on screen.
+            - decl: [rel_dash, i32, 0]
+            - if: { condition: { eq: [edge.rel, RelKind.realize] }, then: [{ set: [rel_dash, 1] }] }
+            - if: { condition: { eq: [edge.rel, RelKind.depend] },  then: [{ set: [rel_dash, 1] }] }
+            - if: { condition: { eq: [rel_dash, 1] }, then: [{ set: [dash, " stroke-dasharray=\"7 6\""] }] }
             - decl: [out, string, "  <line x1=\"${ { call: [<.num, end_x] } }\" y1=\"${ { call: [<.num, end_y] } }\" x2=\"${ { call: [<.num, tip_x] } }\" y2=\"${ { call: [<.num, tip_y] } }\" stroke=\"${tint}\" stroke-width=\"${thick}\"${dash}/>\n"]
-            - set: [out, "${out}${ { call: [<.cap_svg, edge.head, tip_x, tip_y, uni_x, uni_y] } }"]
-            - set: [out, "${out}${ { call: [<.cap_svg, edge.tail, end_x, end_y, { -: [0.0, uni_x] }, { -: [0.0, uni_y] }] } }"]
+            - if:
+                condition: { neq: [edge.rel, RelKind.plain] }
+                then:
+                  - decl: [rel_head, i32, EndCap.arrow]
+                  - if: { condition: { eq: [edge.rel, RelKind.inherit] }, then: [{ set: [rel_head, EndCap.hollow] }] }
+                  - if: { condition: { eq: [edge.rel, RelKind.realize] }, then: [{ set: [rel_head, EndCap.hollow] }] }
+                  - if: { condition: { eq: [edge.rel, RelKind.compose] }, then: [{ set: [rel_head, EndCap.none] }] }
+                  - if: { condition: { eq: [edge.rel, RelKind.aggregate] }, then: [{ set: [rel_head, EndCap.none] }] }
+                  - set: [out, "${out}${ { call: [<.cap_svg, rel_head, tip_x, tip_y, uni_x, uni_y] } }"]
+                  - set: [out, "${out}${ { call: [<.rel_tail_svg, edge.rel, end_x, end_y, uni_x, uni_y] } }"]
+                else:
+                  - set: [out, "${out}${ { call: [<.cap_svg, edge.head, tip_x, tip_y, uni_x, uni_y] } }"]
+                  - set: [out, "${out}${ { call: [<.cap_svg, edge.tail, end_x, end_y, { -: [0.0, uni_x] }, { -: [0.0, uni_y] }] } }"]
+            # the multiplicities sit at their own end, beside the line (§5.8.2)
+            - if:
+                condition: { neq: [edge.from_text, ""] }
+                then:
+                  - decl: [from_lx, f32, { -: [end_x, { "*": [uni_x, 20.0] }] }]
+                  - decl: [from_ly, f32, { -: [end_y, { "*": [uni_y, 20.0] }] }]
+                  - set: [out, "${out}${ { call: [<.end_label_svg, edge.from_text, from_lx, from_ly] } }"]
+            - if:
+                condition: { neq: [edge.to_text, ""] }
+                then:
+                  - decl: [to_lx, f32, { +: [tip_x, { "*": [uni_x, 20.0] }] }]
+                  - decl: [to_ly, f32, { +: [tip_y, { "*": [uni_y, 20.0] }] }]
+                  - set: [out, "${out}${ { call: [<.end_label_svg, edge.to_text, to_lx, to_ly] } }"]
             - if:
                 condition: { neq: [edge.text, ""] }
                 then:
@@ -357,6 +426,45 @@
                   - set: [out, "${out}  <text ${spot} fill=\"none\" stroke=\"#ffffff\" stroke-width=\"3\">${say}</text>\n"]
                   - set: [out, "${out}  <text ${spot} fill=\"#33404d\">${say}</text>\n"]
             - return: out
+
+      # The diamond at the owning end of a composition (filled) or an aggregation
+      # (hollow).  UML's two diamonds have no EndCap member on purpose: EndCap is
+      # the flowchart's vocabulary, `rel` is the class diagram's (§3.2).
+      - def:
+          name: rel_tail_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[rel, i32], [spot_x, f32], [spot_y, f32], [uni_x, f32], [uni_y, f32]]
+          return: string
+          body:
+            - decl: [filled, i32, 0]
+            - if: { condition: { eq: [rel, RelKind.compose] }, then: [{ set: [filled, 1] }] }
+            - if: { condition: { eq: [rel, RelKind.aggregate] }, then: [{ set: [filled, 2] }] }
+            - if: { condition: { eq: [filled, 0] }, then: [{ return: "" }] }
+            # along the line, towards the other node, and across it
+            - decl: [step_x, f32, { "*": [uni_x, -13.0] }]
+            - decl: [step_y, f32, { "*": [uni_y, -13.0] }]
+            - decl: [side_x, f32, { "*": [uni_y, 7.0] }]
+            - decl: [side_y, f32, { "*": [uni_x, -7.0] }]
+            - decl: [far_x, f32, { +: [spot_x, { "*": [step_x, 2.0] }] }]
+            - decl: [far_y, f32, { +: [spot_y, { "*": [step_y, 2.0] }] }]
+            - decl: [one_x, f32, { +: [{ +: [spot_x, step_x] }, side_x] }]
+            - decl: [one_y, f32, { +: [{ +: [spot_y, step_y] }, side_y] }]
+            - decl: [two_x, f32, { -: [{ +: [spot_x, step_x] }, side_x] }]
+            - decl: [two_y, f32, { -: [{ +: [spot_y, step_y] }, side_y] }]
+            - decl: [paint, string, "#55687A"]
+            - if: { condition: { eq: [filled, 2] }, then: [{ set: [paint, "#ffffff"] }] }
+            - decl: [pts, string, "${ { call: [<.num, spot_x] } },${ { call: [<.num, spot_y] } } ${ { call: [<.num, one_x] } },${ { call: [<.num, one_y] } } ${ { call: [<.num, far_x] } },${ { call: [<.num, far_y] } } ${ { call: [<.num, two_x] } },${ { call: [<.num, two_y] } }"]
+            - return: "  <polygon points=\"${pts}\" fill=\"${paint}\" stroke=\"#55687A\" stroke-width=\"2\"/>\n"
+
+      - def:
+          name: end_label_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [spot_x, f32], [spot_y, f32]]
+          return: string
+          body:
+            - decl: [at_x, string, { call: [<.num, spot_x] }]
+            - decl: [at_y, string, { call: [<.num, { -: [spot_y, 6.0] }] }]
+            - return: "  <text x=\"${at_x}\" y=\"${at_y}\" fill=\"#33404d\" font-size=\"12\" text-anchor=\"middle\">${ { call: [<.esc, text] } }</text>\n"
 
       # One cap at one end (§5.3).  `uni` points back along the line, so every cap is
       # drawn from the same two numbers and a tail cap is the head's mirror.
@@ -421,6 +529,163 @@
 
       # One slide, whole document.  Nodes first, then edges: an arrow must not end up
       # under a box it points at (§17.1).
+      # ── a sequence diagram (spec §5.8.3) ────────────────────────────────────
+      # Nothing here reads a stored position: the columns come from SeqLayout, and
+      # so does every y.  That is the whole difference between this and a flowchart.
+      - def:
+          name: seq_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: string
+          body:
+            - decl: [out, string, ""]
+            - decl: [order, list<i32>, { call: [<.seq.columns, sheet] }]
+            - decl: [top, f32, { call: [<.seq.top_y] }]
+            - decl: [tall, f32, { call: [<.seq.box_h] }]
+            - decl: [wide, f32, { call: [<.seq.box_w] }]
+            - decl: [foot, f32, 690.0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - decl: [left, f32, { call: [<.seq.col_x, idx] }]
+                  - decl: [mid, f32, { +: [left, { /: [wide, 2.0] }] }]
+                  - decl: [paint, i32, node.fill]
+                  - if: { condition: { eq: [paint, 0] }, then: [{ set: [paint, 0xF2F5F9FF] }] }
+                  - decl: [fill, string, { call: [<.rgb, paint, 0xF2F5F9FF] }]
+                  - decl: [line, string, { call: [<.rgb, node.stroke, 0x3A4A5AFF] }]
+                  - decl: [ink, string, { call: [<.rgb, { call: [<.pen.ink_for, paint] }, 0x1A2430FF] }]
+                  - decl: [left_text, string, { call: [<.num, left] }]
+                  - decl: [top_text, string, { call: [<.num, top] }]
+                  - decl: [mid_text, string, { call: [<.num, mid] }]
+                  - decl: [wide_text, string, { call: [<.num, wide] }]
+                  - decl: [tall_text, string, { call: [<.num, tall] }]
+                  - decl: [life_top, string, { call: [<.num, { +: [top, tall] }] }]
+                  - decl: [foot_text, string, { call: [<.num, foot] }]
+                  - decl: [name, string, node.text]
+                  - if: { condition: { eq: [name, ""] }, then: [{ set: [name, node.ident] }] }
+                  - decl: [name_y, string, { call: [<.num, { +: [top, 34.0] }] }]
+                  - set: [out, "${out}  <line x1=\"${mid_text}\" y1=\"${life_top}\" x2=\"${mid_text}\" y2=\"${foot_text}\" stroke=\"#8899a6\" stroke-dasharray=\"6 6\"/>\n"]
+                  - set: [out, "${out}  <rect x=\"${left_text}\" y=\"${top_text}\" width=\"${wide_text}\" height=\"${tall_text}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <text x=\"${mid_text}\" y=\"${name_y}\" fill=\"${ink}\" text-anchor=\"middle\">${ { call: [<.esc, name] } }</text>\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [out, "${out}${ { call: [<.seq_blocks, sheet, order.len] } }"]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [sheet.steps, idx] }]
+                  - set: [out, "${out}${ { call: [<.seq_step, sheet, step, idx] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out
+
+      # The frame around a block, drawn FIRST so the messages sit on top of it.
+      - def:
+          name: seq_blocks
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [columns, i32]]
+          return: string
+          body:
+            - decl: [out, string, ""]
+            - decl: [opens, list<i32>]
+            - decl: [right, f32, { +: [{ call: [<.seq.col_x, { -: [columns, 1] }] }, { call: [<.seq.box_w] }] }]
+            - decl: [left, f32, { -: [{ call: [<.seq.col_x, 0] }, 20.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [sheet.steps, idx] }]
+                  - if: { condition: { eq: [step.kind, StepKind.block_open] }, then: [{ call: [opens.push, idx] }] }
+                  - if:
+                      condition: { "&&": [{ eq: [step.kind, StepKind.block_close] }, { gt: [opens.len, 0] }] }
+                      then:
+                        - decl: [from_row, i32, { call: [opens.pop] }]
+                        - decl: [top, f32, { -: [{ call: [<.seq.row_y, from_row] }, 22.0] }]
+                        - decl: [low, f32, { +: [{ call: [<.seq.row_y, idx] }, 10.0] }]
+                        - decl: [left_text, string, { call: [<.num, left] }]
+                        - decl: [top_text, string, { call: [<.num, top] }]
+                        - decl: [wide_text, string, { call: [<.num, { -: [right, left] }] }]
+                        - decl: [tall_text, string, { call: [<.num, { -: [low, top] }] }]
+                        - decl: [opener, ref<Step>, { at: [sheet.steps, from_row] }]
+                        - decl: [word, string, opener.word]
+                        - if: { condition: { eq: [word, ""] }, then: [{ set: [word, "loop"] }] }
+                        - decl: [tag, string, word]
+                        - if: { condition: { neq: [opener.text, ""] }, then: [{ set: [tag, "${word} ${opener.text}"] }] }
+                        - decl: [tag_x, string, { call: [<.num, { +: [left, 10.0] }] }]
+                        - decl: [tag_y, string, { call: [<.num, { +: [top, 16.0] }] }]
+                        - set: [out, "${out}  <rect x=\"${left_text}\" y=\"${top_text}\" width=\"${wide_text}\" height=\"${tall_text}\" fill=\"none\" stroke=\"#8899a6\"/>\n"]
+                        - set: [out, "${out}  <text x=\"${tag_x}\" y=\"${tag_y}\" fill=\"#53626f\" font-size=\"13\">${ { call: [<.esc, tag] } }</text>\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: out
+
+      - def:
+          name: seq_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [step, ref<Step>], [row, i32]]
+          return: string
+          body:
+            - if: { condition: { eq: [step.kind, StepKind.block_open] }, then: [{ return: "" }] }
+            - if: { condition: { eq: [step.kind, StepKind.block_close] }, then: [{ return: "" }] }
+            - decl: [line_y, f32, { call: [<.seq.row_y, row] }]
+            - decl: [from_x, f32, { call: [<.seq.centre_of, sheet, step.from_id] }]
+            - decl: [to_x, f32, { call: [<.seq.centre_of, sheet, step.to_id] }]
+            - decl: [y_text, string, { call: [<.num, line_y] }]
+            - if:
+                condition: { eq: [step.kind, StepKind.note] }
+                then:
+                  - decl: [left, f32, { -: [from_x, 70.0] }]
+                  - decl: [right, f32, { +: [from_x, 70.0] }]
+                  - if:
+                      condition: { neq: [step.to_id, ""] }
+                      then:
+                        - set: [left, { -: [from_x, 40.0] }]
+                        - set: [right, { +: [to_x, 40.0] }]
+                  - decl: [note_top, string, { call: [<.num, { -: [line_y, 18.0] }] }]
+                  - decl: [left_text, string, { call: [<.num, left] }]
+                  - decl: [wide_text, string, { call: [<.num, { -: [right, left] }] }]
+                  - decl: [mid_text, string, { call: [<.num, { /: [{ +: [left, right] }, 2.0] }] }]
+                  - decl: [base_y, string, { call: [<.num, { +: [line_y, 4.0] }] }]
+                  - decl: [out_note, string, "  <rect x=\"${left_text}\" y=\"${note_top}\" width=\"${wide_text}\" height=\"26\" fill=\"#fdf6d8\" stroke=\"#c9b457\"/>\n"]
+                  - return: "${out_note}  <text x=\"${mid_text}\" y=\"${base_y}\" fill=\"#4a4330\" text-anchor=\"middle\" font-size=\"13\">${ { call: [<.esc, step.text] } }</text>\n"
+            # a message
+            - decl: [dash, string, ""]
+            - if: { condition: { eq: [step.line, LineStyle.dotted] }, then: [{ set: [dash, " stroke-dasharray=\"6 5\""] }] }
+            - decl: [from_text, string, { call: [<.num, from_x] }]
+            - decl: [to_text, string, { call: [<.num, to_x] }]
+            - decl: [label_x, string, { call: [<.num, { /: [{ +: [from_x, to_x] }, 2.0] }] }]
+            - decl: [label_y, string, { call: [<.num, { -: [line_y, 8.0] }] }]
+            - decl: [out, string, "  <line x1=\"${from_text}\" y1=\"${y_text}\" x2=\"${to_text}\" y2=\"${y_text}\" stroke=\"#2f4a68\"${dash}/>\n"]
+            - set: [out, "${out}${ { call: [<.seq_head, step, from_x, to_x, line_y] } }"]
+            - if:
+                condition: { neq: [step.text, ""] }
+                then:
+                  - set: [out, "${out}  <text x=\"${label_x}\" y=\"${label_y}\" fill=\"#2a3744\" text-anchor=\"middle\" font-size=\"13\">${ { call: [<.esc, step.text] } }</text>\n"]
+            - return: out
+
+      # The cap at the receiving end: a filled head, an open one, or a cross.
+      - def:
+          name: seq_head
+          static_off: ["same_arg", "str_cmp"]
+          args: [[step, ref<Step>], [from_x, f32], [to_x, f32], [line_y, f32]]
+          return: string
+          body:
+            - if: { condition: { eq: [step.head, EndCap.none] }, then: [{ return: "" }] }
+            - decl: [span, f32, 10.0]
+            - if: { condition: { lt: [to_x, from_x] }, then: [{ set: [span, -10.0] }] }
+            - decl: [back_x, string, { call: [<.num, { -: [to_x, span] }] }]
+            - decl: [tip_x, string, { call: [<.num, to_x] }]
+            - decl: [up_y, string, { call: [<.num, { -: [line_y, 5.0] }] }]
+            - decl: [down_y, string, { call: [<.num, { +: [line_y, 5.0] }] }]
+            - decl: [mid_y, string, { call: [<.num, line_y] }]
+            - if:
+                condition: { eq: [step.head, EndCap.cross] }
+                then:
+                  - decl: [far_x, string, { call: [<.num, { -: [to_x, span] }] }]
+                  - decl: [one, string, "  <line x1=\"${far_x}\" y1=\"${up_y}\" x2=\"${tip_x}\" y2=\"${down_y}\" stroke=\"#2f4a68\"/>\n"]
+                  - return: "${one}  <line x1=\"${far_x}\" y1=\"${down_y}\" x2=\"${tip_x}\" y2=\"${up_y}\" stroke=\"#2f4a68\"/>\n"
+            - return: "  <polygon points=\"${tip_x},${mid_y} ${back_x},${up_y} ${back_x},${down_y}\" fill=\"#2f4a68\"/>\n"
+
       - def:
           name: emit
           static_off: ["same_arg", "str_cmp"]
@@ -433,6 +698,12 @@
             - if:
                 condition: { neq: [sheet.title, ""] }
                 then: [{ set: [out, "${out}  <text x=\"52\" y=\"38\" font-size=\"22\" fill=\"#101a24\">${ { call: [<.esc, sheet.title] } }</text>\n"] }]
+            # a sequence is laid out, not placed (spec §5.8.3)
+            - if:
+                condition: { eq: [sheet.dtype, DiagramType.sequence] }
+                then:
+                  - set: [out, "${out}${ { call: [<.seq_svg, sheet] } }"]
+                  - return: "${out}</svg>\n"
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, sheet.nodes.len] }

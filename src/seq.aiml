@@ -1,0 +1,143 @@
+# Where a sequence diagram's parts sit (doc/spec/chart.md §5.8.3).
+#
+# A sequence has no stored geometry: a participant's place is its column, a message's
+# place is its row, and both follow from order.  That arithmetic lives HERE, in one
+# class, because the canvas, the SVG and the Mermaid projection must agree about which
+# participant is the third column -- three copies of a layout rule is three chances to
+# disagree.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: SeqLayout
+    description: "Derived geometry of a sequence diagram (spec §5.8.3)"
+    methods:
+      - def:
+          name: col_x
+          args: [[which, i32]]
+          return: f32
+          body:
+            - return: { +: [170.0, { "*": [{ cast: [which, f32] }, 230.0] }] }
+
+      - def:
+          name: row_y
+          args: [[which, i32]]
+          return: f32
+          body:
+            - return: { +: [190.0, { "*": [{ cast: [which, f32] }, 42.0] }] }
+
+      - def:
+          name: box_w
+          return: f32
+          body:
+            - return: 170.0
+
+      - def:
+          name: box_h
+          return: f32
+          body:
+            - return: 56.0
+
+      - def:
+          name: top_y
+          return: f32
+          body:
+            - return: 96.0
+
+      # Node indices in column order: by x, ties by position in the sheet.  That is a
+      # TOTAL order, so every reader gets the same columns (spec §5.5a).
+      - def:
+          name: columns
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: list<i32>
+          body:
+            - decl: [order, list<i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, idx] }]
+                  # prose is not a participant (spec §5.7)
+                  - if:
+                      condition: { neq: [node.kind, NodeKind.text] }
+                      then: [{ call: [order.push, idx] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [outer, i32, 0]
+            - while:
+                condition: { lt: [outer, order.len] }
+                body:
+                  - decl: [best, i32, outer]
+                  - decl: [inner, i32, { +: [outer, 1] }]
+                  - while:
+                      condition: { lt: [inner, order.len] }
+                      body:
+                        - decl: [here, i32, { at: [order, inner] }]
+                        - decl: [there, i32, { at: [order, best] }]
+                        - decl: [lhs, Node, { at: [sheet.nodes, here] }]
+                        - decl: [rhs, Node, { at: [sheet.nodes, there] }]
+                        - decl: [takes, i32, 0]
+                        - if: { condition: { lt: [lhs.pos_x, rhs.pos_x] }, then: [{ set: [takes, 1] }] }
+                        - if:
+                            condition: { "&&": [{ eq: [lhs.pos_x, rhs.pos_x] }, { lt: [here, there] }] }
+                            then: [{ set: [takes, 1] }]
+                        - if: { condition: { eq: [takes, 1] }, then: [{ set: [best, inner] }] }
+                        - set: [inner, { +: [inner, 1] }]
+                  - if:
+                      condition: { neq: [best, outer] }
+                      then:
+                        - decl: [keep, i32, { at: [order, outer] }]
+                        - idx: [order, outer, { at: [order, best] }]
+                        - idx: [order, best, keep]
+                  - set: [outer, { +: [outer, 1] }]
+            - return: order
+
+      # Write the derived geometry into the nodes (spec §5.8.3).  The editor calls
+      # this before it draws a sequence, so everything downstream -- hit testing,
+      # dragging, the selection halo, the label editor -- keeps working on ordinary
+      # node rectangles.  Dragging a participant sideways past its neighbour changes
+      # its x, the next pass re-sorts, and the columns have swapped: the gesture for
+      # "move this" is the gesture for "reorder this", which is what it means here.
+      - def:
+          name: apply
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          body:
+            - decl: [order, list<i32>, { call: [<.columns, sheet] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - set: [node.pos_x, { call: [<.col_x, idx] }]
+                  - set: [node.pos_y, { call: [<.top_y] }]
+                  - set: [node.width, { call: [<.box_w] }]
+                  - set: [node.height, { call: [<.box_h] }]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # Which column a participant stands in, -1 when the id is not one.
+      - def:
+          name: col_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [ident, string]]
+          return: i32
+          body:
+            - decl: [order, list<i32>, { call: [<.columns, sheet] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - if: { condition: { eq: [node.ident, ident] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
+      # The centre of a participant's column, in design coordinates.
+      - def:
+          name: centre_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [ident, string]]
+          return: f32
+          body:
+            - decl: [which, i32, { call: [<.col_of, sheet, ident] }]
+            - if: { condition: { lt: [which, 0] }, then: [{ return: 0.0 }] }
+            - return: { +: [{ call: [<.col_x, which] }, { /: [{ call: [<.box_w] }, 2.0] }] }

@@ -1,0 +1,17 @@
+# Ein Zustandsdiagramm (spec §5.8.1): Terminal, Wahl, Beschriftungen.
+dtype: state
+dir: LR
+title: "Anmeldung"
+next_id: 6
+nodes:
+  - { id: n1, kind: terminal, x: 60, y: 300, w: 40, h: 40, text: "" }
+  - { id: n2, kind: round, x: 200, y: 280, w: 180, h: 80, text: "Abgemeldet" }
+  - { id: n3, kind: diamond, x: 460, y: 280, w: 140, h: 80, text: "geprueft?" }
+  - { id: n4, kind: round, x: 680, y: 280, w: 180, h: 80, text: "Angemeldet" }
+  - { id: n5, kind: terminal, x: 960, y: 300, w: 40, h: 40, text: "" }
+edges:
+  - { id: e1, from_id: n1, to_id: n2 }
+  - { id: e2, from_id: n2, to_id: n3, text: "anmelden" }
+  - { id: e3, from_id: n3, to_id: n4, text: "ja" }
+  - { id: e4, from_id: n3, to_id: n2, text: "nein" }
+  - { id: e5, from_id: n4, to_id: n5, text: "abmelden" }

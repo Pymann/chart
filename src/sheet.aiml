@@ -80,6 +80,33 @@
             - if: { condition: { eq: [word, "actor"] },             then: [{ return: NodeKind.actor }] }
             - if: { condition: { eq: [word, "subroutine"] }, then: [{ return: NodeKind.subroutine }] }
             - if: { condition: { eq: [word, "image"] },      then: [{ return: NodeKind.image }] }
+            - if: { condition: { eq: [word, "terminal"] },   then: [{ return: NodeKind.terminal }] }
+            - return: -1
+
+      - def:
+          name: rel_kind
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "plain"] },     then: [{ return: RelKind.plain }] }
+            - if: { condition: { eq: [word, "inherit"] },   then: [{ return: RelKind.inherit }] }
+            - if: { condition: { eq: [word, "compose"] },   then: [{ return: RelKind.compose }] }
+            - if: { condition: { eq: [word, "aggregate"] }, then: [{ return: RelKind.aggregate }] }
+            - if: { condition: { eq: [word, "depend"] },    then: [{ return: RelKind.depend }] }
+            - if: { condition: { eq: [word, "realize"] },   then: [{ return: RelKind.realize }] }
+            - return: -1
+
+      - def:
+          name: step_kind
+          static_off: ["same_arg", "str_cmp"]
+          args: [[word, string]]
+          return: i32
+          body:
+            - if: { condition: { eq: [word, "message"] },     then: [{ return: StepKind.message }] }
+            - if: { condition: { eq: [word, "note"] },        then: [{ return: StepKind.note }] }
+            - if: { condition: { eq: [word, "block_open"] },  then: [{ return: StepKind.block_open }] }
+            - if: { condition: { eq: [word, "block_close"] }, then: [{ return: StepKind.block_close }] }
             - return: -1
 
       - def:
@@ -163,6 +190,51 @@
             - if: { condition: { eq: [word, "class_diagram"] }, then: [{ return: DiagramType.class_diagram }] }
             - return: -1
 
+      # The sequence's steps (spec §5.8.3).  Own method: read_sheet is long enough,
+      # and the order of this list IS the document.
+      - def:
+          name: read_steps
+          static_off: ["same_arg", "str_cmp"]
+          args: [[path, string], [root, ref<yaml_node>], [sheet, ref<Sheet>]]
+          return: i32
+          body:
+            - decl: [steps_idx, i32, { call: [<.kv_index, root, "steps"] }]
+            - if: { condition: { lt: [steps_idx, 0] }, then: [{ return: 1 }] }
+            - decl: [steps_node, ref<yaml_node>, { call: [yaml.value, root, steps_idx] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, { call: [yaml.size, steps_node] }] }
+                body:
+                  - decl: [item, ref<yaml_node>, { call: [yaml.item, steps_node, idx] }]
+                  - decl: [step, Step]
+                  - set: [step.ident, { call: [<.kv_text, item, "id", ""] }]
+                  - decl: [kind_word, string, { call: [<.kv_text, item, "kind", "message"] }]
+                  - decl: [kind_val, i32, { call: [<.step_kind, kind_word] }]
+                  - if:
+                      condition: { lt: [kind_val, 0] }
+                      then:
+                        - call: [log.error, "chart: ${path}: step '${step.ident}': unbekanntes kind '${kind_word}'"]
+                        - return: 0
+                  - set: [step.kind, kind_val]
+                  - set: [step.from_id, { call: [<.kv_text, item, "from_id", ""] }]
+                  - set: [step.to_id, { call: [<.kv_text, item, "to_id", ""] }]
+                  - set: [step.text, { call: [<.kv_text, item, "text", ""] }]
+                  - set: [step.word, { call: [<.kv_text, item, "word", ""] }]
+                  - decl: [line_word, string, { call: [<.kv_text, item, "line", "solid"] }]
+                  - decl: [head_word, string, { call: [<.kv_text, item, "head", "arrow"] }]
+                  - decl: [line_val, i32, { call: [<.line_style, line_word] }]
+                  - decl: [head_val, i32, { call: [<.end_cap, head_word] }]
+                  - if:
+                      condition: { "||": [{ lt: [line_val, 0] }, { lt: [head_val, 0] }] }
+                      then:
+                        - call: [log.error, "chart: ${path}: step '${step.ident}': unbekanntes line/head ('${line_word}' '${head_word}')"]
+                        - return: 0
+                  - set: [step.line, line_val]
+                  - set: [step.head, head_val]
+                  - call: [sheet.steps.push, step]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 1
+
       # Read one slide out of a mapping node.  1 on success, 0 on a reported
       # failure -- the caller owns the document and frees it either way.
       - def:
@@ -240,6 +312,19 @@
                         - set: [node.fill, { call: [<.kv_i32, item, "fill"] }]
                         - set: [node.stroke, { call: [<.kv_i32, item, "stroke"] }]
                         - set: [node.group, { call: [<.kv_text, item, "group", ""] }]
+                        # class compartments (spec §5.8.2): a sequence of scalars
+                        - decl: [rows_idx, i32, { call: [<.kv_index, item, "rows"] }]
+                        - if:
+                            condition: { ge: [rows_idx, 0] }
+                            then:
+                              - decl: [rows_node, ref<yaml_node>, { call: [yaml.value, item, rows_idx] }]
+                              - decl: [ridx, i32, 0]
+                              - while:
+                                  condition: { lt: [ridx, { call: [yaml.size, rows_node] }] }
+                                  body:
+                                    - decl: [row_node, ref<yaml_node>, { call: [yaml.item, rows_node, ridx] }]
+                                    - call: [node.rows.push, { call: [yaml.scalar, row_node] }]
+                                    - set: [ridx, { +: [ridx, 1] }]
                         - call: [sheet.nodes.push, node]
                         - set: [nidx, { +: [nidx, 1] }]
 
@@ -299,9 +384,21 @@
                               - set: [edge.tail, tail_val]
                         - set: [edge.text, { call: [<.kv_text, item, "text", ""] }]
                         - set: [edge.stroke, { call: [<.kv_i32, item, "stroke"] }]
+                        # what the connector means, and the multiplicities (§5.8.2)
+                        - decl: [rel_word, string, { call: [<.kv_text, item, "rel", "plain"] }]
+                        - decl: [rel_val, i32, { call: [<.rel_kind, rel_word] }]
+                        - if:
+                            condition: { lt: [rel_val, 0] }
+                            then:
+                              - call: [log.error, "chart: ${path}: edge '${edge.ident}': unbekanntes rel '${rel_word}'"]
+                              - return: 0
+                        - set: [edge.rel, rel_val]
+                        - set: [edge.from_text, { call: [<.kv_text, item, "from_text", ""] }]
+                        - set: [edge.to_text, { call: [<.kv_text, item, "to_text", ""] }]
                         - call: [sheet.edges.push, edge]
                         - set: [eidx, { +: [eidx, 1] }]
-            - return: 1
+
+            - return: { call: [<.read_steps, path, root, sheet] }
 
       # Load `path` into `deck`.  A file with `slides:` is a deck; any other mapping
       # is a one-slide deck, so a *.chart.yaml keeps loading as it always did
@@ -424,6 +521,19 @@
                               - if: { condition: { neq: [node.fill, 0] }, then: [{ set: [out, "${out}, fill: ${node.fill}"] }] }
                               - if: { condition: { neq: [node.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${node.stroke}"] }] }
                               - if: { condition: { neq: [node.group, ""] }, then: [{ set: [out, "${out}, group: ${node.group}"] }] }
+                              - if:
+                                  condition: { gt: [node.rows.len, 0] }
+                                  then:
+                                    - set: [out, "${out}, rows: ["]
+                                    - decl: [ridx, i32, 0]
+                                    - while:
+                                        condition: { lt: [ridx, node.rows.len] }
+                                        body:
+                                          - if: { condition: { gt: [ridx, 0] }, then: [{ set: [out, "${out}, "] }] }
+                                          - decl: [row, string, { at: [node.rows, ridx] }]
+                                          - set: [out, "${out}\"${ { call: [<.esc_yaml, row] } }\""]
+                                          - set: [ridx, { +: [ridx, 1] }]
+                                    - set: [out, "${out}]"]
                               - set: [out, "${out} }\n"]
                               - set: [nidx, { +: [nidx, 1] }]
                   - if:
@@ -449,7 +559,50 @@
                               # `linkStyle` on import, and silently dropped here until
                               # an imported linkStyle came back colourless
                               - if: { condition: { neq: [edge.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${edge.stroke}"] }] }
+                              - if:
+                                  condition: { neq: [edge.rel, RelKind.plain] }
+                                  then:
+                                    - decl: [rel_word, string, { call: [enums.name, "RelKind", edge.rel] }]
+                                    - set: [out, "${out}, rel: ${rel_word}"]
+                              - if: { condition: { neq: [edge.from_text, ""] }, then: [{ set: [out, "${out}, from_text: \"${ { call: [<.esc_yaml, edge.from_text] } }\""] }] }
+                              - if: { condition: { neq: [edge.to_text, ""] }, then: [{ set: [out, "${out}, to_text: \"${ { call: [<.esc_yaml, edge.to_text] } }\""] }] }
                               - set: [out, "${out} }\n"]
                               - set: [eidx, { +: [eidx, 1] }]
+                  - set: [out, { call: [<.steps_yaml, slide, out] }]
                   - set: [sidx, { +: [sidx, 1] }]
+            - return: out
+
+      # The sequence's steps, in order (spec §5.8.3).  Order is the document, so
+      # they are written exactly as they stand -- never sorted, unlike the nodes.
+      - def:
+          name: steps_yaml
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [sofar, string]]
+          return: string
+          body:
+            - if: { condition: { eq: [slide.steps.len, 0] }, then: [{ return: sofar }] }
+            - decl: [out, string, "${sofar}    steps:\n"]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
+                  - decl: [kind_word, string, { call: [enums.name, "StepKind", step.kind] }]
+                  - set: [out, "${out}      - { id: ${step.ident}, kind: ${kind_word}"]
+                  - if: { condition: { neq: [step.from_id, ""] }, then: [{ set: [out, "${out}, from_id: ${step.from_id}"] }] }
+                  - if: { condition: { neq: [step.to_id, ""] }, then: [{ set: [out, "${out}, to_id: ${step.to_id}"] }] }
+                  - if: { condition: { neq: [step.word, ""] }, then: [{ set: [out, "${out}, word: ${step.word}"] }] }
+                  - if:
+                      condition: { neq: [step.line, LineStyle.solid] }
+                      then:
+                        - decl: [line_word, string, { call: [enums.name, "LineStyle", step.line] }]
+                        - set: [out, "${out}, line: ${line_word}"]
+                  - if:
+                      condition: { neq: [step.head, EndCap.arrow] }
+                      then:
+                        - decl: [head_word, string, { call: [enums.name, "EndCap", step.head] }]
+                        - set: [out, "${out}, head: ${head_word}"]
+                  - if: { condition: { neq: [step.text, ""] }, then: [{ set: [out, "${out}, text: \"${ { call: [<.esc_yaml, step.text] } }\""] }] }
+                  - set: [out, "${out} }\n"]
+                  - set: [idx, { +: [idx, 1] }]
             - return: out
