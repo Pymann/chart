@@ -1,10 +1,7 @@
 # Eine Sequenz bearbeiten (spec §5.8.3): die Verbindungsgeste legt hier eine
 # NACHRICHT an, keine Kante, und Notiz/Block sind eigene Schritte.
 wait 3
-# Werkzeugleiste: "Nachricht"
-at_win 425 51
-down 0
-up 0
+tool Nachricht
 wait 2
 # von der ersten Lebenslinie auf die zweite ziehen
 at 255 124
@@ -18,22 +15,14 @@ at 370 190
 down 0
 up 0
 wait 2
-at_win 120 14
-down 0
-up 0
-wait 2
-at_win 200 46
-down 0
-up 0
+menu Bearbeiten|Beschriften
 wait 2
 type anmelden
 wait 2
 key Return
 wait 2
 # "Notiz" aus der Werkzeugleiste, beschriften
-at_win 508 51
-down 0
-up 0
+tool Notiz
 wait 2
 type gilt ab hier
 wait 2

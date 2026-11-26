@@ -18,6 +18,7 @@
 - import: "src/toolbar.aiml"
 - import: "src/seq_art.aiml"
 - import: "src/edge_art.aiml"
+- import: "src/deeds.aiml"
 
 - class:
     name: Editor
@@ -59,6 +60,7 @@
       - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [art, ref<NodeArt>]            # draws one node (spec §15.2)
       - [edge_art, ref<EdgeArt>]       # draws the connectors (spec §5.3)
+      - [deeds, ref<Deeds>]            # sheet edits that need no window
       - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
       - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
       - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
@@ -292,9 +294,41 @@
             - set: [<.sel_edge, edge.ident]
             - set: [<.status, "Kante gezogen"]
 
-      # A note or a block, appended to the step list (spec §5.8.3).  A note needs a
-      # participant to hang on; a block is a pair, opened and closed at once, so the
-      # file is never half a block.
+          # The deeds themselves live in Deeds (a sheet edit needs no window); the editor
+      # keeps only what it owns: which element is meant, and what the status says.
+      - def:
+          name: set_deco
+          static_off: ["same_arg", "str_cmp"]
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [kind, i32, 0]
+            - decl: [ident, string, ""]
+            - if: { condition: { neq: [<.sel, ""] }, then: [{ set: [kind, 1] }, { set: [ident, <.sel] }] }
+            - if: { condition: { neq: [<.sel_edge, ""] }, then: [{ set: [kind, 2] }, { set: [ident, <.sel_edge] }] }
+            - if:
+                condition: { eq: [kind, 0] }
+                then:
+                  - set: [<.status, "erst ein Element waehlen"]
+                  - return: null
+            - if:
+                condition: { eq: [action, 214] }
+                then:
+                  - decl: [spot_x, f32, { -: [{ call: [<.top_bar.title_x, 2] }, 8.0] }]
+                  - call: [<.menu.open_at, kind, ident, spot_x, { call: [<.top_bar.height] }]
+                  - set: [<.status, "Farbe waehlen"]
+                  - return: null
+            - decl: [bit, i32, 0]
+            - if: { condition: { eq: [action, 210] }, then: [{ set: [bit, 1] }] }
+            - if: { condition: { eq: [action, 211] }, then: [{ set: [bit, 2] }] }
+            - if: { condition: { eq: [action, 212] }, then: [{ set: [bit, 4] }] }
+            - if:
+                condition: { eq: [{ call: [<.deeds.set_deco, slide, ident, kind, bit] }, 1] }
+                then:
+                  - call: [<.touch]
+                  - set: [<.status, "Auszeichnung gesetzt"]
+
       - def:
           name: add_step
           static_off: ["same_arg", "str_cmp"]
@@ -307,39 +341,21 @@
                 then:
                   - set: [<.status, "Notiz und Block gibt es nur in einer Sequenz (spec 5.8.3)"]
                   - return: null
+            - decl: [fresh, string, ""]
             - if:
                 condition: { eq: [action, 202] }
-                then:
-                  - decl: [opener, Step]
-                  - set: [opener.ident, "s${slide.next_id}"]
-                  - set: [opener.kind, StepKind.block_open]
-                  - set: [opener.word, "loop"]
-                  - call: [slide.steps.push, opener]
-                  - set: [slide.next_id, { +: [slide.next_id, 1] }]
-                  - decl: [closer, Step]
-                  - set: [closer.ident, "s${slide.next_id}"]
-                  - set: [closer.kind, StepKind.block_close]
-                  - call: [slide.steps.push, closer]
-                  - set: [slide.next_id, { +: [slide.next_id, 1] }]
-                  - call: [<.touch]
-                  - set: [<.sel_step, opener.ident]
-                  - call: [<.edit_step]
-                  - return: null
-            - decl: [host, string, <.sel]
-            - if:
-                condition: { eq: [host, ""] }
-                then:
-                  - if: { condition: { eq: [slide.nodes.len, 0] }, then: [{ set: [<.status, "erst einen Teilnehmer anlegen"] }, { return: null }] }
-                  - decl: [first, ref<Node>, { at: [slide.nodes, 0] }]
-                  - set: [host, first.ident]
-            - decl: [note, Step]
-            - set: [note.ident, "s${slide.next_id}"]
-            - set: [note.kind, StepKind.note]
-            - set: [note.from_id, host]
-            - call: [slide.steps.push, note]
-            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+                then: [{ set: [fresh, { call: [<.deeds.add_block, slide] }] }]
+                else:
+                  - decl: [host, string, <.sel]
+                  - if:
+                      condition: { eq: [host, ""] }
+                      then:
+                        - if: { condition: { eq: [slide.nodes.len, 0] }, then: [{ set: [<.status, "erst einen Teilnehmer anlegen"] }, { return: null }] }
+                        - decl: [first, ref<Node>, { at: [slide.nodes, 0] }]
+                        - set: [host, first.ident]
+                  - set: [fresh, { call: [<.deeds.add_note, slide, host] }]
             - call: [<.touch]
-            - set: [<.sel_step, note.ident]
+            - set: [<.sel_step, fresh]
             - call: [<.edit_step]
 
       - def:
@@ -347,20 +363,12 @@
           static_off: ["same_arg", "str_cmp"]
           body:
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, slide.steps.len] }
-                body:
-                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
-                  - if:
-                      condition: { eq: [step.ident, <.sel_step] }
-                      then:
-                        - call: [slide.steps.remove, idx]
-                        - set: [<.sel_step, ""]
-                        - call: [<.touch]
-                        - set: [<.status, "Schritt entfernt"]
-                        - return: null
-                  - set: [idx, { +: [idx, 1] }]
+            - if:
+                condition: { eq: [{ call: [<.deeds.drop_step, slide, <.sel_step] }, 1] }
+                then:
+                  - set: [<.sel_step, ""]
+                  - call: [<.touch]
+                  - set: [<.status, "Schritt entfernt"]
 
       # A step's text is edited with the same editor as a label (§6).  The id is
       # prefixed so commit_label can tell a step from a node without guessing.
@@ -370,20 +378,10 @@
           body:
             - if: { condition: { eq: [<.sel_step, ""] }, then: [{ return: null }] }
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, slide.steps.len] }
-                body:
-                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
-                  - if:
-                      condition: { eq: [step.ident, <.sel_step] }
-                      then:
-                        - set: [<.editing, 1]
-                        - set: [<.edit_id, "#step:${step.ident}"]
-                        - call: [<.label.begin, step.ident, step.text]
-                        - set: [<.status, "tippen, Enter uebernimmt"]
-                        - return: null
-                  - set: [idx, { +: [idx, 1] }]
+            - set: [<.editing, 1]
+            - set: [<.edit_id, "#step:${<.sel_step}"]
+            - call: [<.label.begin, <.sel_step, { call: [<.deeds.text_of_step, slide, <.sel_step] }]
+            - set: [<.status, "tippen, Enter uebernimmt"]
 
       # ── dispatch ────────────────────────────────────────────────────────────
       - def:
@@ -459,6 +457,12 @@
                 then:
                   - if: { condition: { neq: [<.sel_step, ""] }, then: [{ call: [<.edit_step] }, { return: null }] }
                   - if: { condition: { neq: [<.sel, ""] }, then: [{ call: [<.begin_edit, <.sel] }] }
+                  - return: null
+            # 210..214: how the label looks (spec §5.6a)
+            - if:
+                condition: { "&&": [{ ge: [action, 210] }, { le: [action, 214] }] }
+                then:
+                  - call: [<.set_deco, action]
                   - return: null
             # 201/202: the parts of a sequence that are not nodes (spec §5.8.3)
             - if:
@@ -1246,7 +1250,7 @@
                         - if:
                             condition: { eq: [edge.ident, ident] }
                             then:
-                              - set: [edge.stroke, tone]
+                              - if: { condition: { eq: [deed, 4] }, then: [{ set: [edge.ink, tone] }], else: [{ set: [edge.stroke, tone] }] }
                               - call: [<.touch]
                               - set: [<.status, "Kantenfarbe gesetzt"]
                               - return: null
@@ -1262,6 +1266,7 @@
                       then:
                         - if: { condition: { eq: [deed, 1] }, then: [{ set: [node.fill, tone] }] }
                         - if: { condition: { eq: [deed, 2] }, then: [{ set: [node.stroke, tone] }] }
+                        - if: { condition: { eq: [deed, 4] }, then: [{ set: [node.ink, tone] }] }
                         - call: [<.touch]
                         - set: [<.status, "Farbe gesetzt"]
                         - return: null
@@ -1347,15 +1352,7 @@
                 condition: { call: [<.edit_id.starts_with, "#step:"] }
                 then:
                   - decl: [want, string, { call: [<.edit_id.substr, 6, { -: [<.edit_id.len, 6] }] }]
-                  - decl: [sdx, i32, 0]
-                  - while:
-                      condition: { lt: [sdx, slide.steps.len] }
-                      body:
-                        - decl: [step, ref<Step>, { at: [slide.steps, sdx] }]
-                        - if:
-                            condition: { eq: [step.ident, want] }
-                            then: [{ set: [step.text, <.label.text] }]
-                        - set: [sdx, { +: [sdx, 1] }]
+                  - call: [<.deeds.say_step, slide, want, <.label.text]
                   - set: [<.edit_id, ""]
                   - call: [<.label.stop]
                   - set: [<.status, "uebernommen"]
@@ -1619,6 +1616,8 @@
       - class: EdgeArt
         instance: edge_art
         sees: [pen, grip]
+      - class: Deeds
+        instance: deeds
       - class: MermaidOut
         instance: mermaid
         sees: [seq]
@@ -1655,8 +1654,6 @@
         instance: label
       - class: Clip
         instance: clip
-      - class: Script
-        instance: script
       - class: NodeArt
         instance: art
         sees: [pen, label]
@@ -1664,6 +1661,9 @@
         instance: top_bar
       - class: ToolBar
         instance: tools
+      - class: Script
+        instance: script
+        sees: [top_bar, tools]
       - class: FileBrowser
         instance: browse
       - class: Files
@@ -1677,4 +1677,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art, edge_art]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art, edge_art, deeds]

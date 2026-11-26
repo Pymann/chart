@@ -369,6 +369,27 @@ The alpha byte is dropped (Mermaid has no alpha in `style`); `0x...FF` is the no
 case. A non-opaque alpha is **reported once** on export as a warning, not silently
 flattened.
 
+### 5.6a Text: colour and decoration (normative)
+
+A label is styled **as a whole**, never per character: `Node.deco` is a bitmask
+(1 bold, 2 italic, 4 underlined) and `Node.ink` is the text colour, 0 meaning "read it
+off the fill" as the canvas has always done. An `Edge` carries the same two fields for
+its label. Per-character formatting is not offered, because the document would then
+have to carry a rich-text run inside every label and Mermaid could not hold it.
+
+**Mermaid has no specification** -- it has a grammar, a documentation site and a
+renderer -- so what follows was read out of the renderer's source (`flowDb.ts`), not
+out of a promise:
+
+| in chart | in Mermaid |
+|---|---|
+| text colour | `classDef`/`style` with `color:#rrggbb`. In `addClass`, a style entry matching `/color/` is pushed to `textStyles` as well, and that is the path that reaches the label. |
+| bold, italic | the **markdown string**: `n1["`<code>\`**fett** _kursiv_\`</code>`"]`, which the grammar accepts for node labels, edge labels and subgraph titles (`sanitizeNodeLabelType`). |
+| underline | **nothing.** Markdown has no marker for it, and `text-decoration` does not match `/color/`, so it never reaches the label. It is a loss (§5.7). |
+
+What chart must **not** do is write `classDef x font-weight:bold`: it would be bold here
+and silently nothing there. A projection may lose something; it may not pretend.
+
 ### 5.7 What is lost (normative list)
 
 - **The hollow cap.** Mermaid's flowchart has no hollow (UML generalisation) end. It is
@@ -380,6 +401,8 @@ flattened.
   put a paragraph into the graph as a node that nobody drew. Markdown, SVG, PPTX and
   HTML all carry it.
 
+- **Underlining** (§5.6a): Mermaid cannot express it. The sheet keeps it and the
+  canvas, SVG, HTML and PPTX all draw it; the `.mmd` does not say it.
 - **A sequence in PPTX** (§17.2): the PowerPoint export writes the participants, not
   the messages, notes or blocks -- it draws from the node layer, and a sequence's
   document is `steps`. Said here rather than left to be discovered: SVG and HTML carry
@@ -959,9 +982,17 @@ can post input events (aiml spec/44_0 `input.post_*`), so a test clicks and type
 same process and through the same code path a hand takes -- no X11 robot, no reading
 pixels back.
 
-- A step is one line: `at X Y` (slide units), `at_win X Y` (window pixels, for the
-  action bar), `down`/`up [button]`, `key NAME`, `hold NAME` (a repeat), `type TEXT`,
-  `wait N` (frames), `shot FILE`, `save`. `#` is a comment.
+- A step is one line: `at X Y` (slide units), `at_win X Y` (window pixels),
+  `down`/`up [button]`, `key NAME`, `hold NAME` (a repeat), `type TEXT`,
+  `wait N` (frames), `menu TITEL|Eintrag`, `tool NAME`, `shot FILE`, `save`.
+  `#` is a comment.
+- **`menu` and `tool` name what they want**, and the strip says where that is at this
+  window size. They expand into the six steps a pick really is -- move, press,
+  release, twice -- so the click still goes through the editor's own input path.
+  A name that is not in the strip is an **error**, which is the point: a test that
+  hard-codes `at_win 435 14` keeps passing after the entry moves, and then it is
+  measuring the layout instead of the editor. Inserting one menu entry broke three
+  scripts before this existed.
 - **Coordinates are slide units.** A test that hard-codes window pixels breaks when the
   window size changes and then tests the window manager instead of the editor.
 - **One step per frame**, because that is how a hand's input arrives: a press and the

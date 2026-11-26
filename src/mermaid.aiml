@@ -59,9 +59,54 @@
                 condition: { eq: [node.fill, 0] }
                 then:
                   - if:
-                      condition: { eq: [node.stroke, 0] }
+                      condition: { "&&": [{ eq: [node.stroke, 0] }, { eq: [node.ink, 0] }] }
                       then: [{ return: "" }]
-            - return: "${node.fill}:${node.stroke}"
+            - return: "${node.fill}:${node.stroke}:${node.ink}"
+
+      # Bold and italic go in as a MARKDOWN STRING -- backticks inside the quotes,
+      # `**` and `_` around the text.  That is the documented way (flowDb's
+      # `sanitizeNodeLabelType`); `classDef font-weight:bold` is NOT, because only
+      # entries matching /color/ reach the label.  Underlining has no form at all
+      # and is a declared loss (spec §5.6a, §5.7).
+      # Only what is actually set.  A node that carries just a text colour used to
+      # get `fill:#000000,stroke:#000000` as well -- 0 means "inherit the theme"
+      # (§5.6), and writing it out as black turned the box black.
+      - def:
+          name: paint_props
+          static_off: ["same_arg", "str_cmp"]
+          args: [[fill, i32], [stroke, i32], [ink, i32]]
+          return: string
+          body:
+            - decl: [out, string, ""]
+            - if:
+                condition: { neq: [fill, 0] }
+                then: [{ set: [out, "fill:${ { call: [<.hex6, fill] } }"] }]
+            - if:
+                condition: { neq: [stroke, 0] }
+                then:
+                  - if: { condition: { neq: [out, ""] }, then: [{ set: [out, "${out},"] }] }
+                  - set: [out, "${out}stroke:${ { call: [<.hex6, stroke] } }"]
+            - if:
+                condition: { neq: [ink, 0] }
+                then:
+                  - if: { condition: { neq: [out, ""] }, then: [{ set: [out, "${out},"] }] }
+                  - set: [out, "${out}color:${ { call: [<.hex6, ink] } }"]
+            - return: out
+
+      - def:
+          name: marked
+          static_off: ["same_arg", "str_cmp"]
+          args: [[label, string], [deco, i32]]
+          return: string
+          body:
+            - decl: [bold, i32, { band: [deco, 1] }]
+            - decl: [ital, i32, { band: [deco, 2] }]
+            - if: { condition: { "&&": [{ eq: [bold, 0] }, { eq: [ital, 0] }] }, then: [{ return: label }] }
+            - decl: [body, string, label]
+            - if: { condition: { neq: [ital, 0] }, then: [{ set: [body, "_${body}_"] }] }
+            - if: { condition: { neq: [bold, 0] }, then: [{ set: [body, "**${body}**"] }] }
+            - decl: [tick, string, "`"]
+            - return: "${tick}${body}${tick}"
 
       - def:
           name: node_decl
@@ -69,7 +114,7 @@
           args: [[node, Node]]
           return: string
           body:
-            - decl: [label, string, { call: [<.esc, node.text] }]
+            - decl: [label, string, { call: [<.marked, { call: [<.esc, node.text] }, node.deco] }]
             - if: { condition: { eq: [node.kind, NodeKind.round] },      then: [{ return: "${node.ident}(\"${label}\")" }] }
             - if: { condition: { eq: [node.kind, NodeKind.stadium] },    then: [{ return: "${node.ident}([\"${label}\"])" }] }
             - if: { condition: { eq: [node.kind, NodeKind.circle] },     then: [{ return: "${node.ident}((\"${label}\"))" }] }
@@ -130,7 +175,7 @@
             - if:
                 condition: { neq: [edge.text, ""] }
                 then:
-                  - decl: [label, string, { call: [<.esc, edge.text] }]
+                  - decl: [label, string, { call: [<.marked, { call: [<.esc, edge.text] }, edge.deco] }]
                   - return: "    ${edge.from_id} ${link}|\"${label}\"| ${edge.to_id}\n"
             - return: "    ${edge.from_id} ${link} ${edge.to_id}\n"
 
@@ -474,6 +519,7 @@
             - decl: [keys, list<string>]
             - decl: [fills, list<i32>]
             - decl: [strokes, list<i32>]
+            - decl: [inks, list<i32>]
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, sheet.nodes.len] }
@@ -495,6 +541,7 @@
                               - call: [keys.push, key]
                               - call: [fills.push, node.fill]
                               - call: [strokes.push, node.stroke]
+                              - call: [inks.push, node.ink]
                   - set: [idx, { +: [idx, 1] }]
             - decl: [class_of, map<string:string>]
             - decl: [class_no, i32, 1]
@@ -508,9 +555,10 @@
                       then:
                         - decl: [cls, string, "c${class_no}"]
                         - call: [class_of.put, key, cls]
-                        - decl: [fill_hex, string, { call: [<.hex6, { at: [fills, idx] }] }]
-                        - decl: [stroke_hex, string, { call: [<.hex6, { at: [strokes, idx] }] }]
-                        - set: [out, "${out}    classDef ${cls} fill:${fill_hex},stroke:${stroke_hex}\n"]
+                        # `color:` is the one text property Mermaid carries to the
+                        # label (flowDb's /color/ split), so the ink goes here
+                        - decl: [props, string, { call: [<.paint_props, { at: [fills, idx] }, { at: [strokes, idx] }, { at: [inks, idx] }] }]
+                        - set: [out, "${out}    classDef ${cls} ${props}\n"]
                         - set: [class_no, { +: [class_no, 1] }]
                   - set: [idx, { +: [idx, 1] }]
 
@@ -556,9 +604,8 @@
                         - if:
                             condition: { eq: [{ call: [class_of.contains, key] }, 0] }
                             then:
-                              - decl: [fill_hex, string, { call: [<.hex6, node.fill] }]
-                              - decl: [stroke_hex, string, { call: [<.hex6, node.stroke] }]
-                              - set: [out, "${out}    style ${node.ident} fill:${fill_hex},stroke:${stroke_hex}\n"]
+                              - decl: [props, string, { call: [<.paint_props, node.fill, node.stroke, node.ink] }]
+                              - set: [out, "${out}    style ${node.ident} ${props}\n"]
                   - set: [idx, { +: [idx, 1] }]
 
             # An edge's own colour, as `linkStyle N` -- numbered in declaration order,
@@ -573,5 +620,10 @@
                       then:
                         - decl: [edge_hex, string, { call: [<.hex6, edge_c.stroke] }]
                         - set: [out, "${out}    linkStyle ${idx} stroke:${edge_hex}\n"]
+                  - if:
+                      condition: { neq: [edge_c.ink, 0] }
+                      then:
+                        - decl: [lab_hex, string, { call: [<.hex6, edge_c.ink] }]
+                        - set: [out, "${out}    linkStyle ${idx} color:${lab_hex}\n"]
                   - set: [idx, { +: [idx, 1] }]
             - return: out

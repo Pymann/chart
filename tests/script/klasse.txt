@@ -5,13 +5,7 @@ at 430 250
 down 0
 up 0
 wait 2
-at_win 120 14
-down 0
-up 0
-wait 2
-at_win 200 46
-down 0
-up 0
+menu Bearbeiten|Beschriften
 wait 2
 type f64
 wait 2

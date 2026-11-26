@@ -17,6 +17,7 @@
       - [height, f32, 0.0]
       - [tint, i32, 0]
       - [thick, f32, 2.0]
+      - [deco, i32, 0]                # 1 fett | 2 kursiv | 4 unterstrichen (§5.6a)
 
 - model:
     name: Segment
@@ -31,8 +32,97 @@
 
 - class:
     name: Pen
-    description: "Shapes, lines and text at a position; no state of its own"
+    description: "Shapes, lines and text at a position; the text faces are its only state"
+    members:
+      # Bold and italic need a FACE, not a flag: stb_truetype has no synthetic bold
+      # and no skew.  Loaded once from the system, because chart ships no fonts; if
+      # they are not there, `faces` stays 2 and the canvas says so (§5.6a).
+      - [face_bold, ui_label_style]
+      - [face_ital, ui_label_style]
+      - [face_both, ui_label_style]
+      - [faces, i32]                  # 0 not tried, 1 loaded, 2 unavailable
     methods:
+      - def:
+          name: load_faces
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { neq: [<.faces, 0] }, then: [{ return: null }] }
+            - decl: [root, string, "/usr/share/fonts/truetype/dejavu"]
+            - decl: [bold, ui_font, { call: [ui.load_font, "${root}/DejaVuSansMono-Bold.ttf", 15.0] }]
+            - decl: [ital, ui_font, { call: [ui.load_font, "${root}/DejaVuSansMono-Oblique.ttf", 15.0] }]
+            - decl: [both, ui_font, { call: [ui.load_font, "${root}/DejaVuSansMono-BoldOblique.ttf", 15.0] }]
+            - if:
+                condition: { "||": [{ peq: [bold, null] }, { "||": [{ peq: [ital, null] }, { peq: [both, null] }] }] }
+                then:
+                  - set: [<.faces, 2]
+                  - call: [log.info, "chart: keine fetten/kursiven Schnitte gefunden -- Text wird gerade gezeichnet (spec 5.6a)"]
+                  - return: null
+            - set: [<.face_bold, { call: [ui.label_style_new] }]
+            - call: [<.face_bold.set_font, bold]
+            - set: [<.face_ital, { call: [ui.label_style_new] }]
+            - call: [<.face_ital.set_font, ital]
+            - set: [<.face_both, { call: [ui.label_style_new] }]
+            - call: [<.face_both.set_font, both]
+            - set: [<.faces, 1]
+
+      # One line, with whatever decoration the caller asked for.  The underline is
+      # drawn, not styled: a font has no underline, and §5.6a keeps it anyway
+      # because the sheet -- not Mermaid -- is the document.
+      - def:
+          name: say
+          static_off: ["same_arg", "str_cmp"]
+          args: [[at_x, f32], [at_y, f32], [text, string], [tint, i32], [deco, i32]]
+          body:
+            - if: { condition: { eq: [deco, 0] }, then: [{ call: [ui.draw_text, at_x, at_y, text, tint] }, { return: null }] }
+            - call: [<.load_faces]
+            - decl: [bold, i32, { band: [deco, 1] }]
+            - decl: [ital, i32, { band: [deco, 2] }]
+            - decl: [wide, f32, 0.0]
+            - if:
+                condition: { eq: [<.faces, 1] }
+                then:
+                  - decl: [face, ui_label_style, <.face_bold]
+                  - if: { condition: { "&&": [{ eq: [bold, 0] }, { neq: [ital, 0] }] }, then: [{ set: [face, <.face_ital] }] }
+                  - if: { condition: { "&&": [{ neq: [bold, 0] }, { neq: [ital, 0] }] }, then: [{ set: [face, <.face_both] }] }
+                  - if:
+                      condition: { "&&": [{ eq: [bold, 0] }, { eq: [ital, 0] }] }
+                      then:
+                        - call: [ui.draw_text, at_x, at_y, text, tint]
+                        - set: [wide, { call: [ui.measure_text, text] }]
+                      else:
+                        - call: [ui.draw_text, at_x, at_y, text, tint, face]
+                        - set: [wide, { call: [ui.measure_text, text, face] }]
+                else:
+                  # no faces: bold is drawn twice a hair apart, italic cannot be
+                  # faked at all and is simply upright
+                  - call: [ui.draw_text, at_x, at_y, text, tint]
+                  - if: { condition: { neq: [bold, 0] }, then: [{ call: [ui.draw_text, { +: [at_x, 1.0] }, at_y, text, tint] }] }
+                  - set: [wide, { call: [ui.measure_text, text] }]
+            - if:
+                condition: { eq: [{ band: [deco, 4] }, 4] }
+                then:
+                  - decl: [low, f32, { +: [at_y, { -: [{ call: [ui.text_height] }, 2.0] }] }]
+                  - call: [ui.draw_line, at_x, low, { +: [at_x, wide] }, low, 1.0, tint]
+
+      # Width of one line in the face that `say` would use -- so a caller can centre
+      # text it has not drawn yet.
+      - def:
+          name: span_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [deco, i32]]
+          return: f32
+          body:
+            - if: { condition: { eq: [deco, 0] }, then: [{ return: { call: [ui.measure_text, text] } }] }
+            - call: [<.load_faces]
+            - if: { condition: { neq: [<.faces, 1] }, then: [{ return: { call: [ui.measure_text, text] } }] }
+            - decl: [bold, i32, { band: [deco, 1] }]
+            - decl: [ital, i32, { band: [deco, 2] }]
+            - if: { condition: { "&&": [{ eq: [bold, 0] }, { eq: [ital, 0] }] }, then: [{ return: { call: [ui.measure_text, text] } }] }
+            - decl: [face, ui_label_style, <.face_bold]
+            - if: { condition: { "&&": [{ eq: [bold, 0] }, { neq: [ital, 0] }] }, then: [{ set: [face, <.face_ital] }] }
+            - if: { condition: { "&&": [{ neq: [bold, 0] }, { neq: [ital, 0] }] }, then: [{ set: [face, <.face_both] }] }
+            - return: { call: [ui.measure_text, text, face] }
+
       # Readable ink for a fill: luminance decides, not taste.  A node coloured dark
       # dst_cy its author would otherwise keep the dark default and lose its label.
       - def:
@@ -192,9 +282,9 @@
                 condition: { lt: [idx, lines.len] }
                 body:
                   - decl: [line, string, { at: [lines, idx] }]
-                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                  - decl: [line_w, f32, { call: [<.span_of, line, box.deco] }]
                   - decl: [left, f32, { +: [box.pos_x, { /: [{ -: [box.width, line_w] }, 2.0] }] }]
-                  - call: [ui.draw_text, left, line_y, line, box.tint]
+                  - call: [<.say, left, line_y, line, box.tint, box.deco]
                   - set: [line_y, { +: [line_y, line_h] }]
                   - set: [idx, { +: [idx, 1] }]
 
@@ -397,7 +487,7 @@
                 condition: { lt: [idx, lines.len] }
                 body:
                   - decl: [line, string, { at: [lines, idx] }]
-                  - call: [ui.draw_text, box.pos_x, line_y, line, box.tint]
+                  - call: [<.say, box.pos_x, line_y, line, box.tint, box.deco]
                   - set: [line_y, { +: [line_y, line_h] }]
                   - set: [idx, { +: [idx, 1] }]
 

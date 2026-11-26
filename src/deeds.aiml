@@ -1,0 +1,140 @@
+# Sheet edits that need no window (doc/spec/chart.md §5.6a, §5.8.3).
+#
+# Out of the editor for two reasons: a file may hold at most 1499 lines (aiml
+# spec/49 §3), and these are pure functions on a sheet -- they take the ids they act
+# on and give back what the editor needs to say or to select next.  Nothing here
+# reads the pointer, the selection or the status line.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: Deeds
+    description: "Decoration and sequence steps, as edits on a sheet"
+    methods:
+      # Toggle, so the same menu entry turns it off again; bit 0 clears everything.
+      - def:
+          name: flip_bit
+          args: [[deco, i32], [bit, i32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [bit, 0] }, then: [{ return: 0 }] }
+            - if:
+                condition: { eq: [{ band: [deco, bit] }, bit] }
+                then: [{ return: { -: [deco, bit] } }]
+            - return: { bor: [deco, bit] }
+
+      # 1 when something changed.  `kind` is 1 for a node, 2 for an edge (§8.2).
+      - def:
+          name: set_deco
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [kind, i32], [bit, i32]]
+          return: i32
+          body:
+            - if:
+                condition: { eq: [kind, 2] }
+                then:
+                  - decl: [eidx, i32, 0]
+                  - while:
+                      condition: { lt: [eidx, slide.edges.len] }
+                      body:
+                        - decl: [edge, ref<Edge>, { at: [slide.edges, eidx] }]
+                        - if:
+                            condition: { eq: [edge.ident, ident] }
+                            then:
+                              - set: [edge.deco, { call: [<.flip_bit, edge.deco, bit] }]
+                              - return: 1
+                        - set: [eidx, { +: [eidx, 1] }]
+                  - return: 0
+            - decl: [nidx, i32, 0]
+            - while:
+                condition: { lt: [nidx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, nidx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - set: [node.deco, { call: [<.flip_bit, node.deco, bit] }]
+                        - return: 1
+                  - set: [nidx, { +: [nidx, 1] }]
+            - return: 0
+
+      # A note hangs on a participant; a block is opened AND closed at once, so the
+      # file never holds half a block (spec §5.8.3).  Returns the id to edit next.
+      - def:
+          name: add_note
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [host, string]]
+          return: string
+          body:
+            - decl: [note, Step]
+            - set: [note.ident, "s${slide.next_id}"]
+            - set: [note.kind, StepKind.note]
+            - set: [note.from_id, host]
+            - call: [slide.steps.push, note]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - return: note.ident
+
+      - def:
+          name: add_block
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>]]
+          return: string
+          body:
+            - decl: [opener, Step]
+            - set: [opener.ident, "s${slide.next_id}"]
+            - set: [opener.kind, StepKind.block_open]
+            - set: [opener.word, "loop"]
+            - call: [slide.steps.push, opener]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - decl: [closer, Step]
+            - set: [closer.ident, "s${slide.next_id}"]
+            - set: [closer.kind, StepKind.block_close]
+            - call: [slide.steps.push, closer]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - return: opener.ident
+
+      - def:
+          name: drop_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
+                  - if:
+                      condition: { eq: [step.ident, ident] }
+                      then:
+                        - call: [slide.steps.remove, idx]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0
+
+      - def:
+          name: text_of_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string]]
+          return: string
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
+                  - if: { condition: { eq: [step.ident, ident] }, then: [{ return: step.text }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: ""
+
+      - def:
+          name: say_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [text, string]]
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.steps.len] }
+                body:
+                  - decl: [step, ref<Step>, { at: [slide.steps, idx] }]
+                  - if: { condition: { eq: [step.ident, ident] }, then: [{ set: [step.text, text] }, { return: null }] }
+                  - set: [idx, { +: [idx, 1] }]

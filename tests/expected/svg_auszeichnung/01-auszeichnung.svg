@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" font-family="DejaVu Sans, Helvetica, Arial, sans-serif" font-size="15">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <text x="52" y="38" font-size="22" fill="#101a24">Auszeichnung</text>
+  <rect x="120" y="120" width="240" height="90" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="240" y="170" fill="#1a2430" text-anchor="middle" font-weight="bold">fett</text>
+  <rect x="520" y="120" width="240" height="90" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="640" y="170" fill="#1a2430" text-anchor="middle" font-style="italic">kursiv</text>
+  <rect x="120" y="360" width="240" height="90" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="240" y="410" fill="#c1c2df" text-anchor="middle" text-decoration="underline">unterstrichen</text>
+  <line x1="360" y1="165" x2="520" y2="165" stroke="#55687a" stroke-width="2"/>
+  <polygon points="520,165 505.3,158.6 505.3,171.4" fill="#55687a"/>
+  <text x="440" y="165" text-anchor="middle" font-size="13" font-weight="bold" font-style="italic" fill="none" stroke="#ffffff" stroke-width="3">fett+kursiv</text>
+  <text x="440" y="165" text-anchor="middle" font-size="13" font-weight="bold" font-style="italic" fill="#33404d">fett+kursiv</text>
+</svg>

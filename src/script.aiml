@@ -9,11 +9,19 @@
 # Coordinates are SLIDE units, not window pixels: a test that hard-codes pixels breaks
 # when the window size changes, and then it is testing the window manager.
 - import: "src/sheet_model.aiml"
+- import: "src/topbar.aiml"
+- import: "src/toolbar.aiml"
 
 - class:
     name: Script
     description: "A list of input steps, one per frame (spec §9.1)"
     members:
+      # The strips, so a test can name a menu entry instead of a pixel.  Twice now a
+      # new entry moved every coordinate in every script and three tests broke
+      # without anything being wrong -- a test that measures the layout is testing
+      # the wrong thing (spec §9.1).
+      - [top_bar, ref<TopBar>]
+      - [tools, ref<ToolBar>]
       - [steps, list<string>]
       - [step_at, i32]            # the next step
       - [waiting, i32]            # frames still to idle
@@ -96,6 +104,104 @@
             - decl: [one, string, { at: [parts, which] }]
             - return: { call: [one.parse_f32] }
 
+      # Insert the six steps a menu pick really is -- move, press, release, twice --
+      # so every one of them still goes through the editor's own input path.
+      - def:
+          name: queue_click
+          args: [[at_x, f32], [at_y, f32], [where, i32]]
+          return: i32
+          body:
+            - call: [<.steps.insert, where, "at_win ${ { cast: [at_x, i32] } } ${ { cast: [at_y, i32] } }"]
+            - call: [<.steps.insert, { +: [where, 1] }, "down 0"]
+            - call: [<.steps.insert, { +: [where, 2] }, "up 0"]
+            - return: { +: [where, 3] }
+
+      - def:
+          name: open_menu
+          static_off: ["same_arg", "str_cmp"]
+          args: [[rest, string]]
+          return: i32
+          body:
+            - decl: [split, i32, { call: [rest.index_of, "|"] }]
+            - if:
+                condition: { lt: [split, 0] }
+                then:
+                  - call: [log.error, "chart: 'menu' will MENUE|Eintrag, bekam '${rest}'"]
+                  - set: [<.running, 0]
+                  - return: 4
+            - decl: [after, i32, { +: [split, 1] }]
+            # two locals: a flow mapping cannot carry a chained `.trim` (YAML)
+            - decl: [menu_raw, string, { call: [rest.substr, 0, split] }]
+            - decl: [entry_raw, string, { call: [rest.substr, after, { -: [rest.len, after] }] }]
+            - decl: [want_menu, string, { call: [menu_raw.trim] }]
+            - decl: [want_entry, string, { call: [entry_raw.trim] }]
+            - decl: [names, list<string>, { call: [<.top_bar.titles] }]
+            - decl: [which, i32, -1]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, names.len] }
+                body:
+                  - if: { condition: { eq: [{ at: [names, idx] }, want_menu] }, then: [{ set: [which, idx] }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - if:
+                condition: { lt: [which, 0] }
+                then:
+                  - call: [log.error, "chart: kein Menue '${want_menu}' in der Leiste"]
+                  - set: [<.running, 0]
+                  - return: 4
+            - decl: [items, list<string>, { call: [<.top_bar.entries_of, which] }]
+            - decl: [row, i32, -1]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, items.len] }
+                body:
+                  # trimmed on both sides: the slide list marks the current slide
+                  # with "> ", so its labels carry leading blanks
+                  - decl: [shown, string, { call: [<.top_bar.label_of, { at: [items, idx] }] }]
+                  - decl: [tidy, string, { call: [shown.trim] }]
+                  - if: { condition: { eq: [tidy, want_entry] }, then: [{ set: [row, idx] }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - if:
+                condition: { lt: [row, 0] }
+                then:
+                  - call: [log.error, "chart: kein Eintrag '${want_entry}' im Menue '${want_menu}'"]
+                  - set: [<.running, 0]
+                  - return: 4
+            - decl: [left, f32, { call: [<.top_bar.title_x, which] }]
+            - decl: [tall, f32, { call: [<.top_bar.height] }]
+            - decl: [where, i32, { call: [<.queue_click, { +: [left, 6.0] }, { /: [tall, 2.0] }, <.step_at] }]
+            - decl: [row_y, f32, { +: [{ +: [tall, 4.0] }, { +: [{ "*": [{ cast: [row, f32] }, 24.0] }, 12.0] }] }]
+            - call: [<.queue_click, { +: [left, 20.0] }, row_y, where]
+            - return: 1
+
+      - def:
+          name: pick_tool
+          static_off: ["same_arg", "str_cmp"]
+          args: [[rest, string]]
+          return: i32
+          body:
+            - decl: [want, string, { call: [rest.trim] }]
+            - decl: [names, list<string>, { call: [<.tools.shapes] }]
+            - decl: [which, i32, -1]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, names.len] }
+                body:
+                  - if:
+                      condition: { eq: [{ call: [<.tools.label_of, { at: [names, idx] }] }, want] }
+                      then: [{ set: [which, idx] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - if:
+                condition: { lt: [which, 0] }
+                then:
+                  - call: [log.error, "chart: kein Werkzeug '${want}' in der Leiste"]
+                  - set: [<.running, 0]
+                  - return: 4
+            - decl: [left, f32, { call: [<.tools.shape_x, which] }]
+            - decl: [top, f32, { +: [{ call: [<.top_bar.height] }, { /: [{ call: [<.tools.height] }, 2.0] }] }]
+            - call: [<.queue_click, { +: [left, 10.0] }, top, <.step_at]
+            - return: 1
+
       # One step, or none when the script is waiting.  Returns:
       #   0 nothing to do   1 handled   2 save   3 shot (<.arg)   4 finished
       - def:
@@ -163,6 +269,14 @@
                 then:
                   - set: [<.waiting, { cast: [{ call: [<.number_at, rest, 0] }, i32] }]
                   - return: 1
+            # `menu Datei|Speichern` and `tool Raute`: the step names what it wants
+            # and the strip says where that is, this frame, at this window size.
+            - if:
+                condition: { eq: [word, "menu"] }
+                then: [{ return: { call: [<.open_menu, rest] } }]
+            - if:
+                condition: { eq: [word, "tool"] }
+                then: [{ return: { call: [<.pick_tool, rest] } }]
             - if: { condition: { eq: [word, "save"] }, then: [{ return: 2 }] }
             - if:
                 condition: { eq: [word, "shot"] }

@@ -12,17 +12,31 @@
     name: NodeArt
     description: "Draws a node: shape, colour, label (spec §15.2)"
     members:
+      - [deco_now, i32]               # decoration of the node being drawn (§5.6a)
       - [pen, ref<Pen>]
       - [label, ref<LabelEdit>]
       - [textures, map<string:gl_texture>]
       - [live_id, string]          # the node being edited, "" = none
     methods:
       # Plain text, or the live one with its caret and selection (§6).
+      # The label's colour: its own when it has one, otherwise read off the fill.
+      - def:
+          name: ink_of
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [fill, i32]]
+          return: i32
+          body:
+            - if: { condition: { neq: [node.ink, 0] }, then: [{ return: node.ink }] }
+            - return: { call: [<.pen.ink_for, fill] }
+
       - def:
           name: draw_label
           static_off: ["same_arg", "str_cmp"]
           args: [[box, ref<Shape>], [text, string], [live, i32]]
           body:
+            # every branch of draw_node builds its own box; the decoration is set
+            # once, here, so none of them can forget it (spec §5.6a)
+            - set: [box.deco, <.deco_now]
             - if:
                 condition: { eq: [live, 1] }
                 then: [{ call: [<.label.draw_in, box] }]
@@ -80,12 +94,15 @@
             - if: { condition: { eq: [fill, 0] }, then: [{ set: [fill, 0xF2F5F9FF] }] }
             - decl: [stroke, i32, node.stroke]
             - if: { condition: { eq: [stroke, 0] }, then: [{ set: [stroke, 0x3A4A5AFF] }] }
+            # the label's decoration travels with the box (spec §5.6a)
+            - set: [box.deco, node.deco]
+            - set: [<.deco_now, node.deco]
 
             # prose: no frame, no fill, left-aligned (§3.2)
             - if:
                 condition: { eq: [node.kind, NodeKind.text] }
                 then:
-                  - set: [box.tint, { call: [<.pen.ink_for, 0xF2F5F9FF] }]
+                  - set: [box.tint, { call: [<.ink_of, node, 0xF2F5F9FF] }]
                   - if: { condition: { neq: [node.fill, 0] }, then: [{ set: [box.tint, node.fill] }] }
                   - if:
                       condition: { eq: [live, 1] }
@@ -130,7 +147,7 @@
                   - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, fill]
                   - set: [box.tint, stroke]
                   - call: [<.pen.frame, box]
-                  - decl: [ink, i32, { call: [<.pen.ink_for, fill] }]
+                  - decl: [ink, i32, { call: [<.ink_of, node, fill] }]
                   - decl: [name_w, f32, { call: [ui.measure_text, label] }]
                   - call: [ui.draw_text, { -: [{ +: [box.pos_x, { /: [box.width, 2.0] }] }, { /: [name_w, 2.0] }] }, { +: [box.pos_y, 7.0] }, label, ink]
                   - decl: [rule_y, f32, { +: [box.pos_y, { "*": [30.0, scale] }] }]
@@ -187,7 +204,7 @@
                 then:
                   - set: [box.tint, stroke]
                   - call: [<.pen.slanted, box, slant_top, slant_low]
-                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - set: [box.tint, { call: [<.ink_of, node, fill] }]
                   - call: [<.draw_label, box, label, live]
                   - return: null
             - if:
@@ -195,7 +212,7 @@
                 then:
                   - set: [box.tint, stroke]
                   - call: [<.pen.asymmetric, box]
-                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - set: [box.tint, { call: [<.ink_of, node, fill] }]
                   - call: [<.draw_label, box, label, live]
                   - return: null
             - if:
@@ -208,7 +225,7 @@
                   - set: [name_box.pos_y, { +: [box.pos_y, box.height] }]
                   - set: [name_box.width, box.width]
                   - set: [name_box.height, { "*": [22.0, scale] }]
-                  - set: [name_box.tint, { call: [<.pen.ink_for, 0xF2F5F9FF] }]
+                  - set: [name_box.tint, { call: [<.ink_of, node, 0xF2F5F9FF] }]
                   - call: [<.draw_label, name_box, label, live]
                   - return: null
             - if:
@@ -225,7 +242,7 @@
                   - set: [inner.tint, stroke]
                   - set: [inner.thick, box.thick]
                   - call: [<.pen.ellipse, inner]
-                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - set: [box.tint, { call: [<.ink_of, node, fill] }]
                   - call: [<.draw_label, box, label, live]
                   - return: null
 
@@ -234,7 +251,7 @@
                 then:
                   - set: [box.tint, stroke]
                   - call: [<.pen.diamond, box]
-                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - set: [box.tint, { call: [<.ink_of, node, fill] }]
                   - call: [<.draw_label, box, label, live]
                   - return: null
             - if:
@@ -242,7 +259,7 @@
                 then:
                   - set: [box.tint, stroke]
                   - call: [<.pen.hexagon, box]
-                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - set: [box.tint, { call: [<.ink_of, node, fill] }]
                   - call: [<.draw_label, box, label, live]
                   - return: null
             - decl: [rounded, i32, 0]
@@ -254,7 +271,7 @@
                 then:
                   - set: [box.tint, stroke]
                   - call: [<.pen.ellipse, box]
-                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - set: [box.tint, { call: [<.ink_of, node, fill] }]
                   - call: [<.draw_label, box, label, live]
                   - return: null
 
@@ -268,5 +285,5 @@
                   - decl: [inset, f32, { "*": [9.0, scale] }]
                   - call: [ui.draw_line, { +: [box.pos_x, inset] }, box.pos_y, { +: [box.pos_x, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
                   - call: [ui.draw_line, { -: [{ +: [box.pos_x, box.width] }, inset] }, box.pos_y, { -: [{ +: [box.pos_x, box.width] }, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
-            - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+            - set: [box.tint, { call: [<.ink_of, node, fill] }]
             - call: [<.draw_label, box, label, live]

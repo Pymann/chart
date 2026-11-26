@@ -113,7 +113,7 @@
                                   condition: { neq: [edge.text, ""] }
                                   then:
                                     - decl: [lab, Shape]
-                                    - decl: [lab_w, f32, { call: [ui.measure_text, edge.text] }]
+                                    - decl: [lab_w, f32, { call: [<.pen.span_of, edge.text, edge.deco] }]
                                     - decl: [lab_h, f32, { call: [ui.text_height] }]
                                     - decl: [pad, f32, 7.0]
                                     - set: [lab.pos_x, { -: [{ /: [{ +: [tail_x, tip_x] }, 2.0] }, { +: [{ /: [lab_w, 2.0] }, pad] }] }]
@@ -121,6 +121,8 @@
                                     - set: [lab.width, { +: [lab_w, { "*": [pad, 2.0] }] }]
                                     - set: [lab.height, lab_h]
                                     - set: [lab.tint, 0x33455AFF]
+                                    - if: { condition: { neq: [edge.ink, 0] }, then: [{ set: [lab.tint, edge.ink] }] }
+                                    - set: [lab.deco, edge.deco]
                                     - call: [ui.draw_rect, lab.pos_x, lab.pos_y, lab.width, lab.height, 0xFFFFFFF2]
                                     - call: [<.pen.text_block, lab, edge.text]
                   - set: [idx, { +: [idx, 1] }]

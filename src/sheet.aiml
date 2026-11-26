@@ -312,6 +312,8 @@
                         - set: [node.fill, { call: [<.kv_i32, item, "fill"] }]
                         - set: [node.stroke, { call: [<.kv_i32, item, "stroke"] }]
                         - set: [node.group, { call: [<.kv_text, item, "group", ""] }]
+                        - set: [node.deco, { call: [<.kv_i32, item, "deco"] }]
+                        - set: [node.ink, { call: [<.kv_i32, item, "ink"] }]
                         # class compartments (spec §5.8.2): a sequence of scalars
                         - decl: [rows_idx, i32, { call: [<.kv_index, item, "rows"] }]
                         - if:
@@ -393,6 +395,8 @@
                               - call: [log.error, "chart: ${path}: edge '${edge.ident}': unbekanntes rel '${rel_word}'"]
                               - return: 0
                         - set: [edge.rel, rel_val]
+                        - set: [edge.deco, { call: [<.kv_i32, item, "deco"] }]
+                        - set: [edge.ink, { call: [<.kv_i32, item, "ink"] }]
                         - set: [edge.from_text, { call: [<.kv_text, item, "from_text", ""] }]
                         - set: [edge.to_text, { call: [<.kv_text, item, "to_text", ""] }]
                         - call: [sheet.edges.push, edge]
@@ -521,6 +525,8 @@
                               - if: { condition: { neq: [node.fill, 0] }, then: [{ set: [out, "${out}, fill: ${node.fill}"] }] }
                               - if: { condition: { neq: [node.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${node.stroke}"] }] }
                               - if: { condition: { neq: [node.group, ""] }, then: [{ set: [out, "${out}, group: ${node.group}"] }] }
+                              - if: { condition: { neq: [node.deco, 0] }, then: [{ set: [out, "${out}, deco: ${node.deco}"] }] }
+                              - if: { condition: { neq: [node.ink, 0] }, then: [{ set: [out, "${out}, ink: ${node.ink}"] }] }
                               - if:
                                   condition: { gt: [node.rows.len, 0] }
                                   then:
@@ -564,6 +570,8 @@
                                   then:
                                     - decl: [rel_word, string, { call: [enums.name, "RelKind", edge.rel] }]
                                     - set: [out, "${out}, rel: ${rel_word}"]
+                              - if: { condition: { neq: [edge.deco, 0] }, then: [{ set: [out, "${out}, deco: ${edge.deco}"] }] }
+                              - if: { condition: { neq: [edge.ink, 0] }, then: [{ set: [out, "${out}, ink: ${edge.ink}"] }] }
                               - if: { condition: { neq: [edge.from_text, ""] }, then: [{ set: [out, "${out}, from_text: \"${ { call: [<.esc_yaml, edge.from_text] } }\""] }] }
                               - if: { condition: { neq: [edge.to_text, ""] }, then: [{ set: [out, "${out}, to_text: \"${ { call: [<.esc_yaml, edge.to_text] } }\""] }] }
                               - set: [out, "${out} }\n"]

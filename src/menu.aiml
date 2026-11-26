@@ -62,12 +62,27 @@
           body:
             - return: 286.0
 
+      # Header, then one 48 px row per colour, then the delete line.  A node has
+      # three rows (fill, frame, text), an edge two (line, text).
+      - def:
+          name: rows_here
+          return: i32
+          body:
+            - if: { condition: { eq: [<.kind, 2] }, then: [{ return: 2 }] }
+            - return: 3
+
+      - def:
+          name: row_top
+          args: [[which, i32]]
+          return: f32
+          body:
+            - return: { +: [{ +: [<.spot_y, 34.0] }, { "*": [{ cast: [which, f32] }, 48.0] }] }
+
       - def:
           name: tall
           return: f32
           body:
-            - if: { condition: { eq: [<.kind, 2] }, then: [{ return: 108.0 }] }
-            - return: 152.0
+            - return: { +: [60.0, { "*": [{ cast: [{ call: [<.rows_here] }, f32] }, 48.0] }] }
 
       - def:
           name: draw
@@ -81,17 +96,22 @@
             - decl: [head, string, "Kante"]
             - if: { condition: { eq: [<.kind, 1] }, then: [{ set: [head, "Knoten"] }] }
             - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [<.spot_y, 18.0] }, "${head}  ${<.ident}", 0xD8E2ECFF]
-            - decl: [row_y, f32, { +: [<.spot_y, 34.0] }]
+            - decl: [which, i32, 0]
             - if:
                 condition: { eq: [<.kind, 1] }
                 then:
-                  - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [row_y, 12.0] }, "Fuellung", 0x8FA3B4FF]
-                  - call: [<.draw_row, { +: [row_y, 18.0] }]
-                  - set: [row_y, { +: [row_y, 48.0] }]
+                  - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [{ call: [<.row_top, 0] }, 12.0] }, "Fuellung", 0x8FA3B4FF]
+                  - call: [<.draw_row, { +: [{ call: [<.row_top, 0] }, 18.0] }]
+                  - set: [which, 1]
             - decl: [line_label, string, "Linie"]
             - if: { condition: { eq: [<.kind, 1] }, then: [{ set: [line_label, "Rahmen"] }] }
-            - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [row_y, 12.0] }, line_label, 0x8FA3B4FF]
-            - call: [<.draw_row, { +: [row_y, 18.0] }]
+            - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [{ call: [<.row_top, which] }, 12.0] }, line_label, 0x8FA3B4FF]
+            - call: [<.draw_row, { +: [{ call: [<.row_top, which] }, 18.0] }]
+            # the label's own colour (spec §5.6a): `color:` is the ONE text property
+            # Mermaid carries, so it is the one that belongs in the palette
+            - set: [which, { +: [which, 1] }]
+            - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [{ call: [<.row_top, which] }, 12.0] }, "Text", 0x8FA3B4FF]
+            - call: [<.draw_row, { +: [{ call: [<.row_top, which] }, 18.0] }]
             - decl: [last_y, f32, { +: [{ +: [<.spot_y, box_h] }, -22.0] }]
             - call: [ui.draw_text, { +: [<.spot_x, 10.0] }, { +: [last_y, 14.0] }, "Entfernen", 0xE8A0A0FF]
 
@@ -140,22 +160,24 @@
             - decl: [slot, i32, { cast: [{ /: [{ -: [at_x, { +: [<.spot_x, 10.0] }] }, 24.0] }, i32] }]
             - if: { condition: { lt: [slot, 0] }, then: [{ set: [slot, 0] }] }
             - if: { condition: { gt: [slot, 10] }, then: [{ set: [slot, 10] }] }
-            - decl: [fill_y, f32, { +: [<.spot_y, 52.0] }]
-            - decl: [line_y, f32, { +: [<.spot_y, 52.0] }]
-            - if: { condition: { eq: [<.kind, 1] }, then: [{ set: [line_y, { +: [<.spot_y, 100.0] }] }] }
             - decl: [low_y, f32, { -: [{ +: [<.spot_y, box_h] }, 22.0] }]
-            - if:
-                condition: { "&&": [{ eq: [<.kind, 1] }, { "&&": [{ ge: [at_y, fill_y] }, { lt: [at_y, { +: [fill_y, 22.0] }] }] }] }
-                then:
-                  - set: [<.deed, 1]
-                  - set: [<.tone, { call: [<.swatch, slot] }]
-                  - return: 1
-            - if:
-                condition: { "&&": [{ ge: [at_y, line_y] }, { lt: [at_y, { +: [line_y, 22.0] }] }] }
-                then:
-                  - set: [<.deed, 2]
-                  - set: [<.tone, { call: [<.swatch, slot] }]
-                  - return: 1
+            # which colour row was hit?  deed 1 fill, 2 line/frame, 4 text (§5.6a)
+            - decl: [first_deed, i32, 1]
+            - if: { condition: { eq: [<.kind, 2] }, then: [{ set: [first_deed, 2] }] }
+            - decl: [row, i32, 0]
+            - while:
+                condition: { lt: [row, { call: [<.rows_here] }] }
+                body:
+                  - decl: [top, f32, { +: [{ call: [<.row_top, row] }, 18.0] }]
+                  - if:
+                      condition: { "&&": [{ ge: [at_y, top] }, { lt: [at_y, { +: [top, 22.0] }] }] }
+                      then:
+                        - decl: [deed, i32, { +: [first_deed, row] }]
+                        - if: { condition: { gt: [deed, 2] }, then: [{ set: [deed, 4] }] }
+                        - set: [<.deed, deed]
+                        - set: [<.tone, { call: [<.swatch, slot] }]
+                        - return: 1
+                  - set: [row, { +: [row, 1] }]
             - if:
                 condition: { ge: [at_y, low_y] }
                 then:

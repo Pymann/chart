@@ -71,6 +71,8 @@
       - [height, f32, 60.0]
       - [text, string, ""]            # may contain "\n"; the caption of an image (spec §12)
       - [rows, list<string>]          # class compartments (spec §5.8.2), empty otherwise
+      - [deco, i32, 0]                # 1 fett | 2 kursiv | 4 unterstrichen (spec §5.6a)
+      - [ink, i32, 0]                 # text colour, 0 = read it off the fill
       - [src, string, ""]             # image file, relative to the deck (spec §12)
       - [fill, i32, 0]                # 0xRRGGBBAA; 0 = inherit the theme
       - [stroke, i32, 0]
@@ -87,6 +89,8 @@
       - [head, EndCap, EndCap.arrow]   # the cap at to_id
       - [tail, EndCap, EndCap.none]    # the cap at from_id
       - [text, string, ""]            # "" = no label
+      - [deco, i32, 0]                # the label's decoration, as on a node
+      - [ink, i32, 0]                 # the label's colour
       - [rel, RelKind, RelKind.plain]  # what it MEANS (spec §5.8.2); flowchart ignores it
       - [from_text, string, ""]       # end labels: multiplicities in a class diagram
       - [to_text, string, ""]

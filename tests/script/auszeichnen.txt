@@ -1,0 +1,21 @@
+# Format-Menue (spec §5.6a): Auszeichnung gilt fuer das ganze Label, und die
+# Eintraege sind Umschalter.
+wait 3
+at 350 250
+down 0
+up 0
+wait 2
+menu Format|Fett
+wait 2
+menu Format|Unterstrichen
+wait 2
+at 850 250
+down 0
+up 0
+wait 2
+menu Format|Kursiv
+wait 2
+shot tests/out/preview/auszeichnung.png
+wait 2
+save
+wait 2

@@ -75,10 +75,24 @@
       # Centred label.  text-anchor does the horizontal centring, which is why this
       # export needs no text measurement -- ui.measure_text needs a window, and an
       # export must run headless (§9).
+      # SVG says all three natively, which is why the sheet may carry an underline
+      # that Mermaid cannot (spec §5.6a, §5.7).
+      - def:
+          name: deco_attrs
+          args: [[deco, i32]]
+          return: string
+          body:
+            - decl: [out, string, ""]
+            - if: { condition: { eq: [{ band: [deco, 1] }, 1] }, then: [{ set: [out, "${out} font-weight=\"bold\""] }] }
+            - if: { condition: { eq: [{ band: [deco, 2] }, 2] }, then: [{ set: [out, "${out} font-style=\"italic\""] }] }
+            - if: { condition: { eq: [{ band: [deco, 4] }, 4] }, then: [{ set: [out, "${out} text-decoration=\"underline\""] }] }
+            - return: out
+
       - def:
           name: label_svg
           static_off: ["same_arg", "str_cmp"]
           args: [[node, ref<Node>], [text, string], [tint, string]]
+          # deco comes off the node itself: one label, one decoration (§5.6a)
           return: string
           body:
             - if: { condition: { eq: [text, ""] }, then: [{ return: "" }] }
@@ -97,7 +111,8 @@
                 body:
                   - decl: [line, string, { at: [lines, row] }]
                   - decl: [line_y, f32, { +: [base_y, { "*": [line_h, { cast: [row, f32] }] }] }]
-                  - set: [out, "${out}  <text x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, line_y] } }\" fill=\"${tint}\" text-anchor=\"middle\">${ { call: [<.esc, line] } }</text>\n"]
+                  - decl: [deco, string, { call: [<.deco_attrs, node.deco] }]
+                  - set: [out, "${out}  <text x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, line_y] } }\" fill=\"${tint}\" text-anchor=\"middle\"${deco}>${ { call: [<.esc, line] } }</text>\n"]
                   - set: [row, { +: [row, 1] }]
             - return: out
 
@@ -113,7 +128,10 @@
             - if: { condition: { eq: [paint, 0] }, then: [{ set: [paint, 0xF2F5F9FF] }] }
             - decl: [fill, string, { call: [<.rgb, paint, 0xF2F5F9FF] }]
             - decl: [line, string, { call: [<.rgb, node.stroke, 0x3A4A5AFF] }]
-            - decl: [ink, string, { call: [<.rgb, { call: [<.pen.ink_for, paint] }, 0x1A2430FF] }]
+            - decl: [ink_val, i32, { call: [<.pen.ink_for, paint] }]
+            # the label's own colour wins (§5.6a); 0 means "read it off the fill"
+            - if: { condition: { neq: [node.ink, 0] }, then: [{ set: [ink_val, node.ink] }] }
+            - decl: [ink, string, { call: [<.rgb, ink_val, 0x1A2430FF] }]
             - decl: [pos_x, string, { call: [<.num, node.pos_x] }]
             - decl: [pos_y, string, { call: [<.num, node.pos_y] }]
             - decl: [wide, string, { call: [<.num, node.width] }]
@@ -421,10 +439,11 @@
                   # -- the label then vanishes instead of standing out. Two elements
                   # work everywhere, and a backing rect would need a measurement
                   # that a headless export cannot take (§17.1).
-                  - decl: [spot, string, "x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, mid_y] } }\" text-anchor=\"middle\" font-size=\"13\""]
+                  - decl: [spot, string, "x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, mid_y] } }\" text-anchor=\"middle\" font-size=\"13\"${ { call: [<.deco_attrs, edge.deco] } }"]
                   - decl: [say, string, { call: [<.esc, edge.text] }]
+                  - decl: [edge_ink, string, { call: [<.rgb, edge.ink, 0x33404DFF] }]
                   - set: [out, "${out}  <text ${spot} fill=\"none\" stroke=\"#ffffff\" stroke-width=\"3\">${say}</text>\n"]
-                  - set: [out, "${out}  <text ${spot} fill=\"#33404d\">${say}</text>\n"]
+                  - set: [out, "${out}  <text ${spot} fill=\"${edge_ink}\">${say}</text>\n"]
             - return: out
 
       # The diamond at the owning end of a composition (filled) or an aggregation

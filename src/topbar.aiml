@@ -29,7 +29,7 @@
           name: titles
           return: list<string>
           body:
-            - decl: [out, list<string>, ["Datei", "Bearbeiten", "Ansicht", "Einstellungen"]]
+            - decl: [out, list<string>, ["Datei", "Bearbeiten", "Format", "Ansicht", "Einstellungen"]]
             # "Kante" only while an edge is selected (§8.0): a menu whose every entry
             # is dead says less than one that appears when it has something to say.
             - if: { condition: { eq: [<.has_edge, 1] }, then: [{ call: [out.push, "Kante"] }] }
@@ -70,8 +70,18 @@
                                                      "-|0",
                                                      "Ueberschrift...|24", "Neue Folie|23"]]
                   - return: edit_menu
+            # Format (spec §5.6a): what a label looks like, and the colours that were
+            # only reachable by right-clicking before.
             - if:
                 condition: { eq: [menu, 2] }
+                then:
+                  - decl: [form_menu, list<string>, ["Fett|210", "Kursiv|211", "Unterstrichen|212",
+                                                     "Ohne Auszeichnung|213",
+                                                     "-|0",
+                                                     "Farben...|214"]]
+                  - return: form_menu
+            - if:
+                condition: { eq: [menu, 3] }
                 then:
                   - decl: [view_menu, list<string>, ["< Zurueck|21", "Weiter >|22", "-|0", "Praesentieren|30"]]
                   - if:
@@ -86,7 +96,7 @@
                               - set: [sdx, { +: [sdx, 1] }]
                   - return: view_menu
             - if:
-                condition: { eq: [menu, 3] }
+                condition: { eq: [menu, 4] }
                 then:
                   - decl: [opt_menu, list<string>, ["frei zeichnen|101", "Pfeil ziehen|100"]]
                   - return: opt_menu

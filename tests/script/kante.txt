@@ -1,51 +1,29 @@
 # Was der linken Leiste gehoerte, geht jetzt ueber die Kopfleiste (spec §8.0/§8.1):
 # das Kante-Menue erscheint mit der Auswahl, und die Folienliste steht in Ansicht.
+# Menueeintraege werden BENANNT, nicht in Pixeln gesucht (spec §9.1).
 wait 3
 # die Kante zwischen den beiden Kaesten treffen -- erst dann gibt es "Kante"
 at 640 315
 down 0
 up 0
 wait 2
-# Kante > Linie gepunktet
-at_win 435 14
-down 0
-up 0
+menu Kante|Linie gepunktet
 wait 2
-at_win 540 66
-down 0
-up 0
-wait 2
-# Kante > Fuss Pfeil.  War Aktion 60 und damit "Oeffnen..." -- ein Dateidialog
-# statt einer Pfeilspitze (spec §8.1); jetzt 81.
-at_win 435 14
-down 0
-up 0
-wait 2
-at_win 540 330
-down 0
-up 0
+# Fuss Pfeil war Aktion 60 und damit "Oeffnen..." -- ein Dateidialog statt einer
+# Pfeilspitze (spec §8.1); jetzt 81.
+menu Kante|Fuss Pfeil
 wait 2
 # Ansicht > zweite Folie, und dort eine Raute setzen -- der Sprung ist nur
 # sichtbar, wenn die Form auf der zweiten Folie landet
-at_win 220 14
-down 0
-up 0
+menu Ansicht|  2 Zweite
 wait 2
-at_win 300 186
-down 0
-up 0
-wait 2
-at_win 520 51
-down 0
-up 0
+tool Raute
 wait 2
 at 400 300
 down 0
 up 0
 wait 2
 key Escape
-wait 2
-shot tests/out/preview/kante.png
 wait 2
 save
 wait 2

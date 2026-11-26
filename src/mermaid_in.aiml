@@ -13,6 +13,7 @@
       - [ref_id, string]            # scratch of split_ref: the node's id
       - [ref_kind, i32]             # its NodeKind
       - [ref_text, string]          # its label
+      - [ref_deco, i32]             # and its decoration (spec §5.6a)
       - [ref_shown, i32]            # 1 = the line declared a shape, 0 = only named it
       - [group_now, string]         # the subgraph being read, "" = top level
       - [unread, string]            # every line chart did not understand
@@ -22,11 +23,13 @@
       - [got_line, i32]             # scratch of decode_link
       - [got_head, i32]
       - [got_tail, i32]
+      - [class_ink, list<i32>]       # classDef: `color:`, the label's own colour
       - [class_names, list<string>]  # classDef: the name ...
       - [class_fill, list<i32>]      # ... and the two colours it carries
       - [class_line, list<i32>]
       - [waiting_id, list<string>]   # nodes that named a class ...
       - [waiting_class, list<string>] # ... before it was necessarily declared
+      - [last_deco, i32]             # decoration of the label `unquote` just read
     methods:
       - def:
           name: unquote
@@ -41,6 +44,25 @@
                   - if:
                       condition: { "&&": [{ eq: [{ call: [out.substr, 0, 1] }, "\""] }, { eq: [{ call: [out.ends_with, "\""] }, 1] }] }
                       then: [{ set: [out, { call: [out.substr, 1, { -: [out.len, 2] }] }] }]
+            # A markdown string (spec §5.6a): backticks inside the quotes, `**` and
+            # `_` around the text.  The decoration goes into `last_deco`, which the
+            # caller reads straight after -- a string return cannot carry two things.
+            - set: [<.last_deco, 0]
+            - decl: [tick, string, "`"]
+            - if:
+                condition: { "&&": [{ ge: [out.len, 2] }, { "&&": [{ eq: [{ call: [out.substr, 0, 1] }, tick] }, { eq: [{ call: [out.ends_with, tick] }, 1] }] }] }
+                then:
+                  - set: [out, { call: [out.substr, 1, { -: [out.len, 2] }] }]
+                  - if:
+                      condition: { "&&": [{ ge: [out.len, 4] }, { "&&": [{ eq: [{ call: [out.substr, 0, 2] }, "**"] }, { eq: [{ call: [out.ends_with, "**"] }, 1] }] }] }
+                      then:
+                        - set: [out, { call: [out.substr, 2, { -: [out.len, 4] }] }]
+                        - set: [<.last_deco, { bor: [<.last_deco, 1] }]
+                  - if:
+                      condition: { "&&": [{ ge: [out.len, 2] }, { "&&": [{ eq: [{ call: [out.substr, 0, 1] }, "_"] }, { eq: [{ call: [out.ends_with, "_"] }, 1] }] }] }
+                      then:
+                        - set: [out, { call: [out.substr, 1, { -: [out.len, 2] }] }]
+                        - set: [<.last_deco, { bor: [<.last_deco, 2] }]
             # the export's two substitutions, undone in the same order (src/mermaid.aiml)
             - set: [out, { call: [out.replace, "<br/>", "\n"] }]
             - set: [out, { call: [out.replace, "#quot;", "\""] }]
@@ -103,6 +125,9 @@
             - call: [<.class_names.push, name]
             - call: [<.class_fill.push, { call: [<.hex_colour, { call: [<.attr_of, body_text, "fill"] }] }]
             - call: [<.class_line.push, { call: [<.hex_colour, { call: [<.attr_of, body_text, "stroke"] }] }]
+            # `color:` is the label's colour (spec §5.6a) -- the one text property
+            # that reaches the label, so it must come back too
+            - call: [<.class_ink.push, { call: [<.hex_colour, { call: [<.attr_of, body_text, "color"] }] }]
 
       - def:
           name: read_style
@@ -119,6 +144,7 @@
             - decl: [node, ref<Node>, { at: [sheet.nodes, slot] }]
             - set: [node.fill, { call: [<.hex_colour, { call: [<.attr_of, body_text, "fill"] }] }]
             - set: [node.stroke, { call: [<.hex_colour, { call: [<.attr_of, body_text, "stroke"] }] }]
+            - set: [node.ink, { call: [<.hex_colour, { call: [<.attr_of, body_text, "color"] }] }]
 
       # classDef may be declared after the nodes that use it, so the pairing waits
       # until the file is read -- guessing from the order would lose colour on a file
@@ -143,9 +169,11 @@
                   - set: [<.unread, "${<.unread}  Zeile ${number}: ${line}\n"]
                   - return: null
             - decl: [tone, i32, { call: [<.hex_colour, { call: [<.attr_of, body_text, "stroke"] }] }]
-            - if: { condition: { eq: [tone, 0] }, then: [{ return: null }] }
+            - decl: [ink, i32, { call: [<.hex_colour, { call: [<.attr_of, body_text, "color"] }] }]
+            - if: { condition: { "&&": [{ eq: [tone, 0] }, { eq: [ink, 0] }] }, then: [{ return: null }] }
             - decl: [edge, ref<Edge>, { at: [sheet.edges, which] }]
-            - set: [edge.stroke, tone]
+            - if: { condition: { neq: [tone, 0] }, then: [{ set: [edge.stroke, tone] }] }
+            - if: { condition: { neq: [ink, 0] }, then: [{ set: [edge.ink, ink] }] }
 
       - def:
           name: paint_classes
@@ -166,6 +194,7 @@
                         - decl: [node, ref<Node>, { at: [sheet.nodes, slot] }]
                         - set: [node.fill, { at: [<.class_fill, known] }]
                         - set: [node.stroke, { at: [<.class_line, known] }]
+                        - set: [node.ink, { at: [<.class_ink, known] }]
                   - set: [pos, { +: [pos, 1] }]
 
       # id + shape + label out of one reference, e.g. `pruef{"ok?"}` or a bare `a1`.
@@ -210,6 +239,7 @@
                   # file over a formality (§18.2).  The id becomes the label.
                   - set: [<.ref_id, raw]
                   - set: [<.ref_text, raw]
+                  - set: [<.ref_deco, 0]
                   - return: null
             - decl: [name_part, string, { call: [raw.substr, 0, cut] }]
             - set: [<.ref_id, { call: [name_part.trim] }]
@@ -255,6 +285,7 @@
                   - if: { condition: { eq: [{ call: [rest.starts_with, ">"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.asymmetric] }] }
             - decl: [inner, string, { call: [rest.substr, open_len, { -: [rest.len, { +: [open_len, shut_len] }] }] }]
             - set: [<.ref_text, { call: [<.unquote, inner] }]
+            - set: [<.ref_deco, <.last_deco]
 
       - def:
           name: node_slot
@@ -288,6 +319,7 @@
                   - decl: [known, ref<Node>, { at: [sheet.nodes, slot] }]
                   - set: [known.kind, <.ref_kind]
                   - set: [known.text, <.ref_text]
+                  - set: [known.deco, <.ref_deco]
                   - if: { condition: { neq: [<.group_now, ""] }, then: [{ set: [known.group, <.group_now] }] }
                   - return: null
             - if:
@@ -299,6 +331,7 @@
             - set: [fresh.ident, <.ref_id]
             - set: [fresh.kind, <.ref_kind]
             - set: [fresh.text, <.ref_text]
+            - set: [fresh.deco, <.ref_deco]
             - set: [fresh.group, <.group_now]
             - set: [fresh.width, 210.0]
             - set: [fresh.height, 76.0]
@@ -450,6 +483,7 @@
                         - decl: [left, string, { call: [rest.substr, 0, begins] }]
                         - decl: [right, string, { call: [rest.substr, after, { -: [rest.len, after] }] }]
                         - decl: [label, string, ""]
+                        - decl: [label_deco, i32, 0]
                         # `a -->|"text"| b`
                         - decl: [tail, string, { call: [right.trim] }]
                         - if:
@@ -462,6 +496,7 @@
                                   then:
                                     - decl: [label_raw, string, { call: [bar_rest.substr, 0, shut] }]
                                     - set: [label, { call: [<.unquote, label_raw] }]
+                                    - set: [label_deco, <.last_deco]
                                     - decl: [after_bar, i32, { +: [shut, 1] }]
                                     - set: [tail, { call: [bar_rest.substr, after_bar, { -: [bar_rest.len, after_bar] }] }]
                         # `a -- text --> b`
@@ -473,6 +508,7 @@
                               - decl: [after_dash, i32, { +: [dash, 4] }]
                               - decl: [inline_raw, string, { call: [head.substr, after_dash, { -: [head.len, after_dash] }] }]
                               - set: [label, { call: [<.unquote, inline_raw] }]
+                              - set: [label_deco, <.last_deco]
                               - set: [head, { call: [head.substr, 0, dash] }]
                         # the source: carried over from the previous link of the chain
                         - decl: [src, string, carry]
@@ -506,6 +542,7 @@
                               - set: [edge.head, <.got_head]
                               - set: [edge.tail, <.got_tail]
                               - set: [edge.text, label]
+                              - set: [edge.deco, label_deco]
                               - call: [sheet.edges.push, edge]
                               - set: [sheet.next_id, { +: [sheet.next_id, 1] }]
                         - if:
@@ -543,6 +580,7 @@
             - call: [<.class_names.clear]
             - call: [<.class_fill.clear]
             - call: [<.class_line.clear]
+            - call: [<.class_ink.clear]
             - call: [<.waiting_id.clear]
             - call: [<.waiting_class.clear]
             - set: [sheet.next_id, 1]

@@ -1,9 +1,7 @@
 # Die neuen Leisten bedienen: Form aus der Werkzeugleiste, dann aus dem Menue
-# "Bearbeiten" eine neue Folie.  Koordinaten der Leisten sind Fensterpixel.
+# "Bearbeiten" eine neue Folie.  Beides wird BENANNT (spec §9.1).
 wait 3
-at_win 520 51
-down 0
-up 0
+tool Raute
 wait 2
 at 400 300
 down 0
@@ -11,13 +9,7 @@ up 0
 wait 2
 key Escape
 wait 2
-at_win 120 14
-down 0
-up 0
-wait 2
-at_win 200 160
-down 0
-up 0
+menu Bearbeiten|Neue Folie
 wait 3
 save
 wait 2

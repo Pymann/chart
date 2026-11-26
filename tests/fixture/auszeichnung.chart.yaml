@@ -1,0 +1,10 @@
+dtype: flowchart
+dir: TD
+title: "Auszeichnung"
+next_id: 4
+nodes:
+  - { id: n1, kind: rect, x: 120, y: 120, w: 240, h: 90, text: "fett", deco: 1 }
+  - { id: n2, kind: rect, x: 520, y: 120, w: 240, h: 90, text: "kursiv", deco: 2 }
+  - { id: n3, kind: rect, x: 120, y: 360, w: 240, h: 90, text: "unterstrichen", deco: 4, ink: 3250774015 }
+edges:
+  - { id: e1, from_id: n1, to_id: n2, text: "fett+kursiv", deco: 3 }
