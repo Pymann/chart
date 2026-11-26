@@ -204,6 +204,11 @@ unconditionally avoids the whole class of bugs where a label containing `(`, `[`
 | `bidirectional` | `<-->` | `<-->\|"text"\|` |
 | `invisible` | `~~~` | (label dropped) |
 
+On the canvas an edge kind is **visible**: `dotted` draws as dashes, `thick` with a
+heavier line, `invisible` is not drawn at all (it still orders the Mermaid layout). An
+editor where every arrow looks the same would make the author read the file to see what
+they drew.
+
 The pipe form carries the label, not the `-- text -->` form, so that **one** quoting rule
 covers every label in the file (§5.2). With the inline form a label containing `-` or `>`
 reshapes the arrow itself, and the failure is a changed diagram rather than an error.
@@ -268,31 +273,44 @@ the justification for §2 and must be kept current when the model grows.
 
 ## 6. Typing into a shape
 
-A node's label is edited by a real widget, not a hand-rolled caret: AIML's
-`text_input` prefab child is editable, **single- or multi-line** (a field taller than
-~1.8 line heights wraps and scrolls vertically), and brings keyboard focus, mouse
-selection, Shift+arrows, `Ctrl+A/C/V/X` and UTF-8 handling (spec/44_6 §5e).
+A node's label is edited **on the canvas**, by drawing the text and a caret and reading
+the input event queue (aiml spec/44_0 §3): a `text` event carries one code point in
+`char_`, a `key_down` carries `Backspace`, `Enter`, `Escape`.
 
-Flow:
+**Why not the `text_input` prefab.** A prefab child is a real editor with selection and
+clipboard, and for a form it is the right answer. It lives in **design coordinates**
+though, which the engine scales to the window by `rel_scale` — while this canvas draws in
+**window pixels** and applies its own slide scale on top (§15). Keeping a prefab in step
+with a canvas that scales and re-centres means maintaining two coordinate systems that
+must agree every frame, and the first disagreement puts the caret somewhere the glyphs are
+not. Drawing the text where the node is costs one `ui.draw_text` and cannot drift.
 
-1. A finished shape immediately enters edit mode — the usual next intent after drawing
-   a box is to say what it is.
-2. A `text_input` instance is positioned over the node's inner box in **design
-   coordinates** and focused with `.focus(child)`.
-3. `Enter` commits, `Shift+Enter` inserts a newline, `Esc` reverts to the value the
-   field had on entry.
-4. On commit the value is read with `.text_value(child)` — an owned copy, freed by the
-   receiving local (spec/61 §8) — and stored in `Node.text`.
+The price is stated rather than hidden: there is **no selection, no clipboard and no
+mouse-positioned caret** while editing a label. Typing appends, `Backspace` removes the
+last character. When a label needs more than that, it wants a dialog, not an in-place
+editor.
 
-**Positioning.** The field is placed with design-space coordinates
-(`engine.mouse_design_x/y`, spec/44_0 §2.3), never with raw window pixels: on a scaled
-window a pixel-placed field lands far off the shape.
+| Key | |
+|---|---|
+| any character | appended |
+| `Backspace` | removes the last character |
+| `Enter` | commits |
+| `Shift+Enter` | newline inside the label |
+| `Escape` | reverts to the value the field had on entry |
+
+**Normative — one consumer for the keyboard.** While a label is being edited the editor
+takes its keys from the **event queue only**, and the slide navigation of §14 is not
+polled. A key read both as an event and as a poll fires twice, and the symptom is a
+`Backspace` that eats two characters or an arrow that skips a slide — a class of bug this
+codebase has already paid for.
+
+Editing starts when a node is placed (§15.1), on `Enter` with a node selected, or on a
+double click.
 
 **Auto-grow.** The node grows to fit its label, measured rather than estimated:
-`engine.text_width(line, font_size * scale)` per line, widest line wins, and
-`engine.text_height(font_size * scale)` times the line count for the height (aiml spec/44_6
-§5i). The size passed is the **final pixel size** — a prefab bakes one font per size, so a
-width measured at one size must never be scaled to another.
+`ui.measure_text` per line, widest line wins, `ui.text_height` times the line count for
+the height (aiml spec/44_3 §4.1). Measuring and drawing from the same two numbers is what
+keeps the box around the text.
 
 ### 6.1 The Mermaid pane
 
@@ -675,6 +693,12 @@ switches on click.
   `Delete` removes the selection.
 - **Freehand** (§7) is the drawing tool; with the select tool a drag is a rubber band
   instead. One drag cannot mean both, and the tool in the bar says which it is.
+- An **edge** is drawn with the edge tool: press on the source node, drag, release on the
+  target. The line follows the cursor while dragging, so what will be connected is visible
+  before the button is let go. Released anywhere but on a node, nothing is created — a
+  dangling edge has no Mermaid form (§7.5).
+- An edge is **selected** by clicking near its line, and the bar then sets its kind or
+  deletes it. Without that, a wrong arrow could only be fixed in the file.
 
 ### 15.2 What the canvas owes the rest of the spec
 
