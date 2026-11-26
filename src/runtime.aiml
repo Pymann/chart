@@ -23,6 +23,10 @@
       - [start, i32, 1]            # slide to open on, 1-based
       - [present, i32, 0]          # open straight in presentation mode (spec §14)
       - [notes, i32, 0]            # presenter notes visible from the start
+      # --diag 1 writes every click and every bar action to diag.log. A live test
+      # otherwise depends on reading a status line in an 18% wide bar, and the one
+      # number that matters there is gone again by the time it is read.
+      - [diag, i32, 0]
 
 - class:
     name: Exporter

@@ -5,3 +5,6 @@ chart
 tests/out/
 .aimlvenv/
 tools/kontor.conf
+live.deck.yaml
+diag.log
+diag_vorher*.log

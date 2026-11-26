@@ -4,28 +4,8 @@
 # (§14, normative): positions belong to the author, and a presentation that moved
 # things to fit would show something the author never saw.
 - import: "src/runtime.aiml"
-
-- model:
-    name: Shape
-    description: "A rect plus the pen that draws it -- what every canvas helper needs"
-    fields:
-      - [pos_x, f32, 0.0]
-      - [pos_y, f32, 0.0]
-      - [width, f32, 0.0]
-      - [height, f32, 0.0]
-      - [tint, i32, 0]
-      - [thick, f32, 2.0]
-
-- model:
-    name: Segment
-    description: "A line with the pen that draws it"
-    fields:
-      - [from_x, f32, 0.0]
-      - [from_y, f32, 0.0]
-      - [to_x, f32, 0.0]
-      - [to_y, f32, 0.0]
-      - [tint, i32, 0]
-      - [thick, f32, 2.0]
+- import: "src/ink.aiml"
+- import: "src/pen.aiml"
 
 - class:
     name: Editor
@@ -35,6 +15,8 @@
       - [mermaid, ref<MermaidOut>]
       - [markdown, ref<MarkdownOut>]
       - [exporter, ref<Exporter>]
+      - [ink, ref<Ink>]
+      - [pen, ref<Pen>]
       - [deck, Deck]
       - [deck_path, string]
       - [armed, i32]                    # NodeKind to place on the next canvas click, -1 = none
@@ -51,6 +33,10 @@
       - [link_from, string]             # source node while an edge is being dragged
       - [sel_edge, string]
       - [last_scale, f32]               # slide scale of the last frame, for auto-grow
+      - [diag, string]                  # --diag: Klickprotokoll
+      - [diag_on, i32]                  # --diag 1
+      - [bar_hov, i32]                  # DIAGNOSE: sieht die Leiste den Zeiger?
+      - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
       - [textures, map<string:gl_texture>]
     methods:
       # ── geometry ────────────────────────────────────────────────────────────
@@ -64,163 +50,6 @@
             - decl: [scale_y, f32, { /: [{ "*": [avail_h, margin] }, 720.0] }]
             - if: { condition: { lt: [scale_x, scale_y] }, then: [{ return: scale_x }] }
             - return: scale_y
-
-      # Readable ink for a fill: luminance decides, not taste.  A node coloured dark
-      # dst_cy its author would otherwise keep the dark default and lose its label.
-      - def:
-          name: ink_for
-          args: [[fill, i32]]
-          return: i32
-          body:
-            - decl: [red, i32, { band: [{ shr: [fill, 24] }, 255] }]
-            - decl: [green, i32, { band: [{ shr: [fill, 16] }, 255] }]
-            - decl: [blue, i32, { band: [{ shr: [fill, 8] }, 255] }]
-            - decl: [lum, i32, { /: [{ +: [{ +: [{ "*": [red, 299] }, { "*": [green, 587] }] }, { "*": [blue, 114] }] }, 1000] }]
-            - if: { condition: { lt: [lum, 140] }, then: [{ return: 0xF4F7FAFF }] }
-            - return: 0x1A2430FF
-
-      # Where the centre-to-centre line leaves an axis-aligned box.  Edges must stop
-      # at the shape, not run to its middle: a line through a node hides the node,
-      # and an arrowhead at the centre is buried under it.
-      - def:
-          name: edge_stop
-          args: [[half_w, f32], [half_h, f32], [uni_x, f32], [uni_y, f32]]
-          return: f32
-          body:
-            - decl: [abs_x, f32, { call: [math.abs, uni_x] }]
-            - decl: [abs_y, f32, { call: [math.abs, uni_y] }]
-            - decl: [span, f32, 100000.0]
-            - if:
-                condition: { gt: [abs_x, 0.001] }
-                then: [{ set: [span, { /: [half_w, abs_x] }] }]
-            - if:
-                condition: { gt: [abs_y, 0.001] }
-                then: [{ set: [span, { call: [math.min, span, { /: [half_h, abs_y] }] }] }]
-            - return: span
-
-      # ── drawing helpers ─────────────────────────────────────────────────────
-      - def:
-          name: frame
-          args: [[box, ref<Shape>]]
-          body:
-            - decl: [right, f32, { +: [box.pos_x, box.width] }]
-            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
-            - call: [ui.draw_line, box.pos_x, box.pos_y, right, box.pos_y, box.thick, box.tint]
-            - call: [ui.draw_line, right, box.pos_y, right, bottom, box.thick, box.tint]
-            - call: [ui.draw_line, right, bottom, box.pos_x, bottom, box.thick, box.tint]
-            - call: [ui.draw_line, box.pos_x, bottom, box.pos_x, box.pos_y, box.thick, box.tint]
-
-      # A closed polyline around the ellipse inscribed in the box.
-      - def:
-          name: ellipse
-          args: [[box, ref<Shape>]]
-          body:
-            - decl: [steps, i32, 36]
-            - decl: [rad_x, f32, { /: [box.width, 2.0] }]
-            - decl: [rad_y, f32, { /: [box.height, 2.0] }]
-            - decl: [mid_x, f32, { +: [box.pos_x, rad_x] }]
-            - decl: [mid_y, f32, { +: [box.pos_y, rad_y] }]
-            - decl: [pts, buffer<f32>]
-            - call: [pts.alloc, 320]
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { le: [idx, steps] }
-                body:
-                  - decl: [turn, f32, { /: [{ "*": [6.2831853, { cast: [idx, f32] }] }, { cast: [steps, f32] }] }]
-                  - call: [pts.write, { +: [mid_x, { "*": [rad_x, { call: [math.cos, turn] }] }] }, f32]
-                  - call: [pts.write, { +: [mid_y, { "*": [rad_y, { call: [math.sin, turn] }] }] }, f32]
-                  - set: [idx, { +: [idx, 1] }]
-            - call: [ui.draw_polyline, pts, box.thick, box.tint]
-
-      - def:
-          name: diamond
-          args: [[box, ref<Shape>]]
-          body:
-            - decl: [pts, buffer<f32>]
-            - call: [pts.alloc, 48]
-            - decl: [half_w, f32, { /: [box.width, 2.0] }]
-            - decl: [half_h, f32, { /: [box.height, 2.0] }]
-            - decl: [right, f32, { +: [box.pos_x, box.width] }]
-            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
-            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
-            - call: [pts.write, box.pos_y, f32]
-            - call: [pts.write, right, f32]
-            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
-            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
-            - call: [pts.write, bottom, f32]
-            - call: [pts.write, box.pos_x, f32]
-            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
-            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
-            - call: [pts.write, box.pos_y, f32]
-            - call: [ui.draw_polyline, pts, box.thick, box.tint]
-
-      - def:
-          name: hexagon
-          args: [[box, ref<Shape>]]
-          body:
-            - decl: [pts, buffer<f32>]
-            - call: [pts.alloc, 64]
-            - decl: [inset, f32, { /: [box.width, 5.0] }]
-            - decl: [half_h, f32, { /: [box.height, 2.0] }]
-            - decl: [right, f32, { +: [box.pos_x, box.width] }]
-            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
-            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
-            - call: [pts.write, box.pos_y, f32]
-            - call: [pts.write, { -: [right, inset] }, f32]
-            - call: [pts.write, box.pos_y, f32]
-            - call: [pts.write, right, f32]
-            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
-            - call: [pts.write, { -: [right, inset] }, f32]
-            - call: [pts.write, bottom, f32]
-            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
-            - call: [pts.write, bottom, f32]
-            - call: [pts.write, box.pos_x, f32]
-            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
-            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
-            - call: [pts.write, box.pos_y, f32]
-            - call: [ui.draw_polyline, pts, box.thick, box.tint]
-
-      # Centred, multi-line.  Measured and drawn from the same two numbers
-      # (aiml spec/44_3 §4.6), so the text sits where the box says it does.
-      - def:
-          name: text_block
-          static_off: ["same_arg", "str_cmp"]
-          args: [[box, ref<Shape>], [text, string]]
-          body:
-            - if: { condition: { eq: [text, ""] }, then: [{ return: null }] }
-            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
-            - decl: [line_h, f32, { call: [ui.text_height] }]
-            - decl: [total, f32, { "*": [line_h, { cast: [lines.len, f32] }] }]
-            - decl: [line_y, f32, { +: [box.pos_y, { /: [{ -: [box.height, total] }, 2.0] }] }]
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, lines.len] }
-                body:
-                  - decl: [line, string, { at: [lines, idx] }]
-                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
-                  - decl: [left, f32, { +: [box.pos_x, { /: [{ -: [box.width, line_w] }, 2.0] }] }]
-                  - call: [ui.draw_text, left, line_y, line, box.tint]
-                  - set: [line_y, { +: [line_y, line_h] }]
-                  - set: [idx, { +: [idx, 1] }]
-
-      # Dashes along a line: a dotted edge has to LOOK dotted, otherwise the author
-      # has to read the file to see what they drew (spec §5.3).
-      - def:
-          name: dashed
-          args: [[seg, ref<Segment>]]
-          body:
-            - decl: [steps, i32, 16]
-            - decl: [idx, i32, 0]
-            - decl: [del_x, f32, { /: [{ -: [seg.to_x, seg.from_x] }, { cast: [steps, f32] }] }]
-            - decl: [del_y, f32, { /: [{ -: [seg.to_y, seg.from_y] }, { cast: [steps, f32] }] }]
-            - while:
-                condition: { lt: [idx, steps] }
-                body:
-                  - decl: [part, f32, { cast: [idx, f32] }]
-                  - decl: [dot_x, f32, { +: [seg.from_x, { "*": [del_x, part] }] }]
-                  - decl: [dot_y, f32, { +: [seg.from_y, { "*": [del_y, part] }] }]
-                  - call: [ui.draw_line, dot_x, dot_y, { +: [dot_x, { "*": [del_x, 0.55] }] }, { +: [dot_y, { "*": [del_y, 0.55] }] }, seg.thick, seg.tint]
-                  - set: [idx, { +: [idx, 2] }]
 
       # ── nodes and edges ─────────────────────────────────────────────────────
       - def:
@@ -256,9 +85,9 @@
                         # a blank box would hide WHICH file is absent.
                         - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, 0xE8E2D8FF]
                         - set: [box.tint, 0x806030FF]
-                        - call: [<.text_block, box, "[${node.src}]"]
+                        - call: [<.pen.text_block, box, "[${node.src}]"]
                   - set: [box.tint, stroke]
-                  - call: [<.frame, box]
+                  - call: [<.pen.frame, box]
                   - if:
                       condition: { neq: [node.text, ""] }
                       then:
@@ -268,24 +97,24 @@
                         - set: [cap.width, box.width]
                         - set: [cap.height, { "*": [24.0, scale] }]
                         - set: [cap.tint, 0x4A5A6AFF]
-                        - call: [<.text_block, cap, label]
+                        - call: [<.pen.text_block, cap, label]
                   - return: null
 
             - if:
                 condition: { eq: [node.kind, NodeKind.diamond] }
                 then:
                   - set: [box.tint, stroke]
-                  - call: [<.diamond, box]
-                  - set: [box.tint, { call: [<.ink_for, fill] }]
-                  - call: [<.text_block, box, label]
+                  - call: [<.pen.diamond, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.pen.text_block, box, label]
                   - return: null
             - if:
                 condition: { eq: [node.kind, NodeKind.hexagon] }
                 then:
                   - set: [box.tint, stroke]
-                  - call: [<.hexagon, box]
-                  - set: [box.tint, { call: [<.ink_for, fill] }]
-                  - call: [<.text_block, box, label]
+                  - call: [<.pen.hexagon, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.pen.text_block, box, label]
                   - return: null
             - decl: [rounded, i32, 0]
             - if: { condition: { eq: [node.kind, NodeKind.circle] }, then: [{ set: [rounded, 1] }] }
@@ -295,23 +124,23 @@
                 condition: { eq: [rounded, 1] }
                 then:
                   - set: [box.tint, stroke]
-                  - call: [<.ellipse, box]
-                  - set: [box.tint, { call: [<.ink_for, fill] }]
-                  - call: [<.text_block, box, label]
+                  - call: [<.pen.ellipse, box]
+                  - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+                  - call: [<.pen.text_block, box, label]
                   - return: null
 
             # rect, cylinder, subroutine
             - call: [ui.draw_rect, box.pos_x, box.pos_y, box.width, box.height, fill]
             - set: [box.tint, stroke]
-            - call: [<.frame, box]
+            - call: [<.pen.frame, box]
             - if:
                 condition: { eq: [node.kind, NodeKind.subroutine] }
                 then:
                   - decl: [inset, f32, { "*": [9.0, scale] }]
                   - call: [ui.draw_line, { +: [box.pos_x, inset] }, box.pos_y, { +: [box.pos_x, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
                   - call: [ui.draw_line, { -: [{ +: [box.pos_x, box.width] }, inset] }, box.pos_y, { -: [{ +: [box.pos_x, box.width] }, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
-            - set: [box.tint, { call: [<.ink_for, fill] }]
-            - call: [<.text_block, box, label]
+            - set: [box.tint, { call: [<.pen.ink_for, fill] }]
+            - call: [<.pen.text_block, box, label]
 
       - def:
           name: node_by_id
@@ -327,6 +156,7 @@
                   - if:
                       condition: { eq: [node.ident, ident] }
                       then:
+                        - set: [out.kind, node.kind]
                         - set: [out.pos_x, node.pos_x]
                         - set: [out.pos_y, node.pos_y]
                         - set: [out.width, node.width]
@@ -367,8 +197,8 @@
                             then:
                               - decl: [uni_x, f32, { /: [del_x, span] }]
                               - decl: [uni_y, f32, { /: [del_y, span] }]
-                              - decl: [stop_to, f32, { call: [<.edge_stop, { "*": [{ /: [tail_node.width, 2.0] }, scale] }, { "*": [{ /: [tail_node.height, 2.0] }, scale] }, uni_x, uni_y] }]
-                              - decl: [stop_from, f32, { call: [<.edge_stop, { "*": [{ /: [head_node.width, 2.0] }, scale] }, { "*": [{ /: [head_node.height, 2.0] }, scale] }, uni_x, uni_y] }]
+                              - decl: [stop_to, f32, { call: [<.pen.edge_stop, { "*": [{ /: [tail_node.width, 2.0] }, scale] }, { "*": [{ /: [tail_node.height, 2.0] }, scale] }, uni_x, uni_y, tail_node.kind] }]
+                              - decl: [stop_from, f32, { call: [<.pen.edge_stop, { "*": [{ /: [head_node.width, 2.0] }, scale] }, { "*": [{ /: [head_node.height, 2.0] }, scale] }, uni_x, uni_y, head_node.kind] }]
                               - decl: [tip_x, f32, { +: [to_cx, { "*": [uni_x, stop_to] }] }]
                               - decl: [tip_y, f32, { +: [to_cy, { "*": [uni_y, stop_to] }] }]
                               - decl: [tail_x, f32, { -: [from_cx, { "*": [uni_x, stop_from] }] }]
@@ -387,7 +217,7 @@
                                     - set: [seg.to_y, tip_y]
                                     - set: [seg.tint, tint]
                                     - set: [seg.thick, thick]
-                                    - call: [<.dashed, seg]
+                                    - call: [<.pen.dashed, seg]
                                   else:
                                     - call: [ui.draw_line, tail_x, tail_y, tip_x, tip_y, thick, tint]
                               - decl: [head, f32, { "*": [16.0, scale] }]
@@ -406,7 +236,7 @@
                                     - set: [lab.height, lab_h]
                                     - set: [lab.tint, 0x33455AFF]
                                     - call: [ui.draw_rect, lab.pos_x, lab.pos_y, lab.width, lab.height, 0xFFFFFFF2]
-                                    - call: [<.text_block, lab, edge.text]
+                                    - call: [<.pen.text_block, lab, edge.text]
                   - set: [idx, { +: [idx, 1] }]
 
       # ── the page ────────────────────────────────────────────────────────────
@@ -435,7 +265,7 @@
             - set: [page.height, page_h]
             - set: [page.tint, 0xC2CCD6FF]
             - set: [page.thick, 1.0]
-            - call: [<.frame, page]
+            - call: [<.pen.frame, page]
             - if:
                 condition: { neq: [slide.title, ""] }
                 then:
@@ -461,8 +291,36 @@
                               - set: [halo.height, { +: [{ "*": [node.height, scale] }, 10.0] }]
                               - set: [halo.tint, 0x2F80EDFF]
                               - set: [halo.thick, 2.0]
-                              - call: [<.frame, halo]
+                              - call: [<.pen.frame, halo]
                   - set: [idx, { +: [idx, 1] }]
+            # the ink: every stroke of the group, until it is read (spec §7.5a)
+            - if:
+                condition: { gt: [<.ink.count, 1] }
+                then:
+                  - decl: [sidx, i32, 0]
+                  - while:
+                      condition: { lt: [sidx, <.ink.starts.len] }
+                      body:
+                        - decl: [begin, i32, { call: [<.ink.at_from, sidx] }]
+                        - decl: [count, i32, { call: [<.ink.at_len, sidx] }]
+                        - if:
+                            condition: { gt: [count, 1] }
+                            then:
+                              - decl: [ink, buffer<f32>]
+                              - call: [ink.alloc, 16384]
+                              - decl: [pidx, i32, 0]
+                              - while:
+                                  condition: { lt: [pidx, count] }
+                                  body:
+                                    - call: [<.ink.points.seek, { "*": [{ +: [begin, pidx] }, 8] }]
+                                    - decl: [raw_x, f32, { call: [<.ink.points.read, f32] }]
+                                    - decl: [raw_y, f32, { call: [<.ink.points.read, f32] }]
+                                    - call: [ink.write, { +: [org_x, { "*": [raw_x, scale] }] }, f32]
+                                    - call: [ink.write, { +: [org_y, { "*": [raw_y, scale] }] }, f32]
+                                    - set: [pidx, { +: [pidx, 1] }]
+                              - call: [ui.draw_polyline, ink, 2.5, 0x2F80EDFF]
+                        - set: [sidx, { +: [sidx, 1] }]
+
             # What will be connected, before the button is let go (spec §15.1).
             - if:
                 condition: { neq: [<.link_from, ""] }
@@ -501,7 +359,11 @@
             - decl: [action, i32, 0]
             - call: [ui.begin_cell, 0, 0, 1, 1]
             - call: [ui.set_scroll, "y"]
+            - set: [<.bar_hov, { call: [ui.cell_hovered] }]
             - call: [ui.label, "chart"]
+            - call: [ui.label, "frei zeichnen:"]
+            - call: [ui.label, "einfach losziehen"]
+            - call: [ui.separator]
             - call: [ui.label, <.status]
             - call: [ui.separator]
 
@@ -603,6 +465,12 @@
                       else: [{ set: [<.status, "Mermaid fehlgeschlagen"] }]
                   - return: null
 
+            - if:
+                condition: { eq: [action, 27] }
+                then:
+                  - set: [<.armed, 101]
+                  - set: [<.status, "zeichnen -- Form wird erkannt"]
+                  - return: null
             - if:
                 condition: { eq: [action, 19] }
                 then:
@@ -725,6 +593,34 @@
                   - set: [<.sel, ""]
 
       # ── canvas input (spec §15.1) ──────────────────────────────────────────
+      # §7.5: an endpoint hits a node's box GROWN by `reach`. Without it a line has
+      # to start and end exactly inside the shape, which is not how anybody draws.
+      - def:
+          name: node_near
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32], [reach, f32]]
+          return: string
+          body:
+            - decl: [pos, i32, { -: [slide.nodes.len, 1] }]
+            - while:
+                condition: { ge: [pos, 0] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                  - if:
+                      condition: { ge: [spot_x, { -: [node.pos_x, reach] }] }
+                      then:
+                        - if:
+                            condition: { le: [spot_x, { +: [{ +: [node.pos_x, node.width] }, reach] }] }
+                            then:
+                              - if:
+                                  condition: { ge: [spot_y, { -: [node.pos_y, reach] }] }
+                                  then:
+                                    - if:
+                                        condition: { le: [spot_y, { +: [{ +: [node.pos_y, node.height] }, reach] }] }
+                                        then: [{ return: node.ident }]
+                  - set: [pos, { -: [pos, 1] }]
+            - return: ""
+
       - def:
           name: node_at
           static_off: ["same_arg", "str_cmp"]
@@ -808,11 +704,33 @@
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
             - decl: [over_canvas, i32, 1]
             - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ set: [over_canvas, 0] }] }
+            # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
+            # meine bisherige Diagnose hing an PRESSED.
+            - decl: [down_now, i32, { call: [input.mouse_pressed, 0] }]
+            - decl: [up_now, i32, { call: [input.mouse_released, 0] }]
+            - decl: [held, i32, { call: [input.mouse_button, 0] }]
+            - if:
+                condition: { "||": [{ neq: [down_now, 0] }, { neq: [up_now, 0] }] }
+                then:
+                  - set: [<.status, "P${down_now} R${up_now} H${held} F${over_canvas} W${<.armed}"]
+                  - decl: [hit_dbg, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                  - if: { condition: { eq: [<.diag_on, 0] }, then: [{ return: null }] }
+                  - set: [<.diag, "${<.diag}P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} leiste_hover=${<.bar_hov} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'\n"]
+                  - call: [<.exporter.write_file, "diag.log", <.diag]
 
             # ── press ────────────────────────────────────────────────────────
             - if:
                 condition: { "&&": [{ call: [input.mouse_pressed, 0] }, { eq: [over_canvas, 1] }] }
                 then:
+                  # A press anywhere commits an open label first (spec §6): the next
+                  # stroke must not silently discard what was just typed.
+                  - if: { condition: { eq: [<.editing, 1] }, then: [{ call: [<.commit_label] }] }
+                  # freehand (spec §7): press starts the stroke
+                  - if:
+                      condition: { eq: [<.armed, 101] }
+                      then:
+                        - call: [<.ink.begin_stroke, slide_x, slide_y]
+                        - return: null
                   # edge tool: press starts the link, release finishes it
                   - if:
                       condition: { eq: [<.armed, 100] }
@@ -841,8 +759,54 @@
                         - return: null
                   - decl: [hit, string, { call: [<.node_at, slide, slide_x, slide_y] }]
                   - if:
+                      condition: { eq: [hit, ""] }
+                      then:
+                        # An edge under the cursor is selected; otherwise a drag on
+                        # empty canvas IS the stroke. Drawing is what the surface is
+                        # for, so it costs no mode: a stroke too short to recognise
+                        # does nothing, which is what a stray click should do anyway.
+                        - decl: [near_edge, string, { call: [<.edge_at, slide, slide_x, slide_y, 12.0] }]
+                        - if:
+                            condition: { neq: [near_edge, ""] }
+                            then:
+                              - set: [<.sel, ""]
+                              - set: [<.sel_edge, near_edge]
+                              - return: null
+                        - set: [<.sel, ""]
+                        - set: [<.sel_edge, ""]
+                        - call: [<.ink.begin_stroke, slide_x, slide_y]
+                        - return: null
+                  - if:
                       condition: { neq: [hit, ""] }
                       then:
+                        # Drag the RIM to connect, the middle to move. Starting on a
+                        # node had no way to mean "draw a line" -- the gesture was
+                        # taken, so a connector could never begin on its source.
+                        - decl: [rim, i32, 0]
+                        - decl: [ridx, i32, 0]
+                        - while:
+                            condition: { lt: [ridx, slide.nodes.len] }
+                            body:
+                              - decl: [rnode, ref<Node>, { at: [slide.nodes, ridx] }]
+                              - if:
+                                  condition: { eq: [rnode.ident, hit] }
+                                  then:
+                                    - decl: [to_left, f32, { call: [math.abs, { -: [slide_x, rnode.pos_x] }] }]
+                                    - decl: [to_right, f32, { call: [math.abs, { -: [slide_x, { +: [rnode.pos_x, rnode.width] }] }] }]
+                                    - decl: [to_top, f32, { call: [math.abs, { -: [slide_y, rnode.pos_y] }] }]
+                                    - decl: [to_bottom, f32, { call: [math.abs, { -: [slide_y, { +: [rnode.pos_y, rnode.height] }] }] }]
+                                    - decl: [nearest, f32, { call: [math.min, { call: [math.min, to_left, to_right] }, { call: [math.min, to_top, to_bottom] }] }]
+                                    - if: { condition: { lt: [nearest, 14.0] }, then: [{ set: [rim, 1] }] }
+                                    - set: [ridx, slide.nodes.len]
+                              - set: [ridx, { +: [ridx, 1] }]
+                        - if:
+                            condition: { eq: [rim, 1] }
+                            then:
+                              - set: [<.sel, ""]
+                              - set: [<.sel_edge, ""]
+                              - call: [<.ink.begin_stroke, slide_x, slide_y]
+                              - set: [<.status, "Rand gezogen -- auf ein Ziel loslassen"]
+                              - return: null
                         # a click on the ALREADY selected node opens its label -- the
                         # second click is the intent, and it needs no double-click clock
                         - if:
@@ -864,10 +828,35 @@
                                     - set: [<.drag_dy, { -: [slide_y, node2.pos_y] }]
                                     - set: [pos2, slide.nodes.len]
                               - set: [pos2, { +: [pos2, 1] }]
-                      else:
-                        - set: [<.sel, ""]
-                        - set: [<.editing, 0]
-                        - set: [<.sel_edge, { call: [<.edge_at, slide, slide_x, slide_y, 12.0] }]
+                  - return: null
+
+            # ── the ink is read on the right button, or after one second ──────
+            - if:
+                condition: { "&&": [{ gt: [<.ink.count, 0] }, { eq: [<.ink.inking, 0] }] }
+                then:
+                  - decl: [now, f64, { call: [engine.time] }]
+                  - decl: [idle, f64, { -: [now, <.ink.last] }]
+                  - if:
+                      condition: { "||": [{ call: [input.mouse_pressed, 1] }, { gt: [idle, 1.0] }] }
+                      then:
+                        - call: [<.read_ink, slide]
+                        - call: [<.ink.clear]
+                        - return: null
+
+            # ── freehand: collect while held (spec §7.5a) ─────────────────────
+            - if:
+                condition: { eq: [<.ink.inking, 1] }
+                then:
+                  - if:
+                      condition: { call: [input.mouse_released, 0] }
+                      then:
+                        - call: [<.ink.add_point, slide_x, slide_y]
+                        - set: [<.ink.inking, 0]
+                        - set: [<.armed, -1]
+                        - set: [<.ink.last, { call: [engine.time] }]
+                        - set: [<.status, "Tinte steht -- rechte Taste oder 1 s Pause liest sie"]
+                        - return: null
+                  - call: [<.ink.add_point, slide_x, slide_y]
                   - return: null
 
             # ── release: finish a link ───────────────────────────────────────
@@ -917,6 +906,157 @@
                               - set: [node.pos_y, { -: [slide_y, <.drag_dy] }]
                               - set: [pos, slide.nodes.len]
                         - set: [pos, { +: [pos, 1] }]
+
+      # ── reading the ink (spec §7.5a) ────────────────────────────────────────
+      # Four rules, first match wins.  The group is the unit: a dotted line, a
+      # subroutine and a cylinder are each DRAWN with the pen lifted in between, and
+      # reading stroke by stroke cannot see them at all.
+      - def:
+          name: read_ink
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>]]
+          body:
+            - decl: [total, i32, <.ink.starts.len]
+            - if: { condition: { eq: [total, 0] }, then: [{ return: null }] }
+            - decl: [shape, Guess]
+            - decl: [closed_count, i32, 0]
+            - decl: [first_closed, i32, -1]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, total] }
+                body:
+                  - decl: [count, i32, { call: [<.ink.copy, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [<.ink.recognizer.guess, <.ink.scratch, count, shape] }, 1] }
+                      then:
+                        - set: [closed_count, { +: [closed_count, 1] }]
+                        - if: { condition: { lt: [first_closed, 0] }, then: [{ set: [first_closed, idx] }] }
+                  - set: [idx, { +: [idx, 1] }]
+
+            # Rule 3: nothing closed -- one connector along the whole ink.  Several
+            # strokes along one line is how a dotted line is drawn, and nothing else
+            # about it says so.
+            - if:
+                condition: { eq: [closed_count, 0] }
+                then:
+                  - decl: [first_n, i32, { call: [<.ink.copy, 0] }]
+                  - call: [<.ink.scratch.seek, 0]
+                  - decl: [head_x, f32, { call: [<.ink.scratch.read, f32] }]
+                  - decl: [head_y, f32, { call: [<.ink.scratch.read, f32] }]
+                  - decl: [last_n, i32, { call: [<.ink.copy, { -: [total, 1] }] }]
+                  - call: [<.ink.recognizer.stroke_end, <.ink.scratch, last_n, shape]
+                  - decl: [src, string, { call: [<.node_near, slide, head_x, head_y, 12.0] }]
+                  - decl: [dst, string, { call: [<.node_near, slide, shape.tip_x, shape.tip_y, 12.0] }]
+                  - decl: [kind, i32, EdgeKind.open]
+                  - decl: [word, string, "Linie"]
+                  - if:
+                      condition: { gt: [total, 1] }
+                      then: [{ set: [kind, EdgeKind.dotted] }, { set: [word, "gepunktete Linie"] }]
+                      else:
+                        - if:
+                            condition: { eq: [shape.has_head, 1] }
+                            then: [{ set: [kind, EdgeKind.arrow] }, { set: [word, "Pfeil"] }]
+                  - if:
+                      condition: { eq: [{ call: [<.make_edge, slide, src, dst, kind] }, 1] }
+                      then: [{ set: [<.status, "${word} erkannt"] }]
+                      else: [{ set: [<.status, "offene Striche, kein Knoten an den Enden"] }]
+                  - return: null
+
+            # Rules 1 and 2: one closed outline, the rest read as marks inside it.
+            - if:
+                condition: { eq: [closed_count, 1] }
+                then:
+                  - decl: [outline_n, i32, { call: [<.ink.copy, first_closed] }]
+                  - decl: [outline_ok, i32, { call: [<.ink.recognizer.guess, <.ink.scratch, outline_n, shape] }]
+                  - decl: [uprights, i32, 0]
+                  - decl: [flat_top, i32, 0]
+                  - set: [idx, 0]
+                  - while:
+                      condition: { lt: [idx, total] }
+                      body:
+                        - if:
+                            condition: { neq: [idx, first_closed] }
+                            then:
+                              - decl: [mark, Guess]
+                              - decl: [mark_n, i32, { call: [<.ink.copy, idx] }]
+                              - decl: [unused, i32, { call: [<.ink.recognizer.guess, <.ink.scratch, mark_n, mark] }]
+                              - decl: [mid_x, f32, { +: [mark.pos_x, { /: [mark.width, 2.0] }] }]
+                              - decl: [mid_y, f32, { +: [mark.pos_y, { /: [mark.height, 2.0] }] }]
+                              - if:
+                                  condition: { "&&": [{ ge: [mid_x, shape.pos_x] }, { "&&": [{ le: [mid_x, { +: [shape.pos_x, shape.width] }] }, { "&&": [{ ge: [mid_y, shape.pos_y] }, { le: [mid_y, { +: [shape.pos_y, shape.height] }] }] }] }] }
+                                  then:
+                                    - if:
+                                        condition: { gt: [mark.height, { "*": [mark.width, 1.6] }] }
+                                        then: [{ set: [uprights, { +: [uprights, 1] }] }]
+                                    - if:
+                                        condition: { gt: [mark.width, { "*": [mark.height, 1.6] }] }
+                                        then:
+                                          - if:
+                                              condition: { lt: [mid_y, { +: [shape.pos_y, { /: [shape.height, 4.0] }] }] }
+                                              then: [{ set: [flat_top, { +: [flat_top, 1] }] }]
+                        - set: [idx, { +: [idx, 1] }]
+                  - decl: [word, string, { call: [enums.name, "NodeKind", shape.kind] }]
+                  - if:
+                      condition: { ge: [uprights, 2] }
+                      then: [{ set: [shape.kind, NodeKind.subroutine] }, { set: [word, "Unterprogramm"] }]
+                      else:
+                        - if:
+                            condition: { ge: [flat_top, 1] }
+                            then: [{ set: [shape.kind, NodeKind.cylinder] }, { set: [word, "Zylinder"] }]
+                  - decl: [made, string, { call: [<.make_node, slide, shape] }]
+                  - set: [<.status, "${word} erkannt"]
+                  - call: [<.begin_edit, made]
+                  - return: null
+
+            # Rule 4: several outlines -- each stroke on its own.
+            - set: [idx, 0]
+            - decl: [built, i32, 0]
+            - while:
+                condition: { lt: [idx, total] }
+                body:
+                  - decl: [count, i32, { call: [<.ink.copy, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [<.ink.recognizer.guess, <.ink.scratch, count, shape] }, 1] }
+                      then:
+                        - decl: [ignored, string, { call: [<.make_node, slide, shape] }]
+                        - set: [built, { +: [built, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [<.status, "${built} Formen erkannt"]
+
+      - def:
+          name: make_node
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [shape, ref<Guess>]]
+          return: string
+          body:
+            - decl: [fresh, Node]
+            - set: [fresh.ident, "n${slide.next_id}"]
+            - set: [fresh.kind, shape.kind]
+            - set: [fresh.pos_x, shape.pos_x]
+            - set: [fresh.pos_y, shape.pos_y]
+            - set: [fresh.width, shape.width]
+            - set: [fresh.height, shape.height]
+            - call: [slide.nodes.push, fresh]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - return: fresh.ident
+
+      - def:
+          name: make_edge
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [src, string], [dst, string], [kind, i32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [src, ""] }, then: [{ return: 0 }] }
+            - if: { condition: { eq: [dst, ""] }, then: [{ return: 0 }] }
+            - if: { condition: { eq: [src, dst] }, then: [{ return: 0 }] }
+            - decl: [edge, Edge]
+            - set: [edge.ident, "e${slide.next_id}"]
+            - set: [edge.from_id, src]
+            - set: [edge.to_id, dst]
+            - set: [edge.kind, kind]
+            - call: [slide.edges.push, edge]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - return: 1
 
       # ── keyboard: ONE consumer (spec §6, normative) ────────────────────────
       # Everything comes from the event queue. A key read both as an event and as a
@@ -1116,6 +1256,8 @@
             - if:
                 condition: { eq: [{ call: [<.sheet_io.load, path, <.deck] }, 0] }
                 then: [{ return: 1 }]
+            - call: [<.ink.setup]
+            - set: [<.diag_on, opts.diag]
             - set: [<.presenting, opts.present]
             - set: [<.show_notes, opts.notes]
             - set: [<.deck.current, { -: [opts.start, 1] }]
@@ -1129,6 +1271,9 @@
                   - return: 1
             - call: [gl.init]
             - call: [ui.init]
+            # Registers the GLFW callbacks. Without it every input call is a no-op
+            # (aiml spec/44_0 §2): the window draws and nothing reacts.
+            - call: [input.init, win]
             - decl: [font, ui_font, { call: [ui.load_font_default, 15.0] }]
             - if:
                 condition: { peq: [font, null] }
@@ -1166,6 +1311,15 @@
                       else:
                         - call: [ui.begin_grid, cols_edit, rows]
                         - decl: [action, i32, { call: [<.bar] }]
+                        - set: [<.last_action, action]
+                        # DIAGNOSE: eine Leisten-Aktion wird eigenstaendig vermerkt,
+                        # unabhaengig von der Maus-Flanke -- sonst haengt der Beweis,
+                        # dass ein Knopf feuert, an der Protokollstelle daneben.
+                        - if:
+                            condition: { "&&": [{ neq: [action, 0] }, { neq: [<.diag_on, 0] }] }
+                            then:
+                              - set: [<.diag, "${<.diag}LEISTE aktion=${action} hover=${<.bar_hov}\n"]
+                              - call: [<.exporter.write_file, "diag.log", <.diag]
                         - call: [ui.begin_cell, 1, 0, 1, 1]
                         - decl: [cvs_x, f32, { "*": [win_w, 0.18] }]
                         - decl: [cvs_w, f32, { "*": [win_w, 0.82] }]
@@ -1231,6 +1385,13 @@
       - class: Exporter
         instance: exporter
         sees: [sheet_io, mermaid, markdown]
+      - class: Recognizer
+        instance: recognizer
+      - class: Ink
+        instance: ink
+        sees: [recognizer]
+      - class: Pen
+        instance: pen
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen]

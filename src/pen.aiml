@@ -1,0 +1,218 @@
+# Pure drawing: a rect with a pen, a line with a pen, and the geometry that decides
+# where an edge stops (doc/spec/chart.md §15.2).
+#
+# Its own class because none of it touches editor state -- and because one file may
+# not grow past 1499 lines (aiml spec/49 §3), which is a limit worth obeying rather
+# than working around: the editor had quietly become four things.
+
+- import: "src/model.aiml"
+
+- model:
+    name: Shape
+    description: "A rect plus the pen that draws it -- what every canvas helper needs"
+    fields:
+      - [pos_x, f32, 0.0]
+      - [pos_y, f32, 0.0]
+      - [width, f32, 0.0]
+      - [height, f32, 0.0]
+      - [tint, i32, 0]
+      - [thick, f32, 2.0]
+
+- model:
+    name: Segment
+    description: "A line with the pen that draws it"
+    fields:
+      - [from_x, f32, 0.0]
+      - [from_y, f32, 0.0]
+      - [to_x, f32, 0.0]
+      - [to_y, f32, 0.0]
+      - [tint, i32, 0]
+      - [thick, f32, 2.0]
+
+- class:
+    name: Pen
+    description: "Shapes, lines and text at a position; no state of its own"
+    methods:
+      # Readable ink for a fill: luminance decides, not taste.  A node coloured dark
+      # dst_cy its author would otherwise keep the dark default and lose its label.
+      - def:
+          name: ink_for
+          args: [[fill, i32]]
+          return: i32
+          body:
+            - decl: [red, i32, { band: [{ shr: [fill, 24] }, 255] }]
+            - decl: [green, i32, { band: [{ shr: [fill, 16] }, 255] }]
+            - decl: [blue, i32, { band: [{ shr: [fill, 8] }, 255] }]
+            - decl: [lum, i32, { /: [{ +: [{ +: [{ "*": [red, 299] }, { "*": [green, 587] }] }, { "*": [blue, 114] }] }, 1000] }]
+            - if: { condition: { lt: [lum, 140] }, then: [{ return: 0xF4F7FAFF }] }
+            - return: 0x1A2430FF
+
+      # Where the centre-to-centre line leaves the node's OUTLINE.  Using the
+      # bounding box for every shape leaves a gap on a circle and overshoots a
+      # diamond, and because the gap depends on the angle it only shows up while
+      # something is being dragged -- which is exactly when it is most visible.
+      - def:
+          name: edge_stop
+          args: [[half_w, f32], [half_h, f32], [uni_x, f32], [uni_y, f32], [kind, i32]]
+          return: f32
+          body:
+            - decl: [abs_x, f32, { call: [math.abs, uni_x] }]
+            - decl: [abs_y, f32, { call: [math.abs, uni_y] }]
+            - if: { condition: { lt: [half_w, 0.01] }, then: [{ return: 0.0 }] }
+            - if: { condition: { lt: [half_h, 0.01] }, then: [{ return: 0.0 }] }
+
+            # ellipse: (t*ux/rx)^2 + (t*uy/ry)^2 = 1
+            - decl: [round_shape, i32, 0]
+            - if: { condition: { eq: [kind, NodeKind.circle] }, then: [{ set: [round_shape, 1] }] }
+            - if: { condition: { eq: [kind, NodeKind.round] }, then: [{ set: [round_shape, 1] }] }
+            - if: { condition: { eq: [kind, NodeKind.stadium] }, then: [{ set: [round_shape, 1] }] }
+            - if:
+                condition: { eq: [round_shape, 1] }
+                then:
+                  - decl: [part_x, f32, { /: [uni_x, half_w] }]
+                  - decl: [part_y, f32, { /: [uni_y, half_h] }]
+                  - decl: [denom, f32, { call: [math.sqrt, { +: [{ "*": [part_x, part_x] }, { "*": [part_y, part_y] }] }] }]
+                  - if: { condition: { lt: [denom, 0.000001] }, then: [{ return: 0.0 }] }
+                  - return: { /: [1.0, denom] }
+
+            # diamond: |x|/rx + |y|/ry = 1
+            - if:
+                condition: { eq: [kind, NodeKind.diamond] }
+                then:
+                  - decl: [sum, f32, { +: [{ /: [abs_x, half_w] }, { /: [abs_y, half_h] }] }]
+                  - if: { condition: { lt: [sum, 0.000001] }, then: [{ return: 0.0 }] }
+                  - return: { /: [1.0, sum] }
+
+            # rect, hexagon, cylinder, subroutine, image: the box
+            - decl: [span, f32, 100000.0]
+            - if:
+                condition: { gt: [abs_x, 0.001] }
+                then: [{ set: [span, { /: [half_w, abs_x] }] }]
+            - if:
+                condition: { gt: [abs_y, 0.001] }
+                then: [{ set: [span, { call: [math.min, span, { /: [half_h, abs_y] }] }] }]
+            - return: span
+
+      # ── drawing helpers ─────────────────────────────────────────────────────
+      - def:
+          name: frame
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
+            - call: [ui.draw_line, box.pos_x, box.pos_y, right, box.pos_y, box.thick, box.tint]
+            - call: [ui.draw_line, right, box.pos_y, right, bottom, box.thick, box.tint]
+            - call: [ui.draw_line, right, bottom, box.pos_x, bottom, box.thick, box.tint]
+            - call: [ui.draw_line, box.pos_x, bottom, box.pos_x, box.pos_y, box.thick, box.tint]
+
+      # A closed polyline around the ellipse inscribed in the box.
+      - def:
+          name: ellipse
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [steps, i32, 36]
+            - decl: [rad_x, f32, { /: [box.width, 2.0] }]
+            - decl: [rad_y, f32, { /: [box.height, 2.0] }]
+            - decl: [mid_x, f32, { +: [box.pos_x, rad_x] }]
+            - decl: [mid_y, f32, { +: [box.pos_y, rad_y] }]
+            - decl: [pts, buffer<f32>]
+            - call: [pts.alloc, 320]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { le: [idx, steps] }
+                body:
+                  - decl: [turn, f32, { /: [{ "*": [6.2831853, { cast: [idx, f32] }] }, { cast: [steps, f32] }] }]
+                  - call: [pts.write, { +: [mid_x, { "*": [rad_x, { call: [math.cos, turn] }] }] }, f32]
+                  - call: [pts.write, { +: [mid_y, { "*": [rad_y, { call: [math.sin, turn] }] }] }, f32]
+                  - set: [idx, { +: [idx, 1] }]
+            - call: [ui.draw_polyline, pts, box.thick, box.tint]
+
+      - def:
+          name: diamond
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [pts, buffer<f32>]
+            - call: [pts.alloc, 48]
+            - decl: [half_w, f32, { /: [box.width, 2.0] }]
+            - decl: [half_h, f32, { /: [box.height, 2.0] }]
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
+            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [pts.write, right, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
+            - call: [pts.write, bottom, f32]
+            - call: [pts.write, box.pos_x, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { +: [box.pos_x, half_w] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [ui.draw_polyline, pts, box.thick, box.tint]
+
+      - def:
+          name: hexagon
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [pts, buffer<f32>]
+            - call: [pts.alloc, 64]
+            - decl: [inset, f32, { /: [box.width, 5.0] }]
+            - decl: [half_h, f32, { /: [box.height, 2.0] }]
+            - decl: [right, f32, { +: [box.pos_x, box.width] }]
+            - decl: [bottom, f32, { +: [box.pos_y, box.height] }]
+            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [pts.write, { -: [right, inset] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [pts.write, right, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { -: [right, inset] }, f32]
+            - call: [pts.write, bottom, f32]
+            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
+            - call: [pts.write, bottom, f32]
+            - call: [pts.write, box.pos_x, f32]
+            - call: [pts.write, { +: [box.pos_y, half_h] }, f32]
+            - call: [pts.write, { +: [box.pos_x, inset] }, f32]
+            - call: [pts.write, box.pos_y, f32]
+            - call: [ui.draw_polyline, pts, box.thick, box.tint]
+
+      # Centred, multi-line.  Measured and drawn from the same two numbers
+      # (aiml spec/44_3 §4.6), so the text sits where the box says it does.
+      - def:
+          name: text_block
+          static_off: ["same_arg", "str_cmp"]
+          args: [[box, ref<Shape>], [text, string]]
+          body:
+            - if: { condition: { eq: [text, ""] }, then: [{ return: null }] }
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [line_h, f32, { call: [ui.text_height] }]
+            - decl: [total, f32, { "*": [line_h, { cast: [lines.len, f32] }] }]
+            - decl: [line_y, f32, { +: [box.pos_y, { /: [{ -: [box.height, total] }, 2.0] }] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, idx] }]
+                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                  - decl: [left, f32, { +: [box.pos_x, { /: [{ -: [box.width, line_w] }, 2.0] }] }]
+                  - call: [ui.draw_text, left, line_y, line, box.tint]
+                  - set: [line_y, { +: [line_y, line_h] }]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # Dashes along a line: a dotted edge has to LOOK dotted, otherwise the author
+      # has to read the file to see what they drew (spec §5.3).
+      - def:
+          name: dashed
+          args: [[seg, ref<Segment>]]
+          body:
+            - decl: [steps, i32, 16]
+            - decl: [idx, i32, 0]
+            - decl: [del_x, f32, { /: [{ -: [seg.to_x, seg.from_x] }, { cast: [steps, f32] }] }]
+            - decl: [del_y, f32, { /: [{ -: [seg.to_y, seg.from_y] }, { cast: [steps, f32] }] }]
+            - while:
+                condition: { lt: [idx, steps] }
+                body:
+                  - decl: [part, f32, { cast: [idx, f32] }]
+                  - decl: [dot_x, f32, { +: [seg.from_x, { "*": [del_x, part] }] }]
+                  - decl: [dot_y, f32, { +: [seg.from_y, { "*": [del_y, part] }] }]
+                  - call: [ui.draw_line, dot_x, dot_y, { +: [dot_x, { "*": [del_x, 0.55] }] }, { +: [dot_y, { "*": [del_y, 0.55] }] }, seg.thick, seg.tint]
+                  - set: [idx, { +: [idx, 2] }]

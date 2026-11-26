@@ -384,6 +384,11 @@ but redrawing.
 An `arrow` stroke attaches by endpoint:
 
 - Each endpoint hit-tests against node boxes grown by a tolerance of `12` design units.
+- A stroke may **begin on a node's rim** (within 14 units of its border): that drag draws
+  a connector, while a drag from the middle moves the node. Without the rim rule a
+  connector can never start on its own source, because that gesture is already the move —
+  the line has to be begun beside the shape and aimed back at it, which is not how anybody
+  draws one.
 - Zero hits at an end → the stroke is discarded (a dangling edge has no Mermaid form).
 - More than one hit → the **nearest centre** wins, and the resolved edge is drawn
   highlighted for one beat so a wrong pick is visible.
@@ -392,6 +397,42 @@ An `arrow` stroke attaches by endpoint:
 Arrowheads are **not** recognised. Direction comes from the drawing direction
 (first point → last point), which is unambiguous and free. The head is drawn by the
 renderer, not detected.
+
+### 7.5a The ink stands until it is read
+
+A stroke is **not** interpreted when the pen lifts. It stays on the slide as ink, and
+further strokes join it. The ink is read when either happens:
+
+- the **right mouse button** is pressed, or
+- **one second** passes with nothing drawn.
+
+Then the whole group is interpreted at once and replaced by what it meant.
+
+**Why not per stroke.** A dotted line, a subroutine box and a cylinder are each drawn
+with the pen lifted in between — they are several strokes by nature. Reading each stroke
+on its own cannot see them at all: the short pieces fall through as "too short" and the
+author watches their drawing disappear. Everything that is not a single closed outline
+needs the group, so the group is the unit.
+
+**Why a pause and not only a key.** Waiting for a key makes every shape cost a keystroke;
+waiting only for a pause makes a deliberate pause unavoidable. Both are offered, and the
+pause is generous enough to draw two strokes without racing.
+
+#### Reading a group (normative, first match wins)
+
+| | The group | Becomes |
+|---|---|---|
+| 1 | one closed stroke, nothing else | that shape (§7.3) |
+| 2 | one closed stroke, the others inside it | that shape, modified: two near-vertical strokes near its left and right edges → `subroutine`; one near-horizontal stroke in its top quarter → `cylinder` |
+| 3 | no closed stroke, all strokes along one line | one connector between the nodes at the ends of the overall line (§7.5). **More than one stroke → `dotted`**; one stroke → `arrow` when a head was drawn, else `open` |
+| 4 | anything else | each stroke read on its own, by the rules above |
+
+Rule 3 is the whole reason the ink waits: a dotted line is **drawn** dotted, and nothing
+else about it says so.
+
+**Normative — the ink is never half-read.** Either the group is interpreted and the ink is
+gone, or it stays. A group that lost a stroke on the way would leave the author to
+discover which one.
 
 ### 7.6 Straightening
 
@@ -691,8 +732,14 @@ switches on click.
   snaps are on.
 - **Click** selects, `Shift+click` adds, a drag on empty canvas is a rubber band,
   `Delete` removes the selection.
-- **Freehand** (§7) is the drawing tool; with the select tool a drag is a rubber band
-  instead. One drag cannot mean both, and the tool in the bar says which it is.
+- **Freehand** (§7) needs no tool: a drag that starts on empty canvas **is** the
+  stroke. Drawing is what the surface is for, and a mode in front of it is a mode the
+  author has to remember. A drag that starts on a node moves it; a click on a node
+  selects it; a click near an edge selects the edge. A stroke too short to recognise
+  does nothing, which is what a stray click should do anyway.
+
+  The cost is that there is no rubber-band selection: that drag is taken. When
+  multi-selection arrives it needs a modifier, not a mode.
 - An **edge** is drawn with the edge tool: press on the source node, drag, release on the
   target. The line follows the cursor while dragging, so what will be connected is visible
   before the button is let go. Released anywhere but on a node, nothing is created — a

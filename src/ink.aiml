@@ -1,0 +1,107 @@
+# The ink: strokes as they are drawn, until they are read (doc/spec/chart.md §7.5a).
+#
+# Its own class because it is its own thing -- points, the boundaries between strokes
+# and the clock that decides when a group is done -- and because the editor had
+# outgrown one file (aiml spec/49 §3).
+- import: "src/recognize.aiml"
+
+- class:
+    name: Ink
+    description: "Accumulated strokes and the boundaries between them"
+    members:
+      - [recognizer, ref<Recognizer>]
+      - [points, buffer<f32>]           # every point of every stroke
+      - [count, i32]                    # points in it: the buffer keeps its
+                                        # high-water size, so the count lives here
+      - [starts, list<i32>]             # first point of each stroke
+      - [last, f64]                     # when the pen last lifted
+      - [scratch, buffer<f32>]          # one stroke, copied out for the recogniser
+      - [inking, i32]
+    methods:
+      - def:
+          name: setup
+          body:
+            - call: [<.points.alloc, 65536]
+            - call: [<.scratch.alloc, 65536]
+            - set: [<.count, 0]
+            - set: [<.inking, 0]
+            - set: [<.last, 0.0]
+
+      - def:
+          name: begin_stroke
+          args: [[spot_x, f32], [spot_y, f32]]
+          body:
+            - call: [<.starts.push, <.count]
+            - set: [<.inking, 1]
+            - call: [<.add_point, spot_x, spot_y]
+
+      # One sample, skipped when it sits on top of the last one: a still cursor would
+      # otherwise fill the buffer with duplicates and flatten every feature.
+      - def:
+          name: add_point
+          args: [[spot_x, f32], [spot_y, f32]]
+          body:
+            - if: { condition: { ge: [<.count, 6000] }, then: [{ return: null }] }
+            - if:
+                condition: { gt: [<.count, 0] }
+                then:
+                  - call: [<.points.seek, { "*": [{ -: [<.count, 1] }, 8] }]
+                  - decl: [prev_x, f32, { call: [<.points.read, f32] }]
+                  - decl: [prev_y, f32, { call: [<.points.read, f32] }]
+                  - decl: [del_x, f32, { -: [spot_x, prev_x] }]
+                  - decl: [del_y, f32, { -: [spot_y, prev_y] }]
+                  - if:
+                      condition: { lt: [{ +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }, 4.0] }
+                      then: [{ return: null }]
+            - call: [<.points.seek, { "*": [<.count, 8] }]
+            - call: [<.points.write, spot_x, f32]
+            - call: [<.points.write, spot_y, f32]
+            - set: [<.count, { +: [<.count, 1] }]
+
+      - def:
+          name: clear
+          body:
+            - set: [<.count, 0]
+            - call: [<.starts.clear]
+            - set: [<.inking, 0]
+
+      - def:
+          name: at_from
+          args: [[which, i32]]
+          return: i32
+          body:
+            - return: { at: [<.starts, which] }
+
+      - def:
+          name: at_len
+          args: [[which, i32]]
+          return: i32
+          body:
+            - decl: [begin, i32, { at: [<.starts, which] }]
+            - decl: [stop, i32, <.count]
+            - if:
+                condition: { lt: [{ +: [which, 1] }, <.starts.len] }
+                then: [{ set: [stop, { at: [<.starts, { +: [which, 1] }] }] }]
+            - return: { -: [stop, begin] }
+
+      # One stroke copied out, so the recogniser keeps reading from index 0 and needs
+      # no offset of its own.
+      - def:
+          name: copy
+          args: [[which, i32]]
+          return: i32
+          body:
+            - decl: [begin, i32, { call: [<.at_from, which] }]
+            - decl: [count, i32, { call: [<.at_len, which] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, count] }
+                body:
+                  - call: [<.points.seek, { "*": [{ +: [begin, idx] }, 8] }]
+                  - decl: [raw_x, f32, { call: [<.points.read, f32] }]
+                  - decl: [raw_y, f32, { call: [<.points.read, f32] }]
+                  - call: [<.scratch.seek, { "*": [idx, 8] }]
+                  - call: [<.scratch.write, raw_x, f32]
+                  - call: [<.scratch.write, raw_y, f32]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: count
