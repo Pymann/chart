@@ -1,0 +1,22 @@
+title: ""
+slides:
+  - title: "Was der Scanner tut"
+    dtype: flowchart
+    dir: LR
+    next_id: 3
+    nodes:
+      - { id: t1, kind: text, x: 60, y: 90, w: 1160, h: 44, text: "Er liest Quelldateien und prueft Regeln. Metriken wie McCabe und cloc\nzaehlen dabei mit." }
+      - { id: t2, kind: text, x: 60, y: 150, w: 1160, h: 22, text: "Zwei Absaetze, damit die Trennung sichtbar wird." }
+      - { id: t3, kind: text, x: 60, y: 188, w: 1160, h: 66, text: "| Tabelle | bleibt |\n|---|---|\n| als | Text |" }
+      - { id: a, kind: rect, x: 60, y: 290, w: 210, h: 76, text: "Quelle" }
+      - { id: b, kind: diamond, x: 382, y: 290, w: 210, h: 76, text: "Regel trifft?" }
+      - { id: c, kind: rect, x: 704, y: 290, w: 210, h: 76, text: "Befund" }
+    edges:
+      - { id: e1, from_id: a, to_id: b, kind: arrow }
+      - { id: e2, from_id: b, to_id: c, kind: arrow, text: "ja" }
+  - title: "Zweite Folie"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    nodes:
+      - { id: t1, kind: text, x: 60, y: 90, w: 1160, h: 22, text: "Nur Text, kein Diagramm." }

@@ -198,6 +198,27 @@
                   - set: [line_y, { +: [line_y, line_h] }]
                   - set: [idx, { +: [idx, 1] }]
 
+      # Prose (spec §3.2): left-aligned, starting at the top edge.  A paragraph that
+      # is centred line by line reads like a poster, which is exactly wrong for text
+      # that came out of a document.
+      - def:
+          name: text_flow
+          static_off: ["same_arg", "str_cmp"]
+          args: [[box, ref<Shape>], [text, string]]
+          body:
+            - if: { condition: { eq: [text, ""] }, then: [{ return: null }] }
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [line_h, f32, { call: [ui.text_height] }]
+            - decl: [line_y, f32, box.pos_y]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, idx] }]
+                  - call: [ui.draw_text, box.pos_x, line_y, line, box.tint]
+                  - set: [line_y, { +: [line_y, line_h] }]
+                  - set: [idx, { +: [idx, 1] }]
+
       # Dashes along a line: a dotted edge has to LOOK dotted, otherwise the author
       # has to read the file to see what they drew (spec §5.3).
       - def:

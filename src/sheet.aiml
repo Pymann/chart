@@ -70,6 +70,7 @@
             - if: { condition: { eq: [word, "diamond"] },    then: [{ return: NodeKind.diamond }] }
             - if: { condition: { eq: [word, "hexagon"] },    then: [{ return: NodeKind.hexagon }] }
             - if: { condition: { eq: [word, "cylinder"] },   then: [{ return: NodeKind.cylinder }] }
+            - if: { condition: { eq: [word, "text"] },       then: [{ return: NodeKind.text }] }
             - if: { condition: { eq: [word, "subroutine"] }, then: [{ return: NodeKind.subroutine }] }
             - if: { condition: { eq: [word, "image"] },      then: [{ return: NodeKind.image }] }
             - return: -1

@@ -8,6 +8,7 @@
 - import: "src/svg.aiml"
 - import: "src/pptx.aiml"
 - import: "src/mermaid_in.aiml"
+- import: "src/markdown_in.aiml"
 
 - model:
     name: ChartOptions
@@ -50,6 +51,7 @@
       - [svg, ref<SvgOut>]
       - [pptx, ref<PptxOut>]
       - [mermaid_in, ref<MermaidIn>]
+      - [markdown_in, ref<MarkdownIn>]
     methods:
       # buffer.write_to reports a short write or a failed flush; io.write cannot
       # (aiml spec/23) -- and a half-written diagram must not pass for a written one.
@@ -222,18 +224,31 @@
             - decl: [text, string, { call: [io.read_all, handle] }]
             - call: [io.close, handle]
             - decl: [deck, Deck]
-            - decl: [sheet, Sheet]
+            # .md is read as slides (§18.4), .mmd as one diagram (§18.2).  The
+            # extension decides, because a Markdown file full of prose and a bare
+            # flowchart are different documents, not two spellings of one.
+            - decl: [source, string, { call: [options.import.lower] }]
             - if:
-                condition: { eq: [{ call: [<.mermaid_in.read, text, sheet] }, 0] }
-                then: [{ return: 1 }]
-            - call: [deck.slides.push, sheet]
+                condition: { eq: [{ call: [source.ends_with, ".md"] }, 1] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.markdown_in.read, text, deck] }, 0] }
+                      then: [{ return: 1 }]
+                else:
+                  - decl: [sheet, Sheet]
+                  - if:
+                      condition: { eq: [{ call: [<.mermaid_in.read, text, sheet] }, 0] }
+                      then: [{ return: 1 }]
+                  - call: [deck.slides.push, sheet]
             - decl: [yaml_text, string, { call: [<.sheet_io.deck_yaml, deck] }]
             - if:
                 condition: { eq: [{ call: [<.write_file, target, yaml_text] }, 0] }
                 then: [{ return: 1 }]
+            - decl: [missed, string, <.mermaid_in.unread]
+            - if: { condition: { neq: [<.markdown_in.unread, ""] }, then: [{ set: [missed, <.markdown_in.unread] }] }
             - if:
-                condition: { neq: [<.mermaid_in.unread, ""] }
-                then: [{ call: [log.warn, "chart: nicht gelesen (spec §18.2):\n${<.mermaid_in.unread}"] }]
+                condition: { neq: [missed, ""] }
+                then: [{ call: [log.warn, "chart: nicht gelesen (spec §18.2):\n${missed}"] }]
             - call: [log.info, "chart: ${target} geschrieben -- die Anordnung ist erfunden (spec §18.3), zum Zurechtziehen gedacht"]
             - return: 0
 

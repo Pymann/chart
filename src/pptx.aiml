@@ -86,6 +86,21 @@
             - decl: [ink, string, { call: [<.tone, { call: [<.pen.ink_for, paint] }, 0x1A2430FF] }]
             - decl: [spot, string, "<a:off x=\"${ { call: [<.emu, node.pos_x] } }\" y=\"${ { call: [<.emu, node.pos_y] } }\"/><a:ext cx=\"${ { call: [<.emu, node.width] } }\" cy=\"${ { call: [<.emu, node.height] } }\"/>"]
             - decl: [out, string, "<p:sp><p:nvSpPr><p:cNvPr id=\"${shape_id}\" name=\"${ { call: [<.svg.esc, node.ident] } }\"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>"]
+            # Prose (§3.2) is a plain text box: no fill, no outline, left-aligned.
+            - if:
+                condition: { eq: [node.kind, NodeKind.text] }
+                then:
+                  - set: [out, "${out}<p:spPr><a:xfrm>${spot}</a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"]
+                  - decl: [prose, string, "<p:txBody><a:bodyPr anchor=\"t\" wrap=\"square\" lIns=\"0\" rIns=\"0\"/><a:lstStyle/>"]
+                  - decl: [lines, list<string>, { call: [node.text.split, "\n"] }]
+                  - decl: [row, i32, 0]
+                  - while:
+                      condition: { lt: [row, lines.len] }
+                      body:
+                        - decl: [prose_line, string, { at: [lines, row] }]
+                        - set: [prose, "${prose}<a:p><a:pPr algn=\"l\"/><a:r><a:rPr lang=\"de-DE\" sz=\"1125\" dirty=\"0\"><a:solidFill><a:srgbClr val=\"${ink}\"/></a:solidFill></a:rPr><a:t>${ { call: [<.svg.esc, prose_line] } }</a:t></a:r></a:p>"]
+                        - set: [row, { +: [row, 1] }]
+                  - return: "${out}${prose}</p:txBody></p:sp>"
             - decl: [adjust, string, "<a:avLst/>"]
             # a stadium is a roundRect pushed to its limit: adj 50000 = fully round ends
             - if: { condition: { eq: [node.kind, NodeKind.stadium] }, then: [{ set: [adjust, "<a:avLst><a:gd name=\"adj\" fmla=\"val 50000\"/></a:avLst>"] }] }

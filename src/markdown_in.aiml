@@ -1,0 +1,205 @@
+# Reading Markdown (doc/spec/chart.md §18.4).
+#
+# The inverse of §13 writing it: a heading is the title, a ```mermaid block is the
+# diagram, everything else is prose.  Nothing is dropped -- a table arrives as the
+# pipe-and-dash lines it is written as, because losing it silently would be worse than
+# showing it unformatted (§18.4).
+- import: "src/mermaid_in.aiml"
+
+- class:
+    name: MarkdownIn
+    description: "A Markdown file as slides: title, prose, diagram (spec §18.4)"
+    members:
+      - [mermaid_in, ref<MermaidIn>]
+      - [unread, string]           # passed through from the diagram reader
+    methods:
+      # One slide out of one chunk of Markdown.  The prose nodes are placed first and
+      # the diagram is laid out beneath them, so the order of the document survives.
+      - def:
+          name: one_slide
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [sheet, ref<Sheet>]]
+          body:
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [chart_text, string, ""]
+            - decl: [prose, string, ""]
+            - decl: [in_chart, i32, 0]
+            - decl: [in_code, i32, 0]
+            - decl: [row, i32, 0]
+            - decl: [top, f32, 90.0]
+            - set: [sheet.next_id, 1]
+            - while:
+                condition: { lt: [row, lines.len] }
+                body:
+                  - decl: [raw, string, { at: [lines, row] }]
+                  - decl: [line, string, { call: [raw.trim] }]
+                  - set: [row, { +: [row, 1] }]
+                  - decl: [done, i32, 0]
+                  # a fence opens or closes; ```mermaid goes to the diagram reader,
+                  # every other fence stays prose, fence lines included (§18.4)
+                  - if:
+                      condition: { eq: [{ call: [line.starts_with, "```"] }, 1] }
+                      then:
+                        - set: [done, 1]
+                        - if:
+                            condition: { eq: [in_chart, 1] }
+                            then: [{ set: [in_chart, 0] }]
+                            else:
+                              - if:
+                                  condition: { eq: [in_code, 1] }
+                                  then:
+                                    - set: [in_code, 0]
+                                    - set: [prose, "${prose}${raw}\n"]
+                                  else:
+                                    - if:
+                                        condition: { eq: [{ call: [line.starts_with, "```mermaid"] }, 1] }
+                                        then: [{ set: [in_chart, 1] }]
+                                        else:
+                                          - set: [in_code, 1]
+                                          - set: [prose, "${prose}${raw}\n"]
+                  - if:
+                      condition: { "&&": [{ eq: [done, 0] }, { eq: [in_chart, 1] }] }
+                      then:
+                        - set: [chart_text, "${chart_text}${raw}\n"]
+                        - set: [done, 1]
+                  - if:
+                      condition: { "&&": [{ eq: [done, 0] }, { eq: [in_code, 1] }] }
+                      then:
+                        - set: [prose, "${prose}${raw}\n"]
+                        - set: [done, 1]
+                  - if:
+                      condition: { "&&": [{ eq: [done, 0] }, { eq: [{ call: [line.starts_with, "# "] }, 1] }] }
+                      then:
+                        - decl: [head_text, string, { call: [line.substr, 2, { -: [line.len, 2] }] }]
+                        - set: [sheet.title, { call: [head_text.trim] }]
+                        - set: [done, 1]
+                  - if:
+                      condition: { eq: [done, 0] }
+                      then:
+                        # a blank line ends the paragraph: one node per paragraph
+                        - if:
+                            condition: { eq: [line, ""] }
+                            then:
+                              - if:
+                                  condition: { neq: [prose, ""] }
+                                  then:
+                                    - set: [top, { call: [<.put_prose, sheet, prose, top] }]
+                                    - set: [prose, ""]
+                            else: [{ set: [prose, "${prose}${raw}\n"] }]
+            - if:
+                condition: { neq: [prose, ""] }
+                then: [{ set: [top, { call: [<.put_prose, sheet, prose, top] }] }]
+            - if:
+                condition: { neq: [chart_text, ""] }
+                then:
+                  - call: [<.mermaid_in.read, chart_text, sheet]
+                  - set: [<.unread, "${<.unread}${<.mermaid_in.unread}"]
+                  - call: [<.push_below, sheet, { +: [top, 20.0] }]
+
+      # One paragraph as a text node, and the next one lands below it.
+      - def:
+          name: put_prose
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [prose, string], [top, f32]]
+          return: f32
+          body:
+            - decl: [body_text, string, { call: [prose.trim] }]
+            - if: { condition: { eq: [body_text, ""] }, then: [{ return: top }] }
+            - decl: [lines, list<string>, { call: [body_text.split, "\n"] }]
+            - decl: [tall, f32, { "*": [{ cast: [lines.len, f32] }, 22.0] }]
+            - decl: [node, Node]
+            - set: [node.ident, "t${sheet.next_id}"]
+            - set: [node.kind, NodeKind.text]
+            - set: [node.pos_x, 60.0]
+            - set: [node.pos_y, top]
+            - set: [node.width, 1160.0]
+            - set: [node.height, tall]
+            - set: [node.text, body_text]
+            - call: [sheet.nodes.push, node]
+            - set: [sheet.next_id, { +: [sheet.next_id, 1] }]
+            - return: { +: [{ +: [top, tall] }, 16.0] }
+
+      # The diagram was laid out from the top of the page; the prose is already there,
+      # so everything that is not prose moves down by what the prose used.
+      - def:
+          name: push_below
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [top, f32]]
+          body:
+            - if: { condition: { le: [top, 90.0] }, then: [{ return: null }] }
+            - decl: [shift, f32, { -: [top, 90.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { neq: [node.kind, NodeKind.text] }
+                      then: [{ set: [node.pos_y, { +: [node.pos_y, shift] }] }]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # A whole file.  A second `# ` heading or a `---` rule starts a new slide, and
+      # nothing else does (§18.4): every other splitter would be a guess about what
+      # the author meant by a blank line.
+      - def:
+          name: read
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [deck, ref<Deck>]]
+          return: i32
+          body:
+            - set: [<.unread, ""]
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [chunk, string, ""]
+            - decl: [seen_head, i32, 0]
+            - decl: [fenced, i32, 0]
+            - decl: [row, i32, 0]
+            - while:
+                condition: { lt: [row, lines.len] }
+                body:
+                  - decl: [raw, string, { at: [lines, row] }]
+                  - decl: [line, string, { call: [raw.trim] }]
+                  - set: [row, { +: [row, 1] }]
+                  - if:
+                      condition: { eq: [{ call: [line.starts_with, "```"] }, 1] }
+                      then: [{ set: [fenced, { -: [1, fenced] }] }]
+                  # a splitter inside a fence is content, not a splitter
+                  - decl: [cut, i32, 0]
+                  - if:
+                      condition: { eq: [fenced, 0] }
+                      then:
+                        - if: { condition: { eq: [line, "---"] }, then: [{ set: [cut, 1] }] }
+                        - if:
+                            condition: { "&&": [{ eq: [{ call: [line.starts_with, "# "] }, 1] }, { eq: [seen_head, 1] }] }
+                            then: [{ set: [cut, 1] }]
+                  - if:
+                      condition: { eq: [cut, 1] }
+                      then:
+                        - if:
+                            condition: { neq: [{ call: [chunk.trim] }, ""] }
+                            then:
+                              - decl: [sheet, Sheet]
+                              - call: [<.one_slide, chunk, sheet]
+                              - call: [deck.slides.push, sheet]
+                        - set: [chunk, ""]
+                        - set: [seen_head, 0]
+                        # a heading that split the slide opens the next one
+                        - if:
+                            condition: { eq: [{ call: [line.starts_with, "# "] }, 1] }
+                            then:
+                              - set: [chunk, "${raw}\n"]
+                              - set: [seen_head, 1]
+                      else:
+                        - if: { condition: { eq: [{ call: [line.starts_with, "# "] }, 1] }, then: [{ set: [seen_head, 1] }] }
+                        - set: [chunk, "${chunk}${raw}\n"]
+            - if:
+                condition: { neq: [{ call: [chunk.trim] }, ""] }
+                then:
+                  - decl: [last, Sheet]
+                  - call: [<.one_slide, chunk, last]
+                  - call: [deck.slides.push, last]
+            - if:
+                condition: { eq: [deck.slides.len, 0] }
+                then:
+                  - call: [log.error, "chart: die Datei hat keinen Inhalt ergeben"]
+                  - return: 0
+            - return: 1

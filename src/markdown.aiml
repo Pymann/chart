@@ -111,6 +111,17 @@
             - if:
                 condition: { neq: [sheet.title, ""] }
                 then: [{ set: [out, "# ${sheet.title}\n\n"] }]
+            # Prose first, in sheet order, then the diagram -- the order §18.4 reads
+            # back, so a document opened here and written out again keeps its shape.
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, sheet.nodes.len] }
+                body:
+                  - decl: [prose, Node, { at: [sheet.nodes, pos] }]
+                  - if:
+                      condition: { "&&": [{ eq: [prose.kind, NodeKind.text] }, { neq: [prose.text, ""] }] }
+                      then: [{ set: [out, "${out}${prose.text}\n\n"] }]
+                  - set: [pos, { +: [pos, 1] }]
             - if:
                 condition: { neq: [chart_text, ""] }
                 then: [{ set: [out, "${out}```mermaid\n${chart_text}```\n"] }]

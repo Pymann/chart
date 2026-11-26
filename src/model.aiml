@@ -7,7 +7,10 @@
 - enum:
     name: NodeKind
     wire: true
-    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image]
+    # `text` is prose on the slide, not a box in the graph (spec §3.2): no frame,
+    # left-aligned, and §5.7 leaves it out of the Mermaid projection.  Appended, never
+    # inserted -- the position is the value on disk.
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text]
 
 - enum:
     name: EdgeKind

@@ -83,6 +83,9 @@
           args: [[node, Node], [depth, i32], [class_of, map<string:string>]]
           return: string
           body:
+            # §5.7: prose is not part of the graph.  Leaving it out beats inventing a
+            # box around a paragraph that nobody drew.
+            - if: { condition: { eq: [node.kind, NodeKind.text] }, then: [{ return: "" }] }
             - decl: [pad, string, ""]
             - decl: [step, i32, 0]
             - while:
@@ -187,6 +190,9 @@
                 body:
                   - decl: [node, Node, { at: [sheet.nodes, idx] }]
                   - decl: [key, string, { call: [<.color_key, node] }]
+                  # prose is not declared (§5.7), so its colour must not make a
+                  # class that nothing then uses
+                  - if: { condition: { eq: [node.kind, NodeKind.text] }, then: [{ set: [key, ""] }] }
                   - if:
                       condition: { neq: [key, ""] }
                       then:

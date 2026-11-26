@@ -107,6 +107,28 @@ for fixture in tests/fixture/*.deck.yaml; do
     fi
 done
 
+# Import: Markdown in, slides out (spec §18.4) -- prose, diagram and the parts
+# Markdown carries that chart does not interpret yet.
+for fixture in tests/fixture/mmd/*.md; do
+    [ -e "$fixture" ] || continue
+    name=$(basename "$fixture" .md)
+    expected="tests/expected/import_$name.deck.yaml"
+    got="tests/out/import_$name.deck.yaml"
+    total=$((total + 1))
+    rm -f "$got"
+    if ! "$BIN" --import "$fixture" --out "$got" 2>/dev/null; then
+        echo "[ FAIL ] $name (md import) -- exited non-zero"
+        failed=$((failed + 1))
+        continue
+    fi
+    if diff -u "$expected" "$got"; then
+        echo "[  OK  ] $name (md import)"
+    else
+        echo "[ FAIL ] $name -- imported deck differs from $expected"
+        failed=$((failed + 1))
+    fi
+done
+
 # Import: Mermaid in, a sheet out, byte-exact (spec §18.1 promises determinism).
 for fixture in tests/fixture/mmd/*.mmd; do
     [ -e "$fixture" ] || continue

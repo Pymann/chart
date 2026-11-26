@@ -108,13 +108,19 @@ model, not on the file. Only the (de)serialiser knows both spellings.
 
 These words cross a file boundary (§4) — the sheet on disk names them and a later
 build reads them back. They are therefore `wire: true` (spec/49 §18.2a): the members
-*are* the contract, so an unused one must not warn.
+*are* the contract, so an unused one must not warn. A new member is **appended**, never
+inserted: the position is the value on disk.
+
+`NodeKind.text` is the odd one and is listed last for that reason. It is **prose on the
+slide**, not a box in the graph: drawn with no frame and no fill, left-aligned, and
+skipped by the Mermaid projection (§5.7) because Mermaid has no frameless text. It
+exists so a Markdown file can be read in whole (§18.4) instead of only its diagrams.
 
 ```aiml
 - enum:
     name: NodeKind
     wire: true
-    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image]
+    values: [rect, round, stadium, circle, diamond, hexagon, cylinder, subroutine, image, text]
 
 - enum:
     name: EdgeKind
@@ -265,6 +271,11 @@ case. A non-opaque alpha is **reported once** on export as a warning, not silent
 flattened.
 
 ### 5.7 What is lost (normative list)
+
+- **Prose.** A `text` node is slide text, and a flowchart has nowhere to put it. The
+  Mermaid projection leaves it out rather than inventing a box around it, which would
+  put a paragraph into the graph as a node that nobody drew. Markdown, SVG, PPTX and
+  HTML all carry it.
 
 `x`, `y`, `w`, `h`, alpha, anchor sides, group bounding boxes, `next_id`. This list is
 the justification for §2 and must be kept current when the model grows.
@@ -1086,6 +1097,33 @@ files over a formality.
   so in the status line after an import, because an author who believes the layout is
   meaningful will read structure into an accident.
 
+### 18.4 Markdown (normative)
+
+A `.md` file is read as a **slide**, which is the inverse of §13 writing one: that is
+the shape this import is built to close, so `chart -> md -> chart` keeps the title, the
+prose and the diagram.
+
+- A level-1 heading (`# …`) is the slide's **title**. A second one starts a **new
+  slide**, as does a `---` rule on its own line. Nothing else splits slides.
+- A fenced ```` ```mermaid ```` block is read by §18.2 and laid out by §18.3, below the
+  prose.
+- Every other line is **prose** and becomes `text` nodes, in file order, one node per
+  paragraph (blank line ends a paragraph). The slide's own order is preserved: prose
+  that stood before the diagram stays above it.
+- **Not interpreted yet**: tables, lists, images, links, emphasis. They are kept as the
+  **plain text they are written as**, so nothing is lost from the file — a table arrives
+  as its pipe-and-dash lines. Dropping them would be worse, and rendering them is a
+  separate piece of work that has to be done properly or not at all.
+- Other fenced blocks (` ```python `) are kept as prose too, fence lines included, so
+  that a code sample in a document survives being opened here.
+
+**Why prose is a node and not a slide field.** A slide can hold several paragraphs in
+several places, and once it is on the sheet the author will want to move it, widen it
+and colour it like everything else. A single `notes`-style string could do none of that,
+and §14 already reserves `notes` for what the presenter sees and the audience does not.
+
+---
+
 ## 19. Stage plan for the surface
 
 | Stage | Content |
@@ -1096,7 +1134,7 @@ files over a formality.
 | **3** | Presentation mode, image drawing, slide strip |
 | **4** | Freehand recognition (§7) and straightening (§7.6) |
 | **5** | Files (§16) and the export formats of §17 |
-| **6** | Reading Mermaid back in (§18) |
+| **6** | Reading Mermaid back in (§18) and Markdown with it (§18.4) |
 
 Stages 1 and 3 are deliberately split: everything in stage 1 can be tested without a
 display, and that is where the export promises of §2 and §13 are actually checked. The

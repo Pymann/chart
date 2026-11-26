@@ -120,6 +120,22 @@
             - decl: [mid_y, f32, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
             - decl: [out, string, ""]
 
+            # Prose (§3.2): the lines as they are, from the top left, no box.
+            - if:
+                condition: { eq: [node.kind, NodeKind.text] }
+                then:
+                  - decl: [lines, list<string>, { call: [node.text.split, "\n"] }]
+                  - decl: [line_y, f32, { +: [node.pos_y, 15.0] }]
+                  - decl: [row, i32, 0]
+                  - while:
+                      condition: { lt: [row, lines.len] }
+                      body:
+                        - decl: [prose_line, string, { at: [lines, row] }]
+                        - set: [out, "${out}  <text x=\"${pos_x}\" y=\"${ { call: [<.num, line_y] } }\" fill=\"${ink}\">${ { call: [<.esc, prose_line] } }</text>\n"]
+                        - set: [line_y, { +: [line_y, 22.0] }]
+                        - set: [row, { +: [row, 1] }]
+                  - return: out
+
             # An image carries its file and its caption BELOW the box, as the canvas
             # does (§12): a caption over the picture covers the picture.
             - if:
