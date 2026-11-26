@@ -1,0 +1,322 @@
+# SVG export (doc/spec/chart.md §17.1).
+#
+# The faithful projection: the sheet's units ARE the SVG units (viewBox 0 0 1280 720),
+# so coordinates, sizes and colours survive -- exactly what Mermaid drops (§5.7).
+#
+# It draws the same shapes the canvas draws, not better ones: the canvas is what the
+# author arranged, and an export that silently improved a shape would show something
+# they never saw (§14, same reason).
+- import: "src/pen.aiml"
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: SvgOut
+    description: "One slide as an SVG document (spec §17.1)"
+    members:
+      - [pen, ref<Pen>]               # borrow: edge_stop and ink_for are pure
+    methods:
+      # A number with at most one decimal, never an exponent and never a trailing
+      # ".0": the byte-exact tests of §9 need one spelling per value, and "1e+02" in
+      # a coordinate is also a renderer's problem.
+      - def:
+          name: num
+          args: [[value, f32]]
+          return: string
+          body:
+            - decl: [sign, string, ""]
+            - decl: [val, f32, value]
+            - if: { condition: { lt: [val, 0.0] }, then: [{ set: [sign, "-"] }, { set: [val, { -: [0.0, val] }] }] }
+            - decl: [tenths, i32, { cast: [{ call: [math.round, { "*": [val, 10.0] }] }, i32] }]
+            - decl: [whole, i32, { cast: [{ "/": [tenths, 10] }, i32] }]
+            - decl: [rest, i32, { "%": [tenths, 10] }]
+            - if: { condition: { eq: [rest, 0] }, then: [{ return: "${sign}${whole}" }] }
+            - return: "${sign}${whole}.${rest}"
+
+      - def:
+          name: hex_byte
+          args: [[value, i32]]
+          return: string
+          body:
+            - decl: [digits, string, "0123456789abcdef"]
+            - decl: [top_nib, i32, { cast: [{ "/": [value, 16] }, i32] }]
+            - decl: [low_nib, i32, { "%": [value, 16] }]
+            - return: "${ { call: [digits.substr, top_nib, 1] } }${ { call: [digits.substr, low_nib, 1] } }"
+
+      # 0xRRGGBBAA -> "#rrggbb".  ushr, not shr: the theme colours have the high bit
+      # set (0xF2F5F9FF as i32 is negative) and an arithmetic shift would smear it.
+      - def:
+          name: rgb
+          args: [[colour, i32], [fallback, i32]]
+          return: string
+          body:
+            - decl: [val, i32, colour]
+            - if: { condition: { eq: [val, 0] }, then: [{ set: [val, fallback] }] }
+            - decl: [red, i32, { band: [{ ushr: [val, 24] }, 255] }]
+            - decl: [green, i32, { band: [{ ushr: [val, 16] }, 255] }]
+            - decl: [blue, i32, { band: [{ ushr: [val, 8] }, 255] }]
+            - return: "#${ { call: [<.hex_byte, red] } }${ { call: [<.hex_byte, green] } }${ { call: [<.hex_byte, blue] } }"
+
+      # XML text, not HTML: &amp; first, or the ampersands of the later escapes are
+      # escaped a second time and "&lt;" arrives as "&amp;lt;".
+      - def:
+          name: esc
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          return: string
+          body:
+            - decl: [out, string, { call: [text.replace, "&", "&amp;"] }]
+            - set: [out, { call: [out.replace, "<", "&lt;"] }]
+            - set: [out, { call: [out.replace, ">", "&gt;"] }]
+            - set: [out, { call: [out.replace, "\"", "&quot;"] }]
+            - return: out
+
+      # Centred label.  text-anchor does the horizontal centring, which is why this
+      # export needs no text measurement -- ui.measure_text needs a window, and an
+      # export must run headless (§9).
+      - def:
+          name: label_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>], [text, string], [tint, string]]
+          return: string
+          body:
+            - if: { condition: { eq: [text, ""] }, then: [{ return: "" }] }
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [line_h, f32, 19.0]
+            - decl: [mid_x, f32, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+            - decl: [mid_y, f32, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+            - decl: [rows, f32, { cast: [lines.len, f32] }]
+            # first baseline: the block is centred, then nudged by a third of a line
+            # so letters sit on the middle rather than hanging under it
+            - decl: [base_y, f32, { +: [{ -: [mid_y, { /: [{ "*": [line_h, { -: [rows, 1.0] }] }, 2.0] }] }, 5.0] }]
+            - decl: [out, string, ""]
+            - decl: [row, i32, 0]
+            - while:
+                condition: { lt: [row, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, row] }]
+                  - decl: [line_y, f32, { +: [base_y, { "*": [line_h, { cast: [row, f32] }] }] }]
+                  - set: [out, "${out}  <text x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, line_y] } }\" fill=\"${tint}\" text-anchor=\"middle\">${ { call: [<.esc, line] } }</text>\n"]
+                  - set: [row, { +: [row, 1] }]
+            - return: out
+
+      - def:
+          name: node_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[node, ref<Node>]]
+          return: string
+          body:
+            # the theme default goes in FIRST: ink_for reads the luminance, and a raw
+            # 0 reads as black, which gave white letters on a light box
+            - decl: [paint, i32, node.fill]
+            - if: { condition: { eq: [paint, 0] }, then: [{ set: [paint, 0xF2F5F9FF] }] }
+            - decl: [fill, string, { call: [<.rgb, paint, 0xF2F5F9FF] }]
+            - decl: [line, string, { call: [<.rgb, node.stroke, 0x3A4A5AFF] }]
+            - decl: [ink, string, { call: [<.rgb, { call: [<.pen.ink_for, paint] }, 0x1A2430FF] }]
+            - decl: [pos_x, string, { call: [<.num, node.pos_x] }]
+            - decl: [pos_y, string, { call: [<.num, node.pos_y] }]
+            - decl: [wide, string, { call: [<.num, node.width] }]
+            - decl: [tall, string, { call: [<.num, node.height] }]
+            - decl: [mid_x, f32, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+            - decl: [mid_y, f32, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+            - decl: [out, string, ""]
+
+            # An image carries its file and its caption BELOW the box, as the canvas
+            # does (§12): a caption over the picture covers the picture.
+            - if:
+                condition: { eq: [node.kind, NodeKind.image] }
+                then:
+                  - if:
+                      condition: { neq: [node.src, ""] }
+                      then:
+                        - set: [out, "${out}  <image href=\"${ { call: [<.esc, node.src] } }\" x=\"${pos_x}\" y=\"${pos_y}\" width=\"${wide}\" height=\"${tall}\" preserveAspectRatio=\"xMidYMid meet\"/>\n"]
+                      else:
+                        - set: [out, "${out}  <rect x=\"${pos_x}\" y=\"${pos_y}\" width=\"${wide}\" height=\"${tall}\" fill=\"#e8e2d8\"/>\n"]
+                  - set: [out, "${out}  <rect x=\"${pos_x}\" y=\"${pos_y}\" width=\"${wide}\" height=\"${tall}\" fill=\"none\" stroke=\"${line}\"/>\n"]
+                  - if:
+                      condition: { neq: [node.text, ""] }
+                      then:
+                        - decl: [cap, Node]
+                        - set: [cap.pos_x, node.pos_x]
+                        - set: [cap.pos_y, { +: [node.pos_y, node.height] }]
+                        - set: [cap.width, node.width]
+                        - set: [cap.height, 24.0]
+                        - set: [out, "${out}${ { call: [<.label_svg, cap, node.text, \"#4a5a6a\"] } }"]
+                  - return: out
+
+            - if:
+                condition: { eq: [node.kind, NodeKind.diamond] }
+                then:
+                  - decl: [top, string, "${ { call: [<.num, mid_x] } },${pos_y}"]
+                  - decl: [right, string, "${ { call: [<.num, { +: [node.pos_x, node.width] }] } },${ { call: [<.num, mid_y] } }"]
+                  - decl: [low, string, "${ { call: [<.num, mid_x] } },${ { call: [<.num, { +: [node.pos_y, node.height] }] } }"]
+                  - decl: [left, string, "${pos_x},${ { call: [<.num, mid_y] } }"]
+                  - set: [out, "  <polygon points=\"${top} ${right} ${low} ${left}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+
+            - if:
+                condition: { eq: [node.kind, NodeKind.hexagon] }
+                then:
+                  - decl: [cut, f32, { "*": [node.width, 0.18] }]
+                  - decl: [x_a, string, { call: [<.num, { +: [node.pos_x, cut] }] }]
+                  - decl: [x_b, string, { call: [<.num, { -: [{ +: [node.pos_x, node.width] }, cut] }] }]
+                  - decl: [y_t, string, "${pos_y}"]
+                  - decl: [y_b, string, { call: [<.num, { +: [node.pos_y, node.height] }] }]
+                  - decl: [x_r, string, { call: [<.num, { +: [node.pos_x, node.width] }] }]
+                  - decl: [y_m, string, { call: [<.num, mid_y] }]
+                  - set: [out, "  <polygon points=\"${x_a},${y_t} ${x_b},${y_t} ${x_r},${y_m} ${x_b},${y_b} ${x_a},${y_b} ${pos_x},${y_m}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+
+            # round, circle and stadium are all an ellipse on the canvas, so they are
+            # one here too -- see the file header
+            - decl: [oval, i32, 0]
+            - if: { condition: { eq: [node.kind, NodeKind.circle] }, then: [{ set: [oval, 1] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.round] }, then: [{ set: [oval, 1] }] }
+            - if: { condition: { eq: [node.kind, NodeKind.stadium] }, then: [{ set: [oval, 1] }] }
+            - if:
+                condition: { eq: [oval, 1] }
+                then:
+                  - set: [out, "  <ellipse cx=\"${ { call: [<.num, mid_x] } }\" cy=\"${ { call: [<.num, mid_y] } }\" rx=\"${ { call: [<.num, { /: [node.width, 2.0] }] } }\" ry=\"${ { call: [<.num, { /: [node.height, 2.0] }] } }\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+                  - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+
+            - set: [out, "  <rect x=\"${pos_x}\" y=\"${pos_y}\" width=\"${wide}\" height=\"${tall}\" fill=\"${fill}\" stroke=\"${line}\"/>\n"]
+            - if:
+                condition: { eq: [node.kind, NodeKind.subroutine] }
+                then:
+                  - decl: [in_a, string, { call: [<.num, { +: [node.pos_x, 9.0] }] }]
+                  - decl: [in_b, string, { call: [<.num, { -: [{ +: [node.pos_x, node.width] }, 9.0] }] }]
+                  - decl: [y_b, string, { call: [<.num, { +: [node.pos_y, node.height] }] }]
+                  - set: [out, "${out}  <line x1=\"${in_a}\" y1=\"${pos_y}\" x2=\"${in_a}\" y2=\"${y_b}\" stroke=\"${line}\"/>\n"]
+                  - set: [out, "${out}  <line x1=\"${in_b}\" y1=\"${pos_y}\" x2=\"${in_b}\" y2=\"${y_b}\" stroke=\"${line}\"/>\n"]
+            - return: "${out}${ { call: [<.label_svg, node, node.text, ink] } }"
+
+      # Edges stop at the OUTLINE, with the same pen.edge_stop the canvas uses, and
+      # the heads are explicit polylines rather than <marker>: a marker inherits the
+      # line's dash pattern in some renderers, so a dotted arrow grew a dotted head.
+      - def:
+          name: edge_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [edge, ref<Edge>]]
+          return: string
+          body:
+            - if: { condition: { eq: [edge.kind, EdgeKind.invisible] }, then: [{ return: "" }] }
+            - decl: [found, i32, 0]
+            - decl: [src_cx, f32, 0.0]
+            - decl: [src_cy, f32, 0.0]
+            - decl: [src_hw, f32, 0.0]
+            - decl: [src_hh, f32, 0.0]
+            - decl: [src_kind, i32, 0]
+            - decl: [dst_cx, f32, 0.0]
+            - decl: [dst_cy, f32, 0.0]
+            - decl: [dst_hw, f32, 0.0]
+            - decl: [dst_hh, f32, 0.0]
+            - decl: [dst_kind, i32, 0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, edge.from_id] }
+                      then:
+                        - set: [src_cx, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+                        - set: [src_cy, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+                        - set: [src_hw, { /: [node.width, 2.0] }]
+                        - set: [src_hh, { /: [node.height, 2.0] }]
+                        - set: [src_kind, node.kind]
+                        - set: [found, { +: [found, 1] }]
+                  - if:
+                      condition: { eq: [node.ident, edge.to_id] }
+                      then:
+                        - set: [dst_cx, { +: [node.pos_x, { /: [node.width, 2.0] }] }]
+                        - set: [dst_cy, { +: [node.pos_y, { /: [node.height, 2.0] }] }]
+                        - set: [dst_hw, { /: [node.width, 2.0] }]
+                        - set: [dst_hh, { /: [node.height, 2.0] }]
+                        - set: [dst_kind, node.kind]
+                        - set: [found, { +: [found, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+            # an endpoint that is gone draws nothing: §5 refuses to project it too
+            - if: { condition: { lt: [found, 2] }, then: [{ return: "" }] }
+            - decl: [del_x, f32, { -: [src_cx, dst_cx] }]
+            - decl: [del_y, f32, { -: [src_cy, dst_cy] }]
+            - decl: [span, f32, { call: [math.sqrt, { +: [{ "*": [del_x, del_x] }, { "*": [del_y, del_y] }] }] }]
+            - if: { condition: { lt: [span, 1.0] }, then: [{ return: "" }] }
+            - decl: [uni_x, f32, { /: [del_x, span] }]
+            - decl: [uni_y, f32, { /: [del_y, span] }]
+            - decl: [stop_dst, f32, { call: [<.pen.edge_stop, dst_hw, dst_hh, uni_x, uni_y, dst_kind] }]
+            - decl: [stop_src, f32, { call: [<.pen.edge_stop, src_hw, src_hh, uni_x, uni_y, src_kind] }]
+            - decl: [tip_x, f32, { +: [dst_cx, { "*": [uni_x, stop_dst] }] }]
+            - decl: [tip_y, f32, { +: [dst_cy, { "*": [uni_y, stop_dst] }] }]
+            - decl: [end_x, f32, { -: [src_cx, { "*": [uni_x, stop_src] }] }]
+            - decl: [end_y, f32, { -: [src_cy, { "*": [uni_y, stop_src] }] }]
+            - decl: [tint, string, { call: [<.rgb, edge.stroke, 0x55687AFF] }]
+            - decl: [thick, string, "2"]
+            - if: { condition: { eq: [edge.kind, EdgeKind.thick] }, then: [{ set: [thick, "4.5"] }] }
+            - decl: [dash, string, ""]
+            - if: { condition: { eq: [edge.kind, EdgeKind.dotted] }, then: [{ set: [dash, " stroke-dasharray=\"7 6\""] }] }
+            - decl: [out, string, "  <line x1=\"${ { call: [<.num, end_x] } }\" y1=\"${ { call: [<.num, end_y] } }\" x2=\"${ { call: [<.num, tip_x] } }\" y2=\"${ { call: [<.num, tip_y] } }\" stroke=\"${tint}\" stroke-width=\"${thick}\"${dash}/>\n"]
+            - decl: [open_line, i32, 0]
+            - if: { condition: { eq: [edge.kind, EdgeKind.open] }, then: [{ set: [open_line, 1] }] }
+            - if:
+                condition: { eq: [open_line, 0] }
+                then: [{ set: [out, "${out}${ { call: [<.head_svg, tip_x, tip_y, uni_x, uni_y] } }"] }]
+            - if:
+                condition: { eq: [edge.kind, EdgeKind.bidirectional] }
+                then: [{ set: [out, "${out}${ { call: [<.head_svg, end_x, end_y, { -: [0.0, uni_x] }, { -: [0.0, uni_y] }] } }"] }]
+            - if:
+                condition: { neq: [edge.text, ""] }
+                then:
+                  - decl: [mid_x, f32, { /: [{ +: [end_x, tip_x] }, 2.0] }]
+                  - decl: [mid_y, f32, { /: [{ +: [end_y, tip_y] }, 2.0] }]
+                  # Twice: a white outline underneath, the letters on top.  The one
+                  # attribute that does this in one element is paint-order, and a
+                  # renderer that does not know it draws the outline OVER the glyphs
+                  # -- the label then vanishes instead of standing out. Two elements
+                  # work everywhere, and a backing rect would need a measurement
+                  # that a headless export cannot take (§17.1).
+                  - decl: [spot, string, "x=\"${ { call: [<.num, mid_x] } }\" y=\"${ { call: [<.num, mid_y] } }\" text-anchor=\"middle\" font-size=\"13\""]
+                  - decl: [say, string, { call: [<.esc, edge.text] }]
+                  - set: [out, "${out}  <text ${spot} fill=\"none\" stroke=\"#ffffff\" stroke-width=\"3\">${say}</text>\n"]
+                  - set: [out, "${out}  <text ${spot} fill=\"#33404d\">${say}</text>\n"]
+            - return: out
+
+      - def:
+          name: head_svg
+          args: [[at_x, f32], [at_y, f32], [uni_x, f32], [uni_y, f32]]
+          return: string
+          body:
+            - decl: [reach, f32, 16.0]
+            - decl: [one_x, f32, { +: [at_x, { "*": [{ -: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, reach] }] }]
+            - decl: [one_y, f32, { +: [at_y, { "*": [{ +: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, reach] }] }]
+            - decl: [two_x, f32, { +: [at_x, { "*": [{ +: [{ "*": [uni_x, 0.92] }, { "*": [uni_y, 0.40] }] }, reach] }] }]
+            - decl: [two_y, f32, { +: [at_y, { "*": [{ -: [{ "*": [uni_y, 0.92] }, { "*": [uni_x, 0.40] }] }, reach] }] }]
+            - return: "  <polygon points=\"${ { call: [<.num, at_x] } },${ { call: [<.num, at_y] } } ${ { call: [<.num, one_x] } },${ { call: [<.num, one_y] } } ${ { call: [<.num, two_x] } },${ { call: [<.num, two_y] } }\" fill=\"#55687a\"/>\n"
+
+      # One slide, whole document.  Nodes first, then edges: an arrow must not end up
+      # under a box it points at (§17.1).
+      - def:
+          name: emit
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          return: string
+          body:
+            - decl: [out, string, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"]
+            - set: [out, "${out}<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1280 720\" width=\"1280\" height=\"720\" font-family=\"DejaVu Sans, Helvetica, Arial, sans-serif\" font-size=\"15\">\n"]
+            - set: [out, "${out}  <rect width=\"1280\" height=\"720\" fill=\"#ffffff\"/>\n"]
+            - if:
+                condition: { neq: [sheet.title, ""] }
+                then: [{ set: [out, "${out}  <text x=\"52\" y=\"38\" font-size=\"22\" fill=\"#101a24\">${ { call: [<.esc, sheet.title] } }</text>\n"] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - set: [out, "${out}${ { call: [<.node_svg, node] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, sheet.edges.len] }
+                body:
+                  - decl: [edge, ref<Edge>, { at: [sheet.edges, idx] }]
+                  - set: [out, "${out}${ { call: [<.edge_svg, sheet, edge] } }"]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: "${out}</svg>\n"

@@ -840,7 +840,119 @@ fine on screen.
 
 ---
 
-## 16. Stage plan for the surface
+## 16. Files: opening, saving, picking
+
+There is **no OS file dialog** in aiml, and chart does not pretend otherwise: the file
+browser is drawn by chart itself from `io.list_dir`, the way glbview's already is. That
+is not a workaround to be replaced later — a dialog drawn by the application keeps the
+filter, the sort order and the keyboard in one place, and `ui.*` is an immediate-mode
+surface where a modal native dialog would block the frame loop.
+
+### 16.1 The browser (normative)
+
+- It is **modal over the canvas**: while it is open the canvas takes no presses and the
+  ink is not read. §6's rule stands — one consumer for the keyboard, and while the
+  browser is open that consumer is the browser.
+- Entries are **directories first, then files, each sorted by name**; entries whose name
+  begins with `.` are skipped. The current directory is shown as a header, `../` goes up
+  and is absent at the root.
+- It opens in the directory of the **current file**, not in the process's working
+  directory: the next file an author wants is almost always next to the last one.
+- A **filter** per purpose: `open` shows `*.chart.yaml` and `*.deck.yaml`, `image` shows
+  `*.png *.jpg *.jpeg`, `export` shows every directory and no files at all, because its
+  answer is a directory.
+- A click on a directory enters it; a click on a file **selects** it; the confirm button
+  (or `Enter`) answers. `Escape` closes with no answer, and no answer means **nothing
+  happens** — not "export to the directory that happened to be open".
+
+### 16.2 Open, save, save as
+
+- The deck remembers the path it came from. `Ctrl+S` writes back to it; with no path yet
+  it behaves as save-as.
+- Save-as asks for a **name** as well as a directory, and refuses an empty name rather
+  than inventing one.
+- The sheet is **dirty** from the first edit that changes it, and the window title and
+  the bar say so. Writing clears it.
+- Opening another file, or quitting, **while dirty asks first**, with three answers:
+  save, discard, cancel. A surface that drops an hour of arranging because a key was hit
+  is not finished software, and "it was in the status line" is not a warning.
+
+### 16.3 Images
+
+An image node's `src` is picked with the same browser (`image` filter). The path is
+stored **relative to the deck file** when it is below the deck's directory, absolute
+otherwise: a deck that is moved or shared with its images next to it keeps working, and
+one that points into someone's home directory says so plainly instead of breaking
+silently somewhere else.
+
+---
+
+## 17. Export formats
+
+§2 stands: the sheet is the document and every export is a projection. What differs is
+how much of the sheet survives, so each format says what it keeps and what it drops.
+
+| Format | Flag | Keeps | Drops |
+|---|---|---|---|
+| Mermaid | `--mermaid FILE.mmd` | structure, shapes, colour, groups | **coordinates, sizes, anchor sides** (§5.7) |
+| Markdown | `--markdown DIR` | one file per slide, title, notes-free body, the Mermaid inline | as Mermaid |
+| **SVG** | `--svg DIR` | everything the canvas shows: coordinates, sizes, colour, text | group boxes — the canvas does not draw them either (§15.2) |
+| **PPTX** | `--pptx FILE` | one slide per sheet, as **editable** PowerPoint shapes with text | groups, dotted-edge nuance, the exact font |
+| **HTML** | `--html FILE` | one self-contained deck, arrow keys, needs no PowerPoint | whatever the SVG drops |
+| **PNG** | `--png DIR` | pixels, one file per slide | everything structural |
+
+**PDF is deliberately absent.** `soffice --headless --convert-to pdf` turns the PPTX
+into one, and a PDF writer inside chart would be a second renderer to keep in step with
+the canvas forever. A format that another tool already derives from our output is not
+our job.
+
+**Not planned, with reasons:** PlantUML and Graphviz DOT duplicate Mermaid's role and
+would double the projection surface for nothing; JSON and CSV would be a second
+serialisation of the data the sheet already is (§4).
+
+### 17.1 SVG (normative)
+
+- One file per slide, named as the Markdown export names its files (§13), extension
+  `.svg`.
+- The page is the slide: `viewBox="0 0 1280 720"`, so the sheet's units ARE the SVG
+  units and no scale has to be reasoned about.
+- Node order is sheet order (§15.2: z-order is file order). Edges draw after nodes so an
+  arrow is never hidden under a box.
+- Text is `<text>` with `text-anchor="middle"`, not paths: a diagram whose labels can be
+  searched and copied is worth more than one whose font is guaranteed.
+- Deterministic: same sheet, same bytes. No timestamps, no random ids — §9's byte-exact
+  tests depend on it. Numbers carry at most one decimal and never an exponent, so one
+  value has one spelling.
+- An **edge label is drawn twice**: a white outline first, the letters on top. The single
+  attribute that does this (`paint-order`) is not understood everywhere, and a renderer
+  that ignores it paints the outline OVER the glyphs -- the label then disappears instead
+  of standing out. Two elements work in every renderer.
+- Groups are not drawn, because the canvas does not draw them (§15.2). Mermaid is the
+  export that carries them (§5.5).
+
+### 17.2 PPTX (normative)
+
+- OOXML, written as a directory tree and zipped with `compress.zip`. Slide size
+  12192000 x 6858000 EMU (16:9); one EMU-per-sheet-unit factor of 9525, so the 1280x720
+  page maps exactly.
+- Shapes are **real** `p:sp` with `a:prstGeom` — `rect`, `roundRect`, `ellipse`,
+  `diamond`, `parallelogram`, `hexagon` — and the label in `a:t`. The point of a PPTX is
+  that someone can edit it afterwards; a slide holding one flat picture would be a
+  screenshot with extra steps.
+- Edges are `p:cxnSp` straight connectors with the arrow head in `a:tailEnd`.
+- The zip stores modification times, so a PPTX is **not** byte-comparable. Its test is
+  structural instead: the XML parts are compared byte-exact before zipping, and
+  `soffice --headless --convert-to pdf` must read the finished file — an external reader
+  is the only honest check that the container is valid.
+
+### 17.3 HTML (normative)
+
+One file, no network: each slide is the §17.1 SVG inlined, `ArrowRight`/`ArrowLeft`
+switch, `?slide=N` opens one directly. No external script or font, because an export
+that needs a CDN stops working exactly when it is needed — offline, in a train, in five
+years.
+
+## 18. Stage plan for the surface
 
 | Stage | Content |
 |---|---|
@@ -849,6 +961,7 @@ fine on screen.
 | **2** | The window: action bar, canvas, stencils, selection, drag, label editing |
 | **3** | Presentation mode, image drawing, slide strip |
 | **4** | Freehand recognition (§7) and straightening (§7.6) |
+| **5** | Files (§16) and the export formats of §17 |
 
 Stages 1 and 3 are deliberately split: everything in stage 1 can be tested without a
 display, and that is where the export promises of §2 and §13 are actually checked. The

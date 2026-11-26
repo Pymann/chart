@@ -5,6 +5,7 @@
 - import: "src/sheet.aiml"
 - import: "src/mermaid.aiml"
 - import: "src/markdown.aiml"
+- import: "src/svg.aiml"
 
 - model:
     name: ChartOptions
@@ -14,6 +15,8 @@
       - [deck, string, ""]         # input: a deck, or a sheet -- both load as a deck (spec §11.1)
       - [mermaid, string, ""]      # output: one .mmd, only for a one-slide deck
       - [markdown, string, ""]     # output: a directory, one Markdown file per slide (spec §13)
+      - [svg, string, ""]          # output: a directory, one SVG per slide (spec §17.1)
+      - [html, string, ""]         # output: one self-contained deck file (spec §17.3)
       # Testing and screenshots: run a fixed number of frames, optionally capture the
       # last one.  Without this the editor runs until the window closes, and a test
       # that waits for a human is a test nobody runs (aiml run_all_tests.sh: a
@@ -39,6 +42,7 @@
       - [sheet_io, ref<SheetIO>]      # borrow, wired by the classgroup (aiml spec/58 §5.1)
       - [mermaid, ref<MermaidOut>]
       - [markdown, ref<MarkdownOut>]
+      - [svg, ref<SvgOut>]
     methods:
       # buffer.write_to reports a short write or a failed flush; io.write cannot
       # (aiml spec/23) -- and a half-written diagram must not pass for a written one.
@@ -96,6 +100,64 @@
             - decl: [index_page, string, { call: [<.markdown.index_md, deck] }]
             - return: { call: [<.write_file, "${dir_path}/README.md", index_page] }
 
+      # One SVG per slide, named exactly as the Markdown export names its files
+      # (spec §17.1), so a directory holding both lines up slide by slide.
+      - def:
+          name: write_svg
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [dir_path, string]]
+          return: i32
+          body:
+            - call: [io.mkdir_all, dir_path]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [slide, Sheet, { at: [deck.slides, idx] }]
+                  - decl: [number, i32, { +: [idx, 1] }]
+                  - decl: [name, string, { call: [<.markdown.stem, number, slide.title] }]
+                  - decl: [page, string, { call: [<.svg.emit, slide] }]
+                  - if:
+                      condition: { eq: [{ call: [<.write_file, "${dir_path}/${name}.svg", page] }, 0] }
+                      then: [{ return: 0 }]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 1
+
+      # One file, no network (spec §17.3).  The slides are the same SVGs, inlined;
+      # there is no second renderer to keep in step.
+      - def:
+          name: write_html
+          static_off: ["same_arg", "str_cmp"]
+          args: [[deck, ref<Deck>], [file_path, string]]
+          return: i32
+          body:
+            - decl: [title, string, deck.title]
+            - if: { condition: { eq: [title, ""] }, then: [{ set: [title, "chart"] }] }
+            - decl: [out, string, "<!doctype html>\n<html lang=\"de\">\n<meta charset=\"utf-8\">\n"]
+            - set: [out, "${out}<title>${ { call: [<.svg.esc, title] } }</title>\n"]
+            - set: [out, "${out}<style>\n"]
+            - set: [out, "${out}  html,body{margin:0;background:#101a24;color:#e8eef4;font:15px/1.5 system-ui,sans-serif}\n"]
+            - set: [out, "${out}  .slide{display:none;height:100vh;align-items:center;justify-content:center}\n"]
+            - set: [out, "${out}  .slide.on{display:flex}\n"]
+            - set: [out, "${out}  svg{max-width:100vw;max-height:100vh;height:auto;width:auto;box-shadow:0 0 40px #0008}\n"]
+            - set: [out, "${out}  #count{position:fixed;right:14px;bottom:10px;opacity:.55}\n"]
+            - set: [out, "${out}</style>\n"]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [slide, Sheet, { at: [deck.slides, idx] }]
+                  - set: [out, "${out}<div class=\"slide\">\n${ { call: [<.svg.emit, slide] } }</div>\n"]
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [out, "${out}<div id=\"count\"></div>\n<script>\n"]
+            - set: [out, "${out}const pages=[...document.querySelectorAll('.slide')];\n"]
+            - set: [out, "${out}let at=Math.min(Math.max(parseInt(new URLSearchParams(location.search).get('slide')||'1',10)-1,0),pages.length-1);\n"]
+            - set: [out, "${out}function show(){pages.forEach((p,i)=>p.classList.toggle('on',i===at));document.getElementById('count').textContent=(at+1)+' / '+pages.length;}\n"]
+            - set: [out, "${out}addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){at=Math.min(at+1,pages.length-1);show();}if(e.key==='ArrowLeft'||e.key==='PageUp'){at=Math.max(at-1,0);show();}if(e.key==='Home'){at=0;show();}if(e.key==='End'){at=pages.length-1;show();}});\n"]
+            - set: [out, "${out}addEventListener('click',()=>{at=Math.min(at+1,pages.length-1);show();});\n"]
+            - set: [out, "${out}show();\n</script>\n</html>\n"]
+            - return: { call: [<.write_file, file_path, out] }
+
       - def:
           name: run
           static_off: ["same_arg", "str_cmp"]
@@ -114,6 +176,20 @@
                 then:
                   - if:
                       condition: { eq: [{ call: [<.write_markdown, deck, options.markdown] }, 0] }
+                      then: [{ return: 1 }]
+
+            - if:
+                condition: { neq: [options.svg, ""] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.write_svg, deck, options.svg] }, 0] }
+                      then: [{ return: 1 }]
+
+            - if:
+                condition: { neq: [options.html, ""] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.write_html, deck, options.html] }, 0] }
                       then: [{ return: 1 }]
 
             - if:

@@ -1563,9 +1563,12 @@
         instance: mermaid
       - class: MarkdownOut
         instance: markdown
+      - class: SvgOut
+        instance: svg
+        sees: [pen]
       - class: Exporter
         instance: exporter
-        sees: [sheet_io, mermaid, markdown]
+        sees: [sheet_io, mermaid, markdown, svg]
       - class: Recognizer
         instance: recognizer
       - class: Ink

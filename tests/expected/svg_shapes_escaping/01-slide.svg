@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" font-family="DejaVu Sans, Helvetica, Arial, sans-serif" font-size="15">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <polygon points="18,0 82,0 100,25 82,50 18,50 0,25" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="50" y="30" fill="#1a2430" text-anchor="middle">x[1]-y</text>
+  <rect x="0" y="80" width="100" height="50" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="50" y="100.5" fill="#1a2430" text-anchor="middle">line1</text>
+  <text x="50" y="119.5" fill="#1a2430" text-anchor="middle">line2</text>
+  <rect x="0" y="160" width="100" height="50" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <line x1="9" y1="160" x2="9" y2="210" stroke="#3a4a5a"/>
+  <line x1="91" y1="160" x2="91" y2="210" stroke="#3a4a5a"/>
+  <text x="50" y="190" fill="#1a2430" text-anchor="middle">plain</text>
+  <line x1="50" y1="50" x2="50" y2="80" stroke="#55687a" stroke-width="2"/>
+</svg>

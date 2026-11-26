@@ -73,15 +73,25 @@
             - if: { condition: { lt: [number, 10] }, then: [{ return: "0${number}" }] }
             - return: "${number}"
 
+      # Shared with the SVG and PNG exports (spec §17.1): one slide has ONE name
+      # across every format, so the files of a deck line up in a listing.
       - def:
-          name: file_name
+          name: stem
           static_off: ["same_arg", "str_cmp"]
           args: [[number, i32], [title, string]]
           return: string
           body:
             - decl: [digits, string, { call: [<.two_digits, number] }]
             - decl: [name, string, { call: [<.slug, title] }]
-            - return: "${digits}-${name}.md"
+            - return: "${digits}-${name}"
+
+      - def:
+          name: file_name
+          static_off: ["same_arg", "str_cmp"]
+          args: [[number, i32], [title, string]]
+          return: string
+          body:
+            - return: "${ { call: [<.stem, number, title] } }.md"
 
       # One slide.  `chart_text` is the Mermaid projection (spec §5) as the emitter
       # produced it, newline-terminated.

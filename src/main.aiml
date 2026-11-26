@@ -4,7 +4,8 @@
 - def:
     name: usage
     body:
-      - call: [log.error, "usage: chart (--deck FILE | --sheet FILE) [--mermaid OUT.mmd] [--markdown DIR]"]
+      - call: [log.error, "usage: chart (--deck FILE | --sheet FILE) [OUTPUT ...]"]
+      - call: [log.error, "       outputs: --mermaid OUT.mmd  --markdown DIR  --svg DIR  --html OUT.html"]
       - call: [log.error, "       without an output option the editor opens (spec §15)"]
       - call: [log.error, "       --frames N --shot FILE.png: N frames, capture the last one"]
 
@@ -24,13 +25,15 @@
             - return: 2
       - decl: [runtime, ptr<ChartRuntime>, { new: ChartRuntime }]
       - decl: [code, i32, 0]
+      # Any output option makes this a headless pass; without one the editor opens.
+      - decl: [exporting, i32, 0]
+      - if: { condition: { neq: [options.mermaid, ""] }, then: [{ set: [exporting, 1] }] }
+      - if: { condition: { neq: [options.markdown, ""] }, then: [{ set: [exporting, 1] }] }
+      - if: { condition: { neq: [options.svg, ""] }, then: [{ set: [exporting, 1] }] }
+      - if: { condition: { neq: [options.html, ""] }, then: [{ set: [exporting, 1] }] }
       - if:
-          condition: { eq: [options.mermaid, ""] }
-          then:
-            - if:
-                condition: { eq: [options.markdown, ""] }
-                then: [{ set: [code, { call: [runtime.editor.run, input, options.frames, options.shot, options] }] }]
-                else: [{ set: [code, { call: [runtime.exporter.run, options] }] }]
-          else: [{ set: [code, { call: [runtime.exporter.run, options] }] }]
+          condition: { eq: [exporting, 1] }
+          then: [{ set: [code, { call: [runtime.exporter.run, options] }] }]
+          else: [{ set: [code, { call: [runtime.editor.run, input, options.frames, options.shot, options] }] }]
       - free: runtime
       - return: code

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" font-family="DejaVu Sans, Helvetica, Arial, sans-serif" font-size="15">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <text x="52" y="38" font-size="22" fill="#101a24">Eingang</text>
+  <ellipse cx="110" cy="68" rx="70" ry="28" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="110" y="73" fill="#1a2430" text-anchor="middle">Antrag</text>
+  <polygon points="120,160 200,205 120,250 40,205" fill="#f2f5f9" stroke="#3a4a5a"/>
+  <text x="120" y="210" fill="#1a2430" text-anchor="middle">vollstaendig?</text>
+  <line x1="112" y1="96" x2="116.8" y2="161.8" stroke="#55687a" stroke-width="2"/>
+  <polygon points="116.8,161.8 122.2,146.6 109.4,147.6" fill="#55687a"/>
+</svg>
