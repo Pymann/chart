@@ -285,22 +285,39 @@ with a canvas that scales and re-centres means maintaining two coordinate system
 must agree every frame, and the first disagreement puts the caret somewhere the glyphs are
 not. Drawing the text where the node is costs one `ui.draw_text` and cannot drift.
 
-The price is stated rather than hidden: there is **no selection, no clipboard and no
-mouse-positioned caret** while editing a label. Typing appends, `Backspace` removes the
-last character. When a label needs more than that, it wants a dialog, not an in-place
-editor.
+What that costs is **work, not features**. Drawing the text here rather than in a prefab
+does not forbid a caret or a selection; it means chart positions them itself, from the
+same measurement it draws with. An earlier version of this section claimed the opposite
+and called it a price worth paying — it was simply the part that had not been written
+yet, and an editor where the caret cannot be moved is not finished.
+
+**Normative — the caret is measured, never estimated.** The x of index `i` on a line is
+`ui.measure_text(line[0..i])` with the font the line is drawn in (aiml spec/44_3 §4.1).
+A caret placed by counting characters times an average width drifts from the glyphs, and
+a caret that is not where the next letter lands is worse than none.
 
 | Key | |
 |---|---|
-| any character | appended |
-| `Backspace` | removes the last character |
+| any character | replaces the selection, otherwise inserts at the caret |
+| `Left` / `Right` | move one character; `Ctrl` by word; `Shift` extends the selection |
+| `Up` / `Down` | the same column on the line above or below |
+| `Home` / `End` | start / end of the line; `Ctrl` for the whole label |
+| `Backspace` / `Delete` | delete the selection, otherwise one character before / after |
+| `Ctrl+A` | select the whole label |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | the **system** clipboard (aiml spec/44_0) |
 | `Enter` | commits |
 | `Shift+Enter` | newline inside the label |
 | `Escape` | reverts to the value the field had on entry |
 
-**Normative — one consumer for the keyboard.** While a label is being edited the editor
-takes its keys from the **event queue only**, and the slide navigation of §14 is not
-polled. A key read both as an event and as a poll fires twice, and the symptom is a
+A click inside the label places the caret; dragging from there selects. A click anywhere
+else commits what was typed, which is the rule a press already followed.
+
+**Normative — one consumer for the keyboard, and modifiers are not keys.** While a label
+is being edited the editor takes its keys from the **event queue only**, and the slide
+navigation of §14 is not polled. `Shift` and `Ctrl` are the stated exception: they are
+read by polling (`input.key_down`), because a modifier is a *state* that qualifies the
+key that arrived, not an event of its own. Polling a state cannot double-fire; polling a
+key can, and that is the bug the rule exists for. A key read both as an event and as a poll fires twice, and the symptom is a
 `Backspace` that eats two characters or an arrow that skips a slide — a class of bug this
 codebase has already paid for.
 

@@ -275,3 +275,93 @@
                         - return: 0
                   - set: [idx, { +: [idx, 1] }]
             - return: 0
+
+      - def:
+          name: node_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32]]
+          return: string
+          body:
+            # topmost first: the last node drawn is the one on top
+            - decl: [pos, i32, { -: [slide.nodes.len, 1] }]
+            - while:
+                condition: { ge: [pos, 0] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                  - if:
+                      condition: { ge: [spot_x, node.pos_x] }
+                      then:
+                        - if:
+                            condition: { le: [spot_x, { +: [node.pos_x, node.width] }] }
+                            then:
+                              - if:
+                                  condition: { ge: [spot_y, node.pos_y] }
+                                  then:
+                                    - if:
+                                        condition: { le: [spot_y, { +: [node.pos_y, node.height] }] }
+                                        then: [{ return: node.ident }]
+                  - set: [pos, { -: [pos, 1] }]
+            - return: ""
+
+      # Nearest edge within `reach` slide units of the centre-to-centre line.
+      - def:
+          name: edge_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32], [reach, f32]]
+          return: string
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.edges.len] }
+                body:
+                  - decl: [edge, ref<Edge>, { at: [slide.edges, idx] }]
+                  - decl: [head_node, Node]
+                  - decl: [tail_node, Node]
+                  - decl: [found, i32, { call: [<.node_by_id, slide, edge.from_id, head_node] }]
+                  - if:
+                      condition: { eq: [found, 1] }
+                      then: [{ set: [found, { call: [<.node_by_id, slide, edge.to_id, tail_node] }] }]
+                  - if:
+                      condition: { eq: [found, 1] }
+                      then:
+                        - decl: [src_cx, f32, { +: [head_node.pos_x, { /: [head_node.width, 2.0] }] }]
+                        - decl: [src_cy, f32, { +: [head_node.pos_y, { /: [head_node.height, 2.0] }] }]
+                        - decl: [dst_cx, f32, { +: [tail_node.pos_x, { /: [tail_node.width, 2.0] }] }]
+                        - decl: [dst_cy, f32, { +: [tail_node.pos_y, { /: [tail_node.height, 2.0] }] }]
+                        - decl: [run_x, f32, { -: [dst_cx, src_cx] }]
+                        - decl: [run_y, f32, { -: [dst_cy, src_cy] }]
+                        - decl: [vlen, f32, { +: [{ "*": [run_x, run_x] }, { "*": [run_y, run_y] }] }]
+                        - if:
+                            condition: { gt: [vlen, 0.01] }
+                            then:
+                              - decl: [part, f32, { /: [{ +: [{ "*": [{ -: [spot_x, src_cx] }, run_x] }, { "*": [{ -: [spot_y, src_cy] }, run_y] }] }, vlen] }]
+                              - set: [part, { call: [math.clamp, part, 0.0, 1.0] }]
+                              - decl: [nearx, f32, { +: [src_cx, { "*": [run_x, part] }] }]
+                              - decl: [neary, f32, { +: [src_cy, { "*": [run_y, part] }] }]
+                              - decl: [gap, f32, { call: [math.sqrt, { +: [{ "*": [{ -: [spot_x, nearx] }, { -: [spot_x, nearx] }] }, { "*": [{ -: [spot_y, neary] }, { -: [spot_y, neary] }] }] }] }]
+                              - if: { condition: { lt: [gap, reach] }, then: [{ return: edge.ident }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: ""
+
+      - def:
+          name: node_by_id
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string], [out, ref<Node>]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - set: [out.kind, node.kind]
+                        - set: [out.pos_x, node.pos_x]
+                        - set: [out.pos_y, node.pos_y]
+                        - set: [out.width, node.width]
+                        - set: [out.height, node.height]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0

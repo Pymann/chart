@@ -10,6 +10,8 @@
 - import: "src/files.aiml"
 - import: "src/reader.aiml"
 - import: "src/menu.aiml"
+- import: "src/label.aiml"
+- import: "src/clip.aiml"
 
 - class:
     name: Editor
@@ -36,8 +38,9 @@
       - [show_notes, i32]
       - [status, string]
       - [editing, i32]                  # 1 while a label is being edited (spec §6)
-      - [edit_text, string]
-      - [edit_id, string]
+      - [label, ref<LabelEdit>]        # caret, selection, clipboard (spec §6)
+      - [clip, ref<Clip>]              # copy/cut/paste of an element
+      - [edit_id, string]              # "#titel" edits the slide heading
       - [link_from, string]             # source node while an edge is being dragged
       - [sel_edge, string]
       - [last_scale, f32]               # slide scale of the last frame, for auto-grow
@@ -74,9 +77,10 @@
             - set: [box.height, { "*": [node.height, scale] }]
             - set: [box.thick, 2.0]
             - decl: [label, string, node.text]
+            - decl: [live, i32, 0]
             - if:
                 condition: { "&&": [{ eq: [<.editing, 1] }, { eq: [node.ident, <.edit_id] }] }
-                then: [{ set: [label, "${<.edit_text}|"] }]
+                then: [{ set: [label, <.label.text] }, { set: [live, 1] }]
             - decl: [fill, i32, node.fill]
             - if: { condition: { eq: [fill, 0] }, then: [{ set: [fill, 0xF2F5F9FF] }] }
             - decl: [stroke, i32, node.stroke]
@@ -107,7 +111,7 @@
                         - set: [cap.width, box.width]
                         - set: [cap.height, { "*": [24.0, scale] }]
                         - set: [cap.tint, 0x4A5A6AFF]
-                        - call: [<.pen.text_block, cap, label]
+                        - call: [<.draw_label, cap, label, live]
                   - return: null
 
             - if:
@@ -116,7 +120,7 @@
                   - set: [box.tint, stroke]
                   - call: [<.pen.diamond, box]
                   - set: [box.tint, { call: [<.pen.ink_for, fill] }]
-                  - call: [<.pen.text_block, box, label]
+                  - call: [<.draw_label, box, label, live]
                   - return: null
             - if:
                 condition: { eq: [node.kind, NodeKind.hexagon] }
@@ -124,7 +128,7 @@
                   - set: [box.tint, stroke]
                   - call: [<.pen.hexagon, box]
                   - set: [box.tint, { call: [<.pen.ink_for, fill] }]
-                  - call: [<.pen.text_block, box, label]
+                  - call: [<.draw_label, box, label, live]
                   - return: null
             - decl: [rounded, i32, 0]
             - if: { condition: { eq: [node.kind, NodeKind.circle] }, then: [{ set: [rounded, 1] }] }
@@ -136,7 +140,7 @@
                   - set: [box.tint, stroke]
                   - call: [<.pen.ellipse, box]
                   - set: [box.tint, { call: [<.pen.ink_for, fill] }]
-                  - call: [<.pen.text_block, box, label]
+                  - call: [<.draw_label, box, label, live]
                   - return: null
 
             # rect, cylinder, subroutine
@@ -150,30 +154,18 @@
                   - call: [ui.draw_line, { +: [box.pos_x, inset] }, box.pos_y, { +: [box.pos_x, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
                   - call: [ui.draw_line, { -: [{ +: [box.pos_x, box.width] }, inset] }, box.pos_y, { -: [{ +: [box.pos_x, box.width] }, inset] }, { +: [box.pos_y, box.height] }, 1.0, stroke]
             - set: [box.tint, { call: [<.pen.ink_for, fill] }]
-            - call: [<.pen.text_block, box, label]
+            - call: [<.draw_label, box, label, live]
 
+      # Plain text, or the live one with its caret and selection (§6).
       - def:
-          name: node_by_id
+          name: draw_label
           static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [ident, string], [out, ref<Node>]]
-          return: i32
+          args: [[box, ref<Shape>], [text, string], [live, i32]]
           body:
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, slide.nodes.len] }
-                body:
-                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
-                  - if:
-                      condition: { eq: [node.ident, ident] }
-                      then:
-                        - set: [out.kind, node.kind]
-                        - set: [out.pos_x, node.pos_x]
-                        - set: [out.pos_y, node.pos_y]
-                        - set: [out.width, node.width]
-                        - set: [out.height, node.height]
-                        - return: 1
-                  - set: [idx, { +: [idx, 1] }]
-            - return: 0
+            - if:
+                condition: { eq: [live, 1] }
+                then: [{ call: [<.label.draw_in, box] }]
+                else: [{ call: [<.pen.text_block, box, text] }]
 
       - def:
           name: draw_edges
@@ -187,10 +179,10 @@
                   - decl: [edge, ref<Edge>, { at: [slide.edges, idx] }]
                   - decl: [head_node, Node]
                   - decl: [tail_node, Node]
-                  - decl: [found, i32, { call: [<.node_by_id, slide, edge.from_id, head_node] }]
+                  - decl: [found, i32, { call: [<.grip.node_by_id, slide, edge.from_id, head_node] }]
                   - if:
                       condition: { eq: [found, 1] }
-                      then: [{ set: [found, { call: [<.node_by_id, slide, edge.to_id, tail_node] }] }]
+                      then: [{ set: [found, { call: [<.grip.node_by_id, slide, edge.to_id, tail_node] }] }]
                   - if: { condition: { eq: [edge.kind, EdgeKind.invisible] }, then: [{ set: [found, 0] }] }
                   - if:
                       condition: { eq: [found, 1] }
@@ -284,10 +276,20 @@
             - set: [page.tint, 0xC2CCD6FF]
             - set: [page.thick, 1.0]
             - call: [<.pen.frame, page]
+            - decl: [head_live, i32, 0]
             - if:
-                condition: { neq: [slide.title, ""] }
+                condition: { "&&": [{ eq: [<.editing, 1] }, { eq: [<.edit_id, "#titel"] }] }
+                then: [{ set: [head_live, 1] }]
+            - if:
+                condition: { "&&": [{ neq: [slide.title, ""] }, { eq: [head_live, 0] }] }
                 then:
                   - call: [ui.draw_text, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [30.0, scale] }] }, slide.title, 0x101A24FF]
+            - if:
+                condition: { eq: [head_live, 1] }
+                then:
+                  - decl: [head_box, Shape]
+                  - call: [<.label.title_box, org_x, org_y, scale, head_box]
+                  - call: [<.label.draw_in, head_box]
                   - call: [ui.draw_line, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, { -: [{ +: [org_x, page_w] }, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, 1.0, 0xD8DEE6FF]
             - call: [<.draw_edges, slide, org_x, org_y, scale]
             - decl: [idx, i32, 0]
@@ -345,7 +347,7 @@
                 then:
                   - decl: [src_node, Node]
                   - if:
-                      condition: { eq: [{ call: [<.node_by_id, slide, <.link_from, src_node] }, 1] }
+                      condition: { eq: [{ call: [<.grip.node_by_id, slide, <.link_from, src_node] }, 1] }
                       then:
                         - call: [ui.draw_line,
                                  { +: [org_x, { "*": [{ +: [src_node.pos_x, { /: [src_node.width, 2.0] }] }, scale] }] },
@@ -434,6 +436,7 @@
             - if: { condition: { call: [ui.button, "< Zurueck"] }, then: [{ set: [action, 21] }] }
             - if: { condition: { call: [ui.button, "Weiter >"] }, then: [{ set: [action, 22] }] }
             - if: { condition: { call: [ui.button, "Neue Folie"] }, then: [{ set: [action, 23] }] }
+            - if: { condition: { call: [ui.button, "Ueberschrift..."] }, then: [{ set: [action, 24] }] }
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, <.deck.slides.len] }
@@ -627,6 +630,7 @@
                 then:
                   - if: { condition: { lt: [<.deck.current, { -: [<.deck.slides.len, 1] }] }, then: [{ set: [<.deck.current, { +: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
                   - return: null
+            - if: { condition: { eq: [action, 24] }, then: [{ call: [<.edit_title] }, { return: null }] }
             - if:
                 condition: { eq: [action, 23] }
                 then:
@@ -653,72 +657,46 @@
                   - set: [<.deck.current, { -: [action, 40] }]
                   - set: [<.sel, ""]
 
+      # The rect the live label is drawn in: the heading's, or the node's.
       - def:
-          name: node_at
+          name: live_box
           static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32]]
-          return: string
+          args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [box, ref<Shape>]]
+          return: i32
           body:
-            # topmost first: the last node drawn is the one on top
-            - decl: [pos, i32, { -: [slide.nodes.len, 1] }]
+            - if:
+                condition: { eq: [<.edit_id, "#titel"] }
+                then:
+                  - call: [<.label.title_box, org_x, org_y, scale, box]
+                  - return: 1
+            - decl: [spot, i32, 0]
             - while:
-                condition: { ge: [pos, 0] }
+                condition: { lt: [spot, slide.nodes.len] }
                 body:
-                  - decl: [node, ref<Node>, { at: [slide.nodes, pos] }]
+                  - decl: [node, ref<Node>, { at: [slide.nodes, spot] }]
                   - if:
-                      condition: { ge: [spot_x, node.pos_x] }
+                      condition: { eq: [node.ident, <.edit_id] }
                       then:
-                        - if:
-                            condition: { le: [spot_x, { +: [node.pos_x, node.width] }] }
-                            then:
-                              - if:
-                                  condition: { ge: [spot_y, node.pos_y] }
-                                  then:
-                                    - if:
-                                        condition: { le: [spot_y, { +: [node.pos_y, node.height] }] }
-                                        then: [{ return: node.ident }]
-                  - set: [pos, { -: [pos, 1] }]
-            - return: ""
+                        - set: [box.pos_x, { +: [org_x, { "*": [node.pos_x, scale] }] }]
+                        - set: [box.pos_y, { +: [org_y, { "*": [node.pos_y, scale] }] }]
+                        - set: [box.width, { "*": [node.width, scale] }]
+                        - set: [box.height, { "*": [node.height, scale] }]
+                        - return: 1
+                  - set: [spot, { +: [spot, 1] }]
+            - return: 0
 
-      # Nearest edge within `reach` slide units of the centre-to-centre line.
       - def:
-          name: edge_at
+          name: edit_title
           static_off: ["same_arg", "str_cmp"]
-          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32], [reach, f32]]
-          return: string
           body:
-            - decl: [idx, i32, 0]
-            - while:
-                condition: { lt: [idx, slide.edges.len] }
-                body:
-                  - decl: [edge, ref<Edge>, { at: [slide.edges, idx] }]
-                  - decl: [head_node, Node]
-                  - decl: [tail_node, Node]
-                  - decl: [found, i32, { call: [<.node_by_id, slide, edge.from_id, head_node] }]
-                  - if:
-                      condition: { eq: [found, 1] }
-                      then: [{ set: [found, { call: [<.node_by_id, slide, edge.to_id, tail_node] }] }]
-                  - if:
-                      condition: { eq: [found, 1] }
-                      then:
-                        - decl: [src_cx, f32, { +: [head_node.pos_x, { /: [head_node.width, 2.0] }] }]
-                        - decl: [src_cy, f32, { +: [head_node.pos_y, { /: [head_node.height, 2.0] }] }]
-                        - decl: [dst_cx, f32, { +: [tail_node.pos_x, { /: [tail_node.width, 2.0] }] }]
-                        - decl: [dst_cy, f32, { +: [tail_node.pos_y, { /: [tail_node.height, 2.0] }] }]
-                        - decl: [run_x, f32, { -: [dst_cx, src_cx] }]
-                        - decl: [run_y, f32, { -: [dst_cy, src_cy] }]
-                        - decl: [vlen, f32, { +: [{ "*": [run_x, run_x] }, { "*": [run_y, run_y] }] }]
-                        - if:
-                            condition: { gt: [vlen, 0.01] }
-                            then:
-                              - decl: [part, f32, { /: [{ +: [{ "*": [{ -: [spot_x, src_cx] }, run_x] }, { "*": [{ -: [spot_y, src_cy] }, run_y] }] }, vlen] }]
-                              - set: [part, { call: [math.clamp, part, 0.0, 1.0] }]
-                              - decl: [nearx, f32, { +: [src_cx, { "*": [run_x, part] }] }]
-                              - decl: [neary, f32, { +: [src_cy, { "*": [run_y, part] }] }]
-                              - decl: [gap, f32, { call: [math.sqrt, { +: [{ "*": [{ -: [spot_x, nearx] }, { -: [spot_x, nearx] }] }, { "*": [{ -: [spot_y, neary] }, { -: [spot_y, neary] }] }] }] }]
-                              - if: { condition: { lt: [gap, reach] }, then: [{ return: edge.ident }] }
-                  - set: [idx, { +: [idx, 1] }]
-            - return: ""
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - set: [<.editing, 1]
+            - set: [<.edit_id, "#titel"]
+            - set: [<.sel, ""]
+            - set: [<.sel_edge, ""]
+            - call: [<.label.begin, "#titel", slide.title]
+            - set: [<.status, "Ueberschrift: tippen, Enter uebernimmt"]
 
       - def:
           name: canvas_input
@@ -762,7 +740,7 @@
                 condition: { "||": [{ neq: [down_now, 0] }, { neq: [up_now, 0] }] }
                 then:
                   - set: [<.status, "P${down_now} R${up_now} H${held} F${over_canvas} W${<.armed}"]
-                  - decl: [hit_dbg, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                  - decl: [hit_dbg, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                   - if: { condition: { eq: [<.diag.wanted, 0] }, then: [{ return: null }] }
                   - call: [<.diag.say, "P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} leiste_hover=${<.bar_hov} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'"]
 
@@ -770,9 +748,21 @@
             - if:
                 condition: { "&&": [{ call: [input.mouse_pressed, 0] }, { eq: [over_canvas, 1] }] }
                 then:
-                  # A press anywhere commits an open label first (spec §6): the next
-                  # stroke must not silently discard what was just typed.
-                  - if: { condition: { eq: [<.editing, 1] }, then: [{ call: [<.commit_label] }] }
+                  # A press INSIDE the label being edited places the caret (§6); a
+                  # press anywhere else commits first, so the next stroke cannot
+                  # silently discard what was just typed.
+                  - if:
+                      condition: { eq: [<.editing, 1] }
+                      then:
+                        - decl: [live_box, Shape]
+                        - decl: [on_live, i32, { call: [<.live_box, slide, org_x, org_y, scale, live_box] }]
+                        - if:
+                            condition: { eq: [on_live, 1] }
+                            then:
+                              - if:
+                                  condition: { eq: [{ call: [<.label.click_in, live_box, mouse_x, mouse_y] }, 1] }
+                                  then: [{ return: null }]
+                        - call: [<.commit_label]
                   # the blue halo resizes (spec §15.1a).  Only with no explicit tool
                   # or the freehand default: an armed stencil still places.
                   - if:
@@ -793,7 +783,7 @@
                   - if:
                       condition: { eq: [<.armed, 100] }
                       then:
-                        - decl: [src, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                        - decl: [src, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                         - if:
                             condition: { neq: [src, ""] }
                             then: [{ set: [<.link_from, src] }, { set: [<.status, "auf das Ziel loslassen"] }]
@@ -816,15 +806,29 @@
                         - set: [<.armed, -1]
                         - call: [<.begin_edit, fresh.ident]
                         - return: null
-                  - decl: [hit, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                  - decl: [hit, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                   - if:
                       condition: { eq: [hit, ""] }
                       then:
+                        # the heading is part of the page, not a node (§6)
+                        - decl: [head_box2, Shape]
+                        - call: [<.label.title_box, org_x, org_y, scale, head_box2]
+                        - if:
+                            condition: { "&&": [{ ge: [mouse_x, head_box2.pos_x] }, { le: [mouse_x, { +: [head_box2.pos_x, head_box2.width] }] }] }
+                            then:
+                              - if:
+                                  condition: { "&&": [{ ge: [mouse_y, head_box2.pos_y] }, { le: [mouse_y, { +: [head_box2.pos_y, head_box2.height] }] }] }
+                                  then:
+                                    - call: [<.edit_title]
+                                    - decl: [head_box3, Shape]
+                                    - call: [<.label.title_box, org_x, org_y, scale, head_box3]
+                                    - call: [<.label.place, head_box3, mouse_x, mouse_y, 0]
+                                    - return: null
                         # An edge under the cursor is selected; otherwise a drag on
                         # empty canvas IS the stroke. Drawing is what the surface is
                         # for, so it costs no mode: a stroke too short to recognise
                         # does nothing, which is what a stray click should do anyway.
-                        - decl: [near_edge, string, { call: [<.edge_at, slide, slide_x, slide_y, 12.0] }]
+                        - decl: [near_edge, string, { call: [<.grip.edge_at, slide, slide_x, slide_y, 12.0] }]
                         - if:
                             condition: { neq: [near_edge, ""] }
                             then:
@@ -900,7 +904,7 @@
             - if:
                 condition: { "&&": [{ call: [input.mouse_pressed, 1] }, { "&&": [{ eq: [<.ink.count, 0] }, { eq: [over_canvas, 1] }] }] }
                 then:
-                  - decl: [on_node, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                  - decl: [on_node, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                   - if:
                       condition: { neq: [on_node, ""] }
                       then:
@@ -908,7 +912,7 @@
                         - set: [<.sel_edge, ""]
                         - call: [<.menu.open_at, 1, on_node, mouse_x, mouse_y]
                         - return: null
-                  - decl: [on_edge, string, { call: [<.edge_at, slide, slide_x, slide_y, 14.0] }]
+                  - decl: [on_edge, string, { call: [<.grip.edge_at, slide, slide_x, slide_y, 14.0] }]
                   - if:
                       condition: { neq: [on_edge, ""] }
                       then:
@@ -970,7 +974,7 @@
                   - if:
                       condition: { neq: [<.link_from, ""] }
                       then:
-                        - decl: [dst, string, { call: [<.node_at, slide, slide_x, slide_y] }]
+                        - decl: [dst, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                         - if:
                             condition: { "&&": [{ neq: [dst, ""] }, { neq: [dst, <.link_from] }] }
                             then:
@@ -1038,26 +1042,25 @@
                   - if:
                       condition: { eq: [<.editing, 1] }
                       then:
+                        # Ctrl+C sends no character on most platforms, but a shortcut
+                        # that DID would otherwise type a "c" into the label
+                        - decl: [holding, i32, 0]
+                        - if: { condition: { call: [input.key_down, "LCtrl"] }, then: [{ set: [holding, 1] }] }
+                        - if: { condition: { call: [input.key_down, "RCtrl"] }, then: [{ set: [holding, 1] }] }
                         - if:
-                            condition: { eq: [evt.type, "text"] }
-                            then: [{ set: [<.edit_text, "${<.edit_text}${evt.char_}"] }]
+                            condition: { "&&": [{ eq: [evt.type, "text"] }, { eq: [holding, 0] }] }
+                            then: [{ call: [<.label.insert, evt.char_] }]
                         - if:
                             condition: { eq: [evt.type, "key_down"] }
                             then:
+                              - decl: [verdict, i32, { call: [<.label.key, evt.key] }]
+                              - if: { condition: { eq: [verdict, 2] }, then: [{ call: [<.commit_label] }] }
                               - if:
-                                  condition: { eq: [evt.key, "Backspace"] }
-                                  then:
-                                    - if:
-                                        condition: { gt: [<.edit_text.len, 0] }
-                                        then: [{ set: [<.edit_text, { call: [<.edit_text.substr, 0, { -: [<.edit_text.len, 1] }] }] }]
-                              - if:
-                                  condition: { eq: [evt.key, "Enter"] }
-                                  then: [{ call: [<.commit_label] }]
-                              - if:
-                                  condition: { eq: [evt.key, "Escape"] }
+                                  condition: { eq: [verdict, 3] }
                                   then:
                                     - set: [<.editing, 0]
                                     - set: [<.edit_id, ""]
+                                    - call: [<.label.stop]
                                     - set: [<.status, "verworfen"]
                       else:
                         - if:
@@ -1101,6 +1104,46 @@
             - if: { condition: { eq: [key, "End"] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }, { call: [<.clear_selection] }, { return: null }] }
             - if: { condition: { eq: [key, "N"] }, then: [{ set: [<.show_notes, { -: [1, <.show_notes] }] }, { return: null }] }
             - if: { condition: { eq: [key, "Delete"] }, then: [{ call: [<.dispatch, 20] }, { return: null }] }
+            - decl: [holding, i32, 0]
+            - if: { condition: { call: [input.key_down, "LCtrl"] }, then: [{ set: [holding, 1] }] }
+            - if: { condition: { call: [input.key_down, "RCtrl"] }, then: [{ set: [holding, 1] }] }
+            - call: [<.diag.say, "TASTE ${key} strg=${holding} auswahl='${<.sel}'"]
+            - if:
+                condition: { "&&": [{ eq: [holding, 1] }, { eq: [<.deck.slides.len, 0] }] }
+                then: [{ return: null }]
+            - if:
+                condition: { eq: [holding, 1] }
+                then:
+                  - decl: [slide_c, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                  - decl: [wanted, i32, 0]
+                  - if: { condition: { eq: [key, "C"] }, then: [{ set: [wanted, 1] }] }
+                  - if: { condition: { eq: [key, "X"] }, then: [{ set: [wanted, 2] }] }
+                  - if: { condition: { eq: [key, "V"] }, then: [{ set: [wanted, 3] }] }
+                  - if:
+                      condition: { "&&": [{ lt: [wanted, 3] }, { gt: [wanted, 0] }] }
+                      then:
+                        - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Element waehlen"] }, { return: null }] }
+                        - if:
+                            condition: { eq: [{ call: [<.clip.copy, slide_c, <.sel] }, 1] }
+                            then:
+                              - set: [<.status, "kopiert"]
+                              - if:
+                                  condition: { eq: [wanted, 2] }
+                                  then: [{ call: [<.dispatch, 20] }, { set: [<.status, "ausgeschnitten"] }]
+                        - return: null
+                  - if:
+                      condition: { eq: [wanted, 3] }
+                      then:
+                        - decl: [made, string, { call: [<.clip.paste, slide_c] }]
+                        - if:
+                            condition: { neq: [made, ""] }
+                            then:
+                              - set: [<.sel, made]
+                              - set: [<.sel_edge, ""]
+                              - call: [<.touch]
+                              - set: [<.status, "eingefuegt"]
+                            else: [{ set: [<.status, "nichts in der Ablage"] }]
+                        - return: null
             - if: { condition: { eq: [key, "S"] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
             - if: { condition: { eq: [key, "O"] }, then: [{ call: [<.dispatch, 60] }, { return: null }] }
             # Enter opens the selected node for editing (spec §6)
@@ -1236,7 +1279,7 @@
                       then:
                         - set: [<.editing, 1]
                         - set: [<.edit_id, ident]
-                        - set: [<.edit_text, node.text]
+                        - call: [<.label.begin, ident, node.text]
                         - set: [<.sel, ident]
                         - set: [<.status, "tippen, Enter uebernimmt"]
                         - return: null
@@ -1251,6 +1294,14 @@
             - if: { condition: { eq: [<.edit_id, ""] }, then: [{ return: null }] }
             - call: [<.touch]
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { eq: [<.edit_id, "#titel"] }
+                then:
+                  - set: [slide.title, <.label.text]
+                  - set: [<.edit_id, ""]
+                  - call: [<.label.stop]
+                  - set: [<.status, "Ueberschrift uebernommen"]
+                  - return: null
             - decl: [idx, i32, 0]
             - while:
                 condition: { lt: [idx, slide.nodes.len] }
@@ -1259,11 +1310,11 @@
                   - if:
                       condition: { eq: [node.ident, <.edit_id] }
                       then:
-                        - set: [node.text, <.edit_text]
+                        - set: [node.text, <.label.text]
                         - if:
                             condition: { gt: [<.last_scale, 0.0] }
                             then:
-                              - decl: [lines, list<string>, { call: [<.edit_text.split, "\n"] }]
+                              - decl: [lines, list<string>, { call: [<.label.text.split, "\n"] }]
                               - decl: [widest, f32, 0.0]
                               - decl: [line_i, i32, 0]
                               - while:
@@ -1276,6 +1327,7 @@
                               - decl: [want, f32, { +: [{ /: [widest, <.last_scale] }, 48.0] }]
                               - if: { condition: { gt: [want, node.width] }, then: [{ set: [node.width, want] }] }
                         - set: [<.edit_id, ""]
+                        - call: [<.label.stop]
                         - set: [<.status, "uebernommen"]
                         - return: null
                   - set: [idx, { +: [idx, 1] }]
@@ -1456,6 +1508,10 @@
         instance: grip
       - class: Menu
         instance: menu
+      - class: LabelEdit
+        instance: label
+      - class: Clip
+        instance: clip
       - class: FileBrowser
         instance: browse
       - class: Files
@@ -1469,4 +1525,4 @@
         sees: [ink, diag]
       - class: Editor
         instance: editor
-        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu]
+        sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip]

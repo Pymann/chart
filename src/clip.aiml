@@ -1,0 +1,72 @@
+# Copying an element on the canvas (doc/spec/chart.md §15.1).
+#
+# Its own class because the editor is at its line limit (aiml spec/49 §3) and because
+# this is a clipboard, not a surface.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: Clip
+    description: "Copy, cut and paste a node on the sheet"
+    members:
+      - [node, Node]
+      - [full, i32]          # 1 = something is held
+    methods:
+      - def:
+          name: copy
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ident, string]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [one, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [one.ident, ident] }
+                      then:
+                        - set: [<.node.kind, one.kind]
+                        - set: [<.node.pos_x, one.pos_x]
+                        - set: [<.node.pos_y, one.pos_y]
+                        - set: [<.node.width, one.width]
+                        - set: [<.node.height, one.height]
+                        - set: [<.node.text, one.text]
+                        - set: [<.node.src, one.src]
+                        - set: [<.node.fill, one.fill]
+                        - set: [<.node.stroke, one.stroke]
+                        - set: [<.node.group, one.group]
+                        - set: [<.full, 1]
+                        # the label also goes to the SYSTEM clipboard, so a copied box
+                        # can be pasted into a mail or a commit message
+                        - call: [input.clipboard_set, one.text]
+                        - return: 1
+                  - set: [idx, { +: [idx, 1] }]
+            - return: 0
+
+      # Pasted a little down and to the right, the way every drawing tool does it: a
+      # copy exactly on top of its original looks like nothing happened.
+      - def:
+          name: paste
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>]]
+          return: string
+          body:
+            - if: { condition: { eq: [<.full, 0] }, then: [{ return: "" }] }
+            - decl: [fresh, Node]
+            - set: [fresh.ident, "n${slide.next_id}"]
+            - set: [fresh.kind, <.node.kind]
+            - set: [fresh.pos_x, { +: [<.node.pos_x, 24.0] }]
+            - set: [fresh.pos_y, { +: [<.node.pos_y, 24.0] }]
+            - set: [fresh.width, <.node.width]
+            - set: [fresh.height, <.node.height]
+            - set: [fresh.text, <.node.text]
+            - set: [fresh.src, <.node.src]
+            - set: [fresh.fill, <.node.fill]
+            - set: [fresh.stroke, <.node.stroke]
+            - set: [fresh.group, <.node.group]
+            - call: [slide.nodes.push, fresh]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            # the next paste lands below the one just made, not on top of it
+            - set: [<.node.pos_x, fresh.pos_x]
+            - set: [<.node.pos_y, fresh.pos_y]
+            - return: fresh.ident

@@ -1,0 +1,436 @@
+# Editing a label on the canvas (doc/spec/chart.md §6): caret, selection, clipboard.
+#
+# Its own class because it is its own thing -- a tiny text editor that happens to be
+# drawn inside a node -- and because the editor may not pass 1499 lines (aiml spec/49 §3).
+#
+# Every position is MEASURED with the same ui.measure_text the text is drawn with (§6,
+# normative).  Counting characters times an average width drifts from the glyphs, and a
+# caret that is not where the next letter lands is worse than no caret at all.
+- import: "src/pen.aiml"
+
+- class:
+    name: LabelEdit
+    description: "The in-place label editor: caret, selection, clipboard (spec §6)"
+    members:
+      - [text, string]        # what is being typed
+      - [caret, i32]          # code-point index of the caret
+      - [anchor, i32]         # the other end of the selection, -1 = no selection
+      - [active, i32]
+      - [ident, string]       # the node being edited
+    methods:
+      - def:
+          name: begin
+          static_off: ["same_arg", "str_cmp"]
+          args: [[ident, string], [text, string]]
+          body:
+            - set: [<.ident, ident]
+            - set: [<.text, text]
+            - set: [<.caret, text.len]
+            - set: [<.anchor, -1]
+            - set: [<.active, 1]
+
+      - def:
+          name: stop
+          body:
+            - set: [<.active, 0]
+            - set: [<.anchor, -1]
+            - set: [<.ident, ""]
+
+      - def:
+          name: low
+          return: i32
+          body:
+            - if: { condition: { lt: [<.anchor, 0] }, then: [{ return: <.caret }] }
+            - if: { condition: { lt: [<.anchor, <.caret] }, then: [{ return: <.anchor }] }
+            - return: <.caret
+
+      - def:
+          name: high
+          return: i32
+          body:
+            - if: { condition: { lt: [<.anchor, 0] }, then: [{ return: <.caret }] }
+            - if: { condition: { gt: [<.anchor, <.caret] }, then: [{ return: <.anchor }] }
+            - return: <.caret
+
+      - def:
+          name: has_pick
+          return: i32
+          body:
+            - if: { condition: { lt: [<.anchor, 0] }, then: [{ return: 0 }] }
+            - if: { condition: { eq: [<.anchor, <.caret] }, then: [{ return: 0 }] }
+            - return: 1
+
+      - def:
+          name: picked_text
+          return: string
+          body:
+            - if: { condition: { eq: [{ call: [<.has_pick] }, 0] }, then: [{ return: "" }] }
+            - decl: [from, i32, { call: [<.low] }]
+            - return: { call: [<.text.substr, from, { -: [{ call: [<.high] }, from] }] }
+
+      - def:
+          name: drop_pick
+          body:
+            - if: { condition: { eq: [{ call: [<.has_pick] }, 0] }, then: [{ set: [<.anchor, -1] }, { return: null }] }
+            - decl: [from, i32, { call: [<.low] }]
+            - decl: [upto, i32, { call: [<.high] }]
+            - decl: [head, string, { call: [<.text.substr, 0, from] }]
+            - decl: [tail, string, { call: [<.text.substr, upto, { -: [<.text.len, upto] }] }]
+            - set: [<.text, "${head}${tail}"]
+            - set: [<.caret, from]
+            - set: [<.anchor, -1]
+
+      - def:
+          name: insert
+          static_off: ["same_arg", "str_cmp"]
+          args: [[chunk, string]]
+          body:
+            - call: [<.drop_pick]
+            - decl: [head, string, { call: [<.text.substr, 0, <.caret] }]
+            - decl: [tail, string, { call: [<.text.substr, <.caret, { -: [<.text.len, <.caret] }] }]
+            - set: [<.text, "${head}${chunk}${tail}"]
+            - set: [<.caret, { +: [<.caret, chunk.len] }]
+
+      - def:
+          name: erase
+          args: [[forward, i32]]
+          body:
+            - if:
+                condition: { eq: [{ call: [<.has_pick] }, 1] }
+                then: [{ call: [<.drop_pick] }, { return: null }]
+            - if:
+                condition: { eq: [forward, 1] }
+                then:
+                  - if: { condition: { ge: [<.caret, <.text.len] }, then: [{ return: null }] }
+                  - decl: [head_f, string, { call: [<.text.substr, 0, <.caret] }]
+                  - decl: [rest_at, i32, { +: [<.caret, 1] }]
+                  - decl: [tail_f, string, { call: [<.text.substr, rest_at, { -: [<.text.len, rest_at] }] }]
+                  - set: [<.text, "${head_f}${tail_f}"]
+                  - return: null
+            - if: { condition: { le: [<.caret, 0] }, then: [{ return: null }] }
+            - decl: [cut, i32, { -: [<.caret, 1] }]
+            - decl: [head, string, { call: [<.text.substr, 0, cut] }]
+            - decl: [tail, string, { call: [<.text.substr, <.caret, { -: [<.text.len, <.caret] }] }]
+            - set: [<.text, "${head}${tail}"]
+            - set: [<.caret, cut]
+
+      # Shift extends, no Shift collapses: the anchor is set on the FIRST extending
+      # move and cleared on any plain one, which is what every editor does and what a
+      # hand expects without thinking about it.
+      - def:
+          name: go_to
+          args: [[where, i32], [keep, i32]]
+          body:
+            - decl: [spot, i32, where]
+            - if: { condition: { lt: [spot, 0] }, then: [{ set: [spot, 0] }] }
+            - if: { condition: { gt: [spot, <.text.len] }, then: [{ set: [spot, <.text.len] }] }
+            - if:
+                condition: { eq: [keep, 1] }
+                then:
+                  - if: { condition: { lt: [<.anchor, 0] }, then: [{ set: [<.anchor, <.caret] }] }
+                else: [{ set: [<.anchor, -1] }]
+            - set: [<.caret, spot]
+
+      # The start of the word left of `from`, or the start of the next one to the right.
+      - def:
+          name: word_at
+          args: [[from, i32], [step, i32]]
+          return: i32
+          body:
+            - decl: [spot, i32, from]
+            - if:
+                condition: { lt: [step, 0] }
+                then:
+                  - while:
+                      condition: { "&&": [{ gt: [spot, 0] }, { eq: [{ call: [<.text.substr, { -: [spot, 1] }, 1] }, " "] }] }
+                      body: [{ set: [spot, { -: [spot, 1] }] }]
+                  - while:
+                      condition: { "&&": [{ gt: [spot, 0] }, { neq: [{ call: [<.text.substr, { -: [spot, 1] }, 1] }, " "] }] }
+                      body: [{ set: [spot, { -: [spot, 1] }] }]
+                  - return: spot
+            - while:
+                condition: { "&&": [{ lt: [spot, <.text.len] }, { neq: [{ call: [<.text.substr, spot, 1] }, " "] }] }
+                body: [{ set: [spot, { +: [spot, 1] }] }]
+            - while:
+                condition: { "&&": [{ lt: [spot, <.text.len] }, { eq: [{ call: [<.text.substr, spot, 1] }, " "] }] }
+                body: [{ set: [spot, { +: [spot, 1] }] }]
+            - return: spot
+
+      # Where the current line starts and ends -- labels are multi-line (§6).
+      - def:
+          name: line_start
+          args: [[from, i32]]
+          return: i32
+          body:
+            - decl: [spot, i32, from]
+            - while:
+                condition: { "&&": [{ gt: [spot, 0] }, { neq: [{ call: [<.text.substr, { -: [spot, 1] }, 1] }, "\n"] }] }
+                body: [{ set: [spot, { -: [spot, 1] }] }]
+            - return: spot
+
+      - def:
+          name: line_end
+          args: [[from, i32]]
+          return: i32
+          body:
+            - decl: [spot, i32, from]
+            - while:
+                condition: { "&&": [{ lt: [spot, <.text.len] }, { neq: [{ call: [<.text.substr, spot, 1] }, "\n"] }] }
+                body: [{ set: [spot, { +: [spot, 1] }] }]
+            - return: spot
+
+      # Which line an index sits on, and where that line begins.
+      - def:
+          name: line_no
+          args: [[spot, i32]]
+          return: i32
+          body:
+            - decl: [rows, i32, 0]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, spot] }
+                body:
+                  - if: { condition: { eq: [{ call: [<.text.substr, pos, 1] }, "\n"] }, then: [{ set: [rows, { +: [rows, 1] }] }] }
+                  - set: [pos, { +: [pos, 1] }]
+            - return: rows
+
+      - def:
+          name: row_start
+          args: [[row, i32]]
+          return: i32
+          body:
+            - if: { condition: { le: [row, 0] }, then: [{ return: 0 }] }
+            - decl: [seen, i32, 0]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, <.text.len] }
+                body:
+                  - if:
+                      condition: { eq: [{ call: [<.text.substr, pos, 1] }, "\n"] }
+                      then:
+                        - set: [seen, { +: [seen, 1] }]
+                        - if: { condition: { eq: [seen, row] }, then: [{ return: { +: [pos, 1] } }] }
+                  - set: [pos, { +: [pos, 1] }]
+            - return: <.text.len
+
+      # Keys.  0 = not ours, 1 = handled, 2 = commit, 3 = revert.  Shift and Ctrl are
+      # POLLED (§6, normative): a modifier is a state that qualifies the key that
+      # arrived, and polling a state cannot double-fire the way polling a key can.
+      - def:
+          name: key
+          static_off: ["same_arg", "str_cmp"]
+          args: [[name, string]]
+          return: i32
+          body:
+            - decl: [keep, i32, 0]
+            - if: { condition: { call: [input.key_down, "Shift"] }, then: [{ set: [keep, 1] }] }
+            - if: { condition: { call: [input.key_down, "RShift"] }, then: [{ set: [keep, 1] }] }
+            - decl: [word, i32, 0]
+            - if: { condition: { call: [input.key_down, "LCtrl"] }, then: [{ set: [word, 1] }] }
+            - if: { condition: { call: [input.key_down, "RCtrl"] }, then: [{ set: [word, 1] }] }
+
+            - if:
+                condition: { eq: [name, "Enter"] }
+                then:
+                  - if: { condition: { eq: [keep, 1] }, then: [{ call: [<.insert, "\n"] }, { return: 1 }] }
+                  - return: 2
+            - if: { condition: { eq: [name, "Escape"] }, then: [{ return: 3 }] }
+            - if: { condition: { eq: [name, "Backspace"] }, then: [{ call: [<.erase, 0] }, { return: 1 }] }
+            - if: { condition: { eq: [name, "Delete"] }, then: [{ call: [<.erase, 1] }, { return: 1 }] }
+            - if:
+                condition: { eq: [name, "Left"] }
+                then:
+                  - decl: [to_l, i32, { -: [<.caret, 1] }]
+                  - if: { condition: { eq: [word, 1] }, then: [{ set: [to_l, { call: [<.word_at, <.caret, -1] }] }] }
+                  - call: [<.go_to, to_l, keep]
+                  - return: 1
+            - if:
+                condition: { eq: [name, "Right"] }
+                then:
+                  - decl: [to_r, i32, { +: [<.caret, 1] }]
+                  - if: { condition: { eq: [word, 1] }, then: [{ set: [to_r, { call: [<.word_at, <.caret, 1] }] }] }
+                  - call: [<.go_to, to_r, keep]
+                  - return: 1
+            - if:
+                condition: { eq: [name, "Home"] }
+                then:
+                  - decl: [to_h, i32, 0]
+                  - if: { condition: { eq: [word, 0] }, then: [{ set: [to_h, { call: [<.line_start, <.caret] }] }] }
+                  - call: [<.go_to, to_h, keep]
+                  - return: 1
+            - if:
+                condition: { eq: [name, "End"] }
+                then:
+                  - decl: [to_e, i32, <.text.len]
+                  - if: { condition: { eq: [word, 0] }, then: [{ set: [to_e, { call: [<.line_end, <.caret] }] }] }
+                  - call: [<.go_to, to_e, keep]
+                  - return: 1
+            # Up/Down keep the column: the offset inside the line, not the pixel -- a
+            # label is short, and the character column is what the hand aimed at.
+            - if:
+                condition: { "||": [{ eq: [name, "Up"] }, { eq: [name, "Down"] }] }
+                then:
+                  - decl: [here, i32, { call: [<.line_start, <.caret] }]
+                  - decl: [column, i32, { -: [<.caret, here] }]
+                  - decl: [row, i32, { call: [<.line_no, <.caret] }]
+                  - decl: [want, i32, { +: [row, 1] }]
+                  - if: { condition: { eq: [name, "Up"] }, then: [{ set: [want, { -: [row, 1] }] }] }
+                  - if: { condition: { lt: [want, 0] }, then: [{ set: [want, 0] }] }
+                  - decl: [begins, i32, { call: [<.row_start, want] }]
+                  - decl: [ends, i32, { call: [<.line_end, begins] }]
+                  - decl: [to_v, i32, { +: [begins, column] }]
+                  - if: { condition: { gt: [to_v, ends] }, then: [{ set: [to_v, ends] }] }
+                  - call: [<.go_to, to_v, keep]
+                  - return: 1
+            - if:
+                condition: { "&&": [{ eq: [word, 1] }, { eq: [name, "A"] }] }
+                then:
+                  - set: [<.anchor, 0]
+                  - set: [<.caret, <.text.len]
+                  - return: 1
+            # Without a selection these mean the WHOLE label.  Copying "nothing" is
+            # the one outcome a hand never intends, and silence is how it looks.
+            - if:
+                condition: { "&&": [{ eq: [word, 1] }, { eq: [name, "C"] }] }
+                then:
+                  - decl: [taken, string, { call: [<.picked_text] }]
+                  - if: { condition: { eq: [taken, ""] }, then: [{ set: [taken, <.text] }] }
+                  - call: [input.clipboard_set, taken]
+                  - return: 1
+            - if:
+                condition: { "&&": [{ eq: [word, 1] }, { eq: [name, "X"] }] }
+                then:
+                  - decl: [cut_text, string, { call: [<.picked_text] }]
+                  - if:
+                      condition: { eq: [cut_text, ""] }
+                      then:
+                        - call: [input.clipboard_set, <.text]
+                        - set: [<.text, ""]
+                        - set: [<.caret, 0]
+                        - set: [<.anchor, -1]
+                        - return: 1
+                  - call: [input.clipboard_set, cut_text]
+                  - call: [<.drop_pick]
+                  - return: 1
+            - if:
+                condition: { "&&": [{ eq: [word, 1] }, { eq: [name, "V"] }] }
+                then:
+                  - decl: [pasted, string, { call: [input.clipboard_get] }]
+                  - if: { condition: { neq: [pasted, ""] }, then: [{ call: [<.insert, pasted] }] }
+                  - return: 1
+            - return: 0
+
+      # Draw the text being edited, with the selection behind it and the caret in it.
+      # Same geometry as Pen.text_block, or the caret would sit where the glyphs are
+      # not -- which is the whole reason §6 insists on measuring.
+      - def:
+          name: draw_in
+          static_off: ["same_arg", "str_cmp"]
+          args: [[box, ref<Shape>]]
+          body:
+            - decl: [lines, list<string>, { call: [<.text.split, "\n"] }]
+            - decl: [line_h, f32, { call: [ui.text_height] }]
+            - decl: [total, f32, { "*": [line_h, { cast: [lines.len, f32] }] }]
+            - decl: [line_y, f32, { +: [box.pos_y, { /: [{ -: [box.height, total] }, 2.0] }] }]
+            - decl: [from, i32, { call: [<.low] }]
+            - decl: [upto, i32, { call: [<.high] }]
+            - decl: [seen, i32, 0]
+            - decl: [row, i32, 0]
+            - while:
+                condition: { lt: [row, lines.len] }
+                body:
+                  - decl: [line, string, { at: [lines, row] }]
+                  - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                  - decl: [left, f32, { +: [box.pos_x, { /: [{ -: [box.width, line_w] }, 2.0] }] }]
+                  # the selection on THIS line, clipped to it
+                  - if:
+                      condition: { gt: [upto, from] }
+                      then:
+                        - decl: [row_from, i32, { -: [from, seen] }]
+                        - decl: [row_upto, i32, { -: [upto, seen] }]
+                        - if: { condition: { lt: [row_from, 0] }, then: [{ set: [row_from, 0] }] }
+                        - if: { condition: { gt: [row_upto, line.len] }, then: [{ set: [row_upto, line.len] }] }
+                        - if:
+                            condition: { gt: [row_upto, row_from] }
+                            then:
+                              - decl: [pre_a, string, { call: [line.substr, 0, row_from] }]
+                              - decl: [pre_b, string, { call: [line.substr, 0, row_upto] }]
+                              - decl: [spot_a, f32, { call: [ui.measure_text, pre_a] }]
+                              - decl: [spot_b, f32, { call: [ui.measure_text, pre_b] }]
+                              - call: [ui.draw_rect, { +: [left, spot_a] }, line_y, { -: [spot_b, spot_a] }, line_h, 0x2F80ED66]
+                  - call: [ui.draw_text, left, line_y, line, box.tint]
+                  # the caret, if it is on this line
+                  - decl: [row_caret, i32, { -: [<.caret, seen] }]
+                  - if:
+                      condition: { "&&": [{ ge: [row_caret, 0] }, { le: [row_caret, line.len] }] }
+                      then:
+                        - decl: [pre, string, { call: [line.substr, 0, row_caret] }]
+                        - decl: [spot, f32, { call: [ui.measure_text, pre] }]
+                        - call: [ui.draw_rect, { +: [left, spot] }, line_y, 2.0, line_h, 0x2F80EDFF]
+                  - set: [seen, { +: [seen, { +: [line.len, 1] }] }]
+                  - set: [line_y, { +: [line_y, line_h] }]
+                  - set: [row, { +: [row, 1] }]
+
+      # A click inside the label: the nearest character boundary wins, measured the
+      # same way it is drawn.
+      - def:
+          name: place
+          static_off: ["same_arg", "str_cmp"]
+          args: [[box, ref<Shape>], [at_x, f32], [at_y, f32], [keep, i32]]
+          body:
+            - decl: [lines, list<string>, { call: [<.text.split, "\n"] }]
+            - decl: [line_h, f32, { call: [ui.text_height] }]
+            - if: { condition: { lt: [line_h, 1.0] }, then: [{ return: null }] }
+            - decl: [total, f32, { "*": [line_h, { cast: [lines.len, f32] }] }]
+            - decl: [top, f32, { +: [box.pos_y, { /: [{ -: [box.height, total] }, 2.0] }] }]
+            - decl: [row, i32, { cast: [{ /: [{ -: [at_y, top] }, line_h] }, i32] }]
+            - if: { condition: { lt: [row, 0] }, then: [{ set: [row, 0] }] }
+            - if: { condition: { ge: [row, lines.len] }, then: [{ set: [row, { -: [lines.len, 1] }] }] }
+            - decl: [line, string, { at: [lines, row] }]
+            - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+            - decl: [left, f32, { +: [box.pos_x, { /: [{ -: [box.width, line_w] }, 2.0] }] }]
+            - decl: [best, i32, 0]
+            - decl: [best_gap, f32, 100000.0]
+            - decl: [step, i32, 0]
+            - while:
+                condition: { le: [step, line.len] }
+                body:
+                  - decl: [pre, string, { call: [line.substr, 0, step] }]
+                  - decl: [spot, f32, { +: [left, { call: [ui.measure_text, pre] }] }]
+                  - decl: [gap, f32, { call: [math.abs, { -: [at_x, spot] }] }]
+                  - if:
+                      condition: { lt: [gap, best_gap] }
+                      then:
+                        - set: [best_gap, gap]
+                        - set: [best, step]
+                  - set: [step, { +: [step, 1] }]
+            - call: [<.go_to, { +: [{ call: [<.row_start, row] }, best] }, keep]
+
+      # The heading's box on the page, in WINDOW pixels -- the same rect it is drawn
+      # in, so a click lands where the letters are (§6).
+      - def:
+          name: title_box
+          args: [[org_x, f32], [org_y, f32], [scale, f32], [box, ref<Shape>]]
+          body:
+            - set: [box.pos_x, { +: [org_x, { "*": [52.0, scale] }] }]
+            - set: [box.pos_y, { +: [org_y, { "*": [22.0, scale] }] }]
+            - set: [box.width, { "*": [700.0, scale] }]
+            - set: [box.height, { "*": [34.0, scale] }]
+            - set: [box.tint, 0x101A24FF]
+
+      # Is this point inside that box, and if so put the caret there.  Returns 1 when
+      # the click belonged to the label -- a press inside the text being edited must
+      # move the caret, not commit and start a stroke (§6).
+      - def:
+          name: click_in
+          args: [[box, ref<Shape>], [at_x, f32], [at_y, f32]]
+          return: i32
+          body:
+            - if: { condition: { lt: [at_x, box.pos_x] }, then: [{ return: 0 }] }
+            - if: { condition: { gt: [at_x, { +: [box.pos_x, box.width] }] }, then: [{ return: 0 }] }
+            - if: { condition: { lt: [at_y, box.pos_y] }, then: [{ return: 0 }] }
+            - if: { condition: { gt: [at_y, { +: [box.pos_y, box.height] }] }, then: [{ return: 0 }] }
+            - decl: [keep, i32, 0]
+            - if: { condition: { call: [input.key_down, "Shift"] }, then: [{ set: [keep, 1] }] }
+            - call: [<.place, box, at_x, at_y, keep]
+            - return: 1
