@@ -1,0 +1,14 @@
+title: ""
+slides:
+  - title: ""
+    dtype: flowchart
+    dir: TD
+    next_id: 4
+    nodes:
+      - { id: start, kind: rect, x: 40, y: 90, w: 210, h: 76, text: "Anfang" }
+      - { id: pruef, kind: diamond, x: 40, y: 236, w: 210, h: 76, text: "ok?" }
+      - { id: ende, kind: stadium, x: 40, y: 382, w: 210, h: 76, text: "Ende" }
+    edges:
+      - { id: e1, from_id: start, to_id: pruef, kind: arrow }
+      - { id: e2, from_id: pruef, to_id: ende, kind: arrow, text: "ja" }
+      - { id: e3, from_id: pruef, to_id: start, kind: arrow, text: "nein" }

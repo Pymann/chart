@@ -1,0 +1,490 @@
+# Reading Mermaid back in (doc/spec/chart.md §18).
+#
+# This is a RECONSTRUCTION, not the inverse of the export: Mermaid carries no
+# coordinates (§5.7), so the layout below is invented.  Everything chart cannot read is
+# reported with its line number -- a diagram that quietly lost three edges is worse
+# than one that refused to open, because nobody goes looking for what is not there.
+- import: "src/sheet_model.aiml"
+
+- class:
+    name: MermaidIn
+    description: "Mermaid text to a sheet, with an invented layout (spec §18)"
+    members:
+      - [ref_id, string]            # scratch of split_ref: the node's id
+      - [ref_kind, i32]             # its NodeKind
+      - [ref_text, string]          # its label
+      - [ref_shown, i32]            # 1 = the line declared a shape, 0 = only named it
+      - [group_now, string]         # the subgraph being read, "" = top level
+      - [unread, string]            # every line chart did not understand
+    methods:
+      - def:
+          name: unquote
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          return: string
+          body:
+            - decl: [out, string, { call: [text.trim] }]
+            - if:
+                condition: { ge: [out.len, 2] }
+                then:
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [out.substr, 0, 1] }, "\""] }, { eq: [{ call: [out.ends_with, "\""] }, 1] }] }
+                      then: [{ set: [out, { call: [out.substr, 1, { -: [out.len, 2] }] }] }]
+            # the export's two substitutions, undone in the same order (src/mermaid.aiml)
+            - set: [out, { call: [out.replace, "<br/>", "\n"] }]
+            - set: [out, { call: [out.replace, "#quot;", "\""] }]
+            - return: out
+
+      # id + shape + label out of one reference, e.g. `pruef{"ok?"}` or a bare `a1`.
+      - def:
+          name: split_ref
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string]]
+          body:
+            - decl: [raw, string, { call: [text.trim] }]
+            - set: [<.ref_shown, 0]
+            - set: [<.ref_kind, NodeKind.rect]
+            - decl: [cut, i32, -1]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, raw.len] }
+                body:
+                  - decl: [chr, string, { call: [raw.substr, pos, 1] }]
+                  - decl: [opens, i32, 0]
+                  - if: { condition: { eq: [chr, "["] }, then: [{ set: [opens, 1] }] }
+                  - if: { condition: { eq: [chr, "("] }, then: [{ set: [opens, 1] }] }
+                  - if: { condition: { eq: [chr, "{"] }, then: [{ set: [opens, 1] }] }
+                  - if:
+                      condition: { eq: [opens, 1] }
+                      then:
+                        - set: [cut, pos]
+                        - set: [pos, raw.len]
+                  - set: [pos, { +: [pos, 1] }]
+            - if:
+                condition: { lt: [cut, 0] }
+                then:
+                  # a bare id: Mermaid allows it, so refusing it would reject a valid
+                  # file over a formality (§18.2).  The id becomes the label.
+                  - set: [<.ref_id, raw]
+                  - set: [<.ref_text, raw]
+                  - return: null
+            - decl: [name_part, string, { call: [raw.substr, 0, cut] }]
+            - set: [<.ref_id, { call: [name_part.trim] }]
+            - set: [<.ref_shown, 1]
+            - decl: [rest, string, { call: [raw.substr, cut, { -: [raw.len, cut] }] }]
+            # longest opener first: "[[" before "[", or a subroutine reads as a rect
+            - decl: [open_len, i32, 1]
+            - if: { condition: { eq: [{ call: [rest.starts_with, "[["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.subroutine] }, { set: [open_len, 2] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "[("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.cylinder] }, { set: [open_len, 2] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "(("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.circle] }, { set: [open_len, 2] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "(["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.stadium] }, { set: [open_len, 2] }] }
+            - if: { condition: { eq: [{ call: [rest.starts_with, "{{"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.hexagon] }, { set: [open_len, 2] }] }
+            - if:
+                condition: { eq: [open_len, 1] }
+                then:
+                  - if: { condition: { eq: [{ call: [rest.starts_with, "["] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.rect] }] }
+                  - if: { condition: { eq: [{ call: [rest.starts_with, "("] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.round] }] }
+                  - if: { condition: { eq: [{ call: [rest.starts_with, "{"] }, 1] }, then: [{ set: [<.ref_kind, NodeKind.diamond] }] }
+            - decl: [inner, string, { call: [rest.substr, open_len, { -: [rest.len, { "*": [open_len, 2] }] }] }]
+            - set: [<.ref_text, { call: [<.unquote, inner] }]
+
+      - def:
+          name: node_slot
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [ident, string]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, sheet.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - if: { condition: { eq: [node.ident, ident] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
+      # Put the reference last read by split_ref on the sheet.  A node named in an
+      # edge appears now; a later declaration with a shape fills in what was missing,
+      # because Mermaid lets the two come in either order.
+      - def:
+          name: take_ref
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          body:
+            - if: { condition: { eq: [<.ref_id, ""] }, then: [{ return: null }] }
+            - decl: [slot, i32, { call: [<.node_slot, sheet, <.ref_id] }]
+            - if:
+                condition: { ge: [slot, 0] }
+                then:
+                  - if: { condition: { eq: [<.ref_shown, 0] }, then: [{ return: null }] }
+                  - decl: [known, ref<Node>, { at: [sheet.nodes, slot] }]
+                  - set: [known.kind, <.ref_kind]
+                  - set: [known.text, <.ref_text]
+                  - if: { condition: { neq: [<.group_now, ""] }, then: [{ set: [known.group, <.group_now] }] }
+                  - return: null
+            - decl: [fresh, Node]
+            - set: [fresh.ident, <.ref_id]
+            - set: [fresh.kind, <.ref_kind]
+            - set: [fresh.text, <.ref_text]
+            - set: [fresh.group, <.group_now]
+            - set: [fresh.width, 210.0]
+            - set: [fresh.height, 76.0]
+            - call: [sheet.nodes.push, fresh]
+
+      # Which connector is on this line?  Longest first: "<-->" contains "-->", and
+      # "-- text -->" contains "--" long before the arrow that matters.
+      - def:
+          name: link_kind
+          static_off: ["same_arg", "str_cmp"]
+          args: [[line, string]]
+          return: i32
+          body:
+            - if: { condition: { ge: [{ call: [line.index_of, "<-->"] }, 0] }, then: [{ return: EdgeKind.bidirectional }] }
+            - if: { condition: { ge: [{ call: [line.index_of, "-.->"] }, 0] }, then: [{ return: EdgeKind.dotted }] }
+            - if: { condition: { ge: [{ call: [line.index_of, "==>"] }, 0] }, then: [{ return: EdgeKind.thick }] }
+            - if: { condition: { ge: [{ call: [line.index_of, "~~~"] }, 0] }, then: [{ return: EdgeKind.invisible }] }
+            - if: { condition: { ge: [{ call: [line.index_of, "-->"] }, 0] }, then: [{ return: EdgeKind.arrow }] }
+            - if: { condition: { ge: [{ call: [line.index_of, "---"] }, 0] }, then: [{ return: EdgeKind.open }] }
+            - return: -1
+
+      - def:
+          name: link_mark
+          args: [[kind, i32]]
+          return: string
+          body:
+            - if: { condition: { eq: [kind, EdgeKind.bidirectional] }, then: [{ return: "<-->" }] }
+            - if: { condition: { eq: [kind, EdgeKind.dotted] }, then: [{ return: "-.->" }] }
+            - if: { condition: { eq: [kind, EdgeKind.thick] }, then: [{ return: "==>" }] }
+            - if: { condition: { eq: [kind, EdgeKind.invisible] }, then: [{ return: "~~~" }] }
+            - if: { condition: { eq: [kind, EdgeKind.arrow] }, then: [{ return: "-->" }] }
+            - return: "---"
+
+      - def:
+          name: read_edge
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [line, string], [kind, i32]]
+          body:
+            - decl: [mark, string, { call: [<.link_mark, kind] }]
+            - decl: [cut, i32, { call: [line.index_of, mark] }]
+            - decl: [left, string, { call: [line.substr, 0, cut] }]
+            - decl: [after, i32, { +: [cut, mark.len] }]
+            - decl: [right, string, { call: [line.substr, after, { -: [line.len, after] }] }]
+            - decl: [label, string, ""]
+            # `a -->|"text"| b`
+            - decl: [tail, string, { call: [right.trim] }]
+            - if:
+                condition: { eq: [{ call: [tail.starts_with, "|"] }, 1] }
+                then:
+                  - decl: [rest, string, { call: [tail.substr, 1, { -: [tail.len, 1] }] }]
+                  - decl: [shut, i32, { call: [rest.index_of, "|"] }]
+                  - if:
+                      condition: { ge: [shut, 0] }
+                      then:
+                        - set: [label, { call: [<.unquote, { call: [rest.substr, 0, shut] }] }]
+                        - decl: [after_bar, i32, { +: [shut, 1] }]
+                        - set: [tail, { call: [rest.substr, after_bar, { -: [rest.len, after_bar] }] }]
+            # `a -- text --> b`
+            - decl: [head, string, { call: [left.trim] }]
+            - decl: [dash, i32, { call: [head.index_of, " -- "] }]
+            - if:
+                condition: { ge: [dash, 0] }
+                then:
+                  - decl: [after_dash, i32, { +: [dash, 4] }]
+                  - set: [label, { call: [<.unquote, { call: [head.substr, after_dash, { -: [head.len, after_dash] }] }] }]
+                  - set: [head, { call: [head.substr, 0, dash] }]
+            - call: [<.split_ref, head]
+            - decl: [src, string, <.ref_id]
+            - call: [<.take_ref, sheet]
+            - call: [<.split_ref, tail]
+            - decl: [dst, string, <.ref_id]
+            - call: [<.take_ref, sheet]
+            - if: { condition: { eq: [src, ""] }, then: [{ return: null }] }
+            - if: { condition: { eq: [dst, ""] }, then: [{ return: null }] }
+            - decl: [edge, Edge]
+            - set: [edge.ident, "e${sheet.next_id}"]
+            - set: [edge.from_id, src]
+            - set: [edge.to_id, dst]
+            - set: [edge.kind, kind]
+            - set: [edge.text, label]
+            - call: [sheet.edges.push, edge]
+            - set: [sheet.next_id, { +: [sheet.next_id, 1] }]
+
+      - def:
+          name: read_subgraph
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [line, string]]
+          body:
+            - decl: [rest, string, { call: [line.substr, 9, { -: [line.len, 9] }] }]
+            - decl: [raw, string, { call: [rest.trim] }]
+            - call: [<.split_ref, raw]
+            - decl: [group, Group]
+            - set: [group.ident, <.ref_id]
+            - set: [group.title, <.ref_text]
+            - if: { condition: { eq: [group.title, ""] }, then: [{ set: [group.title, <.ref_id] }] }
+            - call: [sheet.groups.push, group]
+            - set: [<.group_now, <.ref_id]
+
+      # One file.  Everything unread keeps its line number, because "chart did not
+      # understand line 14" is actionable and "some things were skipped" is not.
+      - def:
+          name: read
+          static_off: ["same_arg", "str_cmp"]
+          args: [[text, string], [sheet, ref<Sheet>]]
+          return: i32
+          body:
+            - set: [<.unread, ""]
+            - set: [<.group_now, ""]
+            - set: [sheet.next_id, 1]
+            - decl: [lines, list<string>, { call: [text.split, "\n"] }]
+            - decl: [row, i32, 0]
+            - decl: [seen_head, i32, 0]
+            - while:
+                condition: { lt: [row, lines.len] }
+                body:
+                  - decl: [raw, string, { at: [lines, row] }]
+                  - decl: [line, string, { call: [raw.trim] }]
+                  - decl: [number, i32, { +: [row, 1] }]
+                  - set: [row, { +: [row, 1] }]
+                  - decl: [done, i32, 0]
+                  - if: { condition: { eq: [line, ""] }, then: [{ set: [done, 1] }] }
+                  - if: { condition: { eq: [{ call: [line.starts_with, "%%"] }, 1] }, then: [{ set: [done, 1] }] }
+                  - if:
+                      condition: { eq: [done, 0] }
+                      then:
+                        - decl: [is_head, i32, 0]
+                        - if: { condition: { eq: [{ call: [line.starts_with, "flowchart"] }, 1] }, then: [{ set: [is_head, 1] }] }
+                        - if: { condition: { eq: [{ call: [line.starts_with, "graph "] }, 1] }, then: [{ set: [is_head, 1] }] }
+                        - if:
+                            condition: { eq: [is_head, 1] }
+                            then:
+                              - set: [seen_head, 1]
+                              - set: [done, 1]
+                              - set: [sheet.dtype, DiagramType.flowchart]
+                              - if: { condition: { ge: [{ call: [line.index_of, "LR"] }, 0] }, then: [{ set: [sheet.dir, Direction.LR] }] }
+                              - if: { condition: { ge: [{ call: [line.index_of, "RL"] }, 0] }, then: [{ set: [sheet.dir, Direction.RL] }] }
+                              - if: { condition: { ge: [{ call: [line.index_of, "BT"] }, 0] }, then: [{ set: [sheet.dir, Direction.BT] }] }
+                              - if: { condition: { ge: [{ call: [line.index_of, "TD"] }, 0] }, then: [{ set: [sheet.dir, Direction.TD] }] }
+                              - if: { condition: { ge: [{ call: [line.index_of, "TB"] }, 0] }, then: [{ set: [sheet.dir, Direction.TD] }] }
+                  - if:
+                      condition: { "&&": [{ eq: [done, 0] }, { eq: [{ call: [line.starts_with, "subgraph"] }, 1] }] }
+                      then:
+                        - call: [<.read_subgraph, sheet, line]
+                        - set: [done, 1]
+                  - if:
+                      condition: { "&&": [{ eq: [done, 0] }, { eq: [line, "end"] }] }
+                      then:
+                        - set: [<.group_now, ""]
+                        - set: [done, 1]
+                  - if:
+                      condition: { eq: [done, 0] }
+                      then:
+                        - decl: [kind, i32, { call: [<.link_kind, line] }]
+                        - if:
+                            condition: { ge: [kind, 0] }
+                            then:
+                              - call: [<.read_edge, sheet, line, kind]
+                              - set: [done, 1]
+                  # a declaration is a reference and nothing else on the line
+                  - if:
+                      condition: { eq: [done, 0] }
+                      then:
+                        - decl: [known, i32, 0]
+                        - if: { condition: { eq: [{ call: [line.starts_with, "classDef"] }, 1] }, then: [{ set: [known, 1] }] }
+                        - if: { condition: { eq: [{ call: [line.starts_with, "style"] }, 1] }, then: [{ set: [known, 1] }] }
+                        - if: { condition: { eq: [{ call: [line.starts_with, "linkStyle"] }, 1] }, then: [{ set: [known, 1] }] }
+                        - if: { condition: { eq: [{ call: [line.starts_with, "click"] }, 1] }, then: [{ set: [known, 1] }] }
+                        - if: { condition: { eq: [{ call: [line.starts_with, "direction"] }, 1] }, then: [{ set: [known, 1] }] }
+                        - if:
+                            condition: { eq: [known, 1] }
+                            then:
+                              - set: [<.unread, "${<.unread}  Zeile ${number}: ${line}\n"]
+                              - set: [done, 1]
+                  - if:
+                      condition: { eq: [done, 0] }
+                      then:
+                        - call: [<.split_ref, line]
+                        - if:
+                            condition: { eq: [<.ref_shown, 1] }
+                            then: [{ call: [<.take_ref, sheet] }]
+                            else: [{ set: [<.unread, "${<.unread}  Zeile ${number}: ${line}\n"] }]
+            - if:
+                condition: { eq: [seen_head, 0] }
+                then:
+                  - call: [log.error, "chart: kein 'flowchart'/'graph' in der Datei -- das ist kein Mermaid-Flussdiagramm"]
+                  - return: 0
+            - call: [<.lay_out, sheet]
+            - return: 1
+
+      # The invented layout (§18.3): layers by longest path from a root, declaration
+      # order inside a layer, fixed spacing.  Fixed, because the same Mermaid has to
+      # give the same bytes -- a prettier layout that wandered between runs would make
+      # every diff noise.
+      - def:
+          name: lay_out
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>]]
+          body:
+            - decl: [count, i32, sheet.nodes.len]
+            - if: { condition: { eq: [count, 0] }, then: [{ return: null }] }
+            - decl: [layer, list<i32>]
+            - decl: [fixed_at, list<i32>]          # 1 = this node has its layer
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, count] }
+                body:
+                  - call: [layer.push, 0]
+                  - call: [fixed_at.push, 0]
+                  - set: [idx, { +: [idx, 1] }]
+            # Roots first: a node nothing points at.  A diagram that is one big cycle
+            # has no root, and then the first node DECLARED is the root -- some node
+            # has to be, and the file's own order is the only ordering Mermaid carries.
+            - decl: [roots, i32, 0]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, count] }
+                body:
+                  - decl: [node_r, ref<Node>, { at: [sheet.nodes, idx] }]
+                  - decl: [into, i32, 0]
+                  - decl: [pos, i32, 0]
+                  - while:
+                      condition: { lt: [pos, sheet.edges.len] }
+                      body:
+                        - decl: [edge_r, ref<Edge>, { at: [sheet.edges, pos] }]
+                        - if: { condition: { eq: [edge_r.to_id, node_r.ident] }, then: [{ set: [into, 1] }] }
+                        - set: [pos, { +: [pos, 1] }]
+                  - if:
+                      condition: { eq: [into, 0] }
+                      then:
+                        - idx: [fixed_at, idx, 1]
+                        - set: [roots, { +: [roots, 1] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - if: { condition: { eq: [roots, 0] }, then: [{ idx: [fixed_at, 0, 1] }] }
+            # A node is placed ONCE: the first edge out of a placed node fixes its
+            # layer, and a back edge into it changes nothing.  Relaxing instead would
+            # let a cycle push its members down a layer per pass -- in a three-node
+            # loop the sheet grew off the page before this was written down.
+            - decl: [pass, i32, 0]
+            - while:
+                condition: { lt: [pass, count] }
+                body:
+                  - decl: [moved, i32, 0]
+                  - decl: [pos, i32, 0]
+                  - while:
+                      condition: { lt: [pos, sheet.edges.len] }
+                      body:
+                        - decl: [edge, ref<Edge>, { at: [sheet.edges, pos] }]
+                        - decl: [from_at, i32, { call: [<.node_slot, sheet, edge.from_id] }]
+                        - decl: [to_at, i32, { call: [<.node_slot, sheet, edge.to_id] }]
+                        - if:
+                            condition: { "&&": [{ ge: [from_at, 0] }, { ge: [to_at, 0] }] }
+                            then:
+                              - if:
+                                  condition: { "&&": [{ eq: [{ at: [fixed_at, from_at] }, 1] }, { eq: [{ at: [fixed_at, to_at] }, 0] }] }
+                                  then:
+                                    - idx: [layer, to_at, { +: [{ at: [layer, from_at] }, 1] }]
+                                    - idx: [fixed_at, to_at, 1]
+                                    - set: [moved, 1]
+                        - set: [pos, { +: [pos, 1] }]
+                  - if: { condition: { eq: [moved, 0] }, then: [{ set: [pass, count] }] }
+                  - set: [pass, { +: [pass, 1] }]
+
+            - decl: [deepest, i32, 0]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, count] }
+                body:
+                  - decl: [one, i32, { at: [layer, idx] }]
+                  - if: { condition: { gt: [one, deepest] }, then: [{ set: [deepest, one] }] }
+                  - set: [idx, { +: [idx, 1] }]
+
+            - decl: [across, i32, 0]
+            - if: { condition: { eq: [sheet.dir, Direction.LR] }, then: [{ set: [across, 1] }] }
+            - if: { condition: { eq: [sheet.dir, Direction.RL] }, then: [{ set: [across, 1] }] }
+            - decl: [back, i32, 0]
+            - if: { condition: { eq: [sheet.dir, Direction.BT] }, then: [{ set: [back, 1] }] }
+            - if: { condition: { eq: [sheet.dir, Direction.RL] }, then: [{ set: [back, 1] }] }
+
+            - decl: [wide, f32, 210.0]
+            - decl: [tall, f32, 76.0]
+            - decl: [gap, f32, 40.0]
+            - decl: [step, f32, 70.0]
+            # How far apart two layers sit, and two members within a layer.
+            - decl: [main_step, f32, { +: [tall, step] }]
+            - decl: [cross_step, f32, { +: [wide, gap] }]
+            - decl: [page_main, f32, 600.0]
+            - decl: [margin_main, f32, 90.0]
+            - decl: [margin_cross, f32, 40.0]
+            - if:
+                condition: { eq: [across, 1] }
+                then:
+                  - set: [main_step, { +: [wide, { "*": [step, 1.6] }] }]
+                  - set: [cross_step, { +: [tall, gap] }]
+                  - set: [page_main, 1200.0]
+                  - set: [margin_main, 60.0]
+                  - set: [margin_cross, 90.0]
+            # Layers WRAP into bands instead of running off the page: a chain of
+            # eleven nodes reached x=3280 on a 1280-wide page, where everything past
+            # the third node was simply not there to drag.
+            - decl: [per_band, i32, { cast: [{ /: [page_main, main_step] }, i32] }]
+            - if: { condition: { lt: [per_band, 1] }, then: [{ set: [per_band, 1] }] }
+            - decl: [widest, i32, 1]
+            - decl: [level, i32, 0]
+            - while:
+                condition: { le: [level, deepest] }
+                body:
+                  - decl: [members_l, i32, 0]
+                  - set: [idx, 0]
+                  - while:
+                      condition: { lt: [idx, count] }
+                      body:
+                        - if: { condition: { eq: [{ at: [layer, idx] }, level] }, then: [{ set: [members_l, { +: [members_l, 1] }] }] }
+                        - set: [idx, { +: [idx, 1] }]
+                  - if: { condition: { gt: [members_l, widest] }, then: [{ set: [widest, members_l] }] }
+                  - set: [level, { +: [level, 1] }]
+            - decl: [band_size, f32, { +: [{ "*": [{ cast: [widest, f32] }, cross_step] }, 30.0] }]
+
+            - set: [level, 0]
+            - while:
+                condition: { le: [level, deepest] }
+                body:
+                  - decl: [members, i32, 0]
+                  - set: [idx, 0]
+                  - while:
+                      condition: { lt: [idx, count] }
+                      body:
+                        - if: { condition: { eq: [{ at: [layer, idx] }, level] }, then: [{ set: [members, { +: [members, 1] }] }] }
+                        - set: [idx, { +: [idx, 1] }]
+                  - if:
+                      condition: { gt: [members, 0] }
+                      then:
+                        - decl: [shown, i32, level]
+                        - if: { condition: { eq: [back, 1] }, then: [{ set: [shown, { -: [deepest, level] }] }] }
+                        - decl: [band, i32, { cast: [{ "/": [shown, per_band] }, i32] }]
+                        - decl: [col, i32, { -: [shown, { "*": [band, per_band] }] }]
+                        - decl: [fixed_pos, f32, { +: [margin_main, { "*": [{ cast: [col, f32] }, main_step] }] }]
+                        # the layer is centred inside its band, so a single node sits
+                        # under the middle of a wide one instead of hugging the edge
+                        - decl: [slack, f32, { "*": [{ cast: [{ -: [widest, members] }, f32] }, cross_step] }]
+                        - decl: [run, f32, { +: [{ +: [margin_cross, { "*": [{ cast: [band, f32] }, band_size] }] }, { /: [slack, 2.0] }] }]
+                        - set: [idx, 0]
+                        - while:
+                            condition: { lt: [idx, count] }
+                            body:
+                              - if:
+                                  condition: { eq: [{ at: [layer, idx] }, level] }
+                                  then:
+                                    - decl: [node, ref<Node>, { at: [sheet.nodes, idx] }]
+                                    - set: [node.width, wide]
+                                    - set: [node.height, tall]
+                                    - if:
+                                        condition: { eq: [across, 1] }
+                                        then:
+                                          - set: [node.pos_x, fixed_pos]
+                                          - set: [node.pos_y, run]
+                                          - set: [run, { +: [run, cross_step] }]
+                                        else:
+                                          - set: [node.pos_x, run]
+                                          - set: [node.pos_y, fixed_pos]
+                                          - set: [run, { +: [run, cross_step] }]
+                              - set: [idx, { +: [idx, 1] }]
+                  - set: [level, { +: [level, 1] }]

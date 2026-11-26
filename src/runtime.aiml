@@ -7,6 +7,7 @@
 - import: "src/markdown.aiml"
 - import: "src/svg.aiml"
 - import: "src/pptx.aiml"
+- import: "src/mermaid_in.aiml"
 
 - model:
     name: ChartOptions
@@ -19,6 +20,8 @@
       - [svg, string, ""]          # output: a directory, one SVG per slide (spec §17.1)
       - [html, string, ""]         # output: one self-contained deck file (spec §17.3)
       - [pptx, string, ""]         # output: one editable PowerPoint file (spec §17.2)
+      - [import, string, ""]   # input: read Mermaid back in (spec §18)
+      - [out, string, ""]          # where the imported sheet is written
       # Testing and screenshots: run a fixed number of frames, optionally capture the
       # last one.  Without this the editor runs until the window closes, and a test
       # that waits for a human is a test nobody runs (aiml run_all_tests.sh: a
@@ -46,6 +49,7 @@
       - [markdown, ref<MarkdownOut>]
       - [svg, ref<SvgOut>]
       - [pptx, ref<PptxOut>]
+      - [mermaid_in, ref<MermaidIn>]
     methods:
       # buffer.write_to reports a short write or a failed flush; io.write cannot
       # (aiml spec/23) -- and a half-written diagram must not pass for a written one.
@@ -160,6 +164,51 @@
             - set: [out, "${out}addEventListener('click',()=>{at=Math.min(at+1,pages.length-1);show();});\n"]
             - set: [out, "${out}show();\n</script>\n</html>\n"]
             - return: { call: [<.write_file, file_path, out] }
+
+      # §18.1: an import is a reconstruction, so it writes a NEW sheet and never
+      # over the source.  Refusing an existing target is the whole guard: a layout
+      # someone arranged must not be replaced by one chart invented.
+      - def:
+          name: import_run
+          static_off: ["same_arg", "str_cmp"]
+          args: [[options, ChartOptions]]
+          return: i32
+          body:
+            - decl: [target, string, options.out]
+            - if:
+                condition: { eq: [target, ""] }
+                then:
+                  - call: [log.error, "chart: --import braucht --out ZIEL.deck.yaml"]
+                  - return: 1
+            - decl: [there, path, target]
+            - if:
+                condition: { neq: [{ call: [io.is_file, there] }, 0] }
+                then:
+                  - call: [log.error, "chart: ${target} gibt es schon -- ein Import erfindet die Anordnung (spec §18.1) und darf keine ueberschreiben"]
+                  - return: 1
+            - decl: [handle, file_handle, { call: [io.open, options.import, "r"] }]
+            - if:
+                condition: { eq: [handle, null] }
+                then:
+                  - call: [log.error, "chart: ${options.import}: nicht lesbar"]
+                  - return: 1
+            - decl: [text, string, { call: [io.read_all, handle] }]
+            - call: [io.close, handle]
+            - decl: [deck, Deck]
+            - decl: [sheet, Sheet]
+            - if:
+                condition: { eq: [{ call: [<.mermaid_in.read, text, sheet] }, 0] }
+                then: [{ return: 1 }]
+            - call: [deck.slides.push, sheet]
+            - decl: [yaml_text, string, { call: [<.sheet_io.deck_yaml, deck] }]
+            - if:
+                condition: { eq: [{ call: [<.write_file, target, yaml_text] }, 0] }
+                then: [{ return: 1 }]
+            - if:
+                condition: { neq: [<.mermaid_in.unread, ""] }
+                then: [{ call: [log.warn, "chart: nicht gelesen (spec §18.2):\n${<.mermaid_in.unread}"] }]
+            - call: [log.info, "chart: ${target} geschrieben -- die Anordnung ist erfunden (spec §18.3), zum Zurechtziehen gedacht"]
+            - return: 0
 
       - def:
           name: run

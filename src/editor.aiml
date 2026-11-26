@@ -1377,9 +1377,11 @@
       - class: PptxOut
         instance: pptx
         sees: [pen, svg, zip]
+      - class: MermaidIn
+        instance: mermaid_in
       - class: Exporter
         instance: exporter
-        sees: [sheet_io, mermaid, markdown, svg, pptx]
+        sees: [sheet_io, mermaid, markdown, svg, pptx, mermaid_in]
       - class: Recognizer
         instance: recognizer
       - class: Ink

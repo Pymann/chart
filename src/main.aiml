@@ -6,6 +6,7 @@
     body:
       - call: [log.error, "usage: chart (--deck FILE | --sheet FILE) [OUTPUT ...]"]
       - call: [log.error, "       outputs: --mermaid OUT.mmd  --markdown DIR  --svg DIR  --html OUT.html  --pptx OUT.pptx"]
+      - call: [log.error, "       import:  --import DIAGRAMM.mmd --out ZIEL.deck.yaml (die Anordnung wird erfunden, spec 18)"]
       - call: [log.error, "       without an output option the editor opens (spec §15)"]
       - call: [log.error, "       --frames N --shot FILE.png: N frames, capture the last one"]
 
@@ -16,6 +17,14 @@
     body:
       - decl: [options, ChartOptions]
       - call: [sys.arg_dump, options]
+      - decl: [runtime_in, ptr<ChartRuntime>]
+      - if:
+          condition: { neq: [options.import, ""] }
+          then:
+            - set: [runtime_in, { new: ChartRuntime }]
+            - decl: [brought, i32, { call: [runtime_in.exporter.import_run, options] }]
+            - free: runtime_in
+            - return: brought
       - decl: [input, string, options.deck]
       - if: { condition: { eq: [input, ""] }, then: [{ set: [input, options.sheet] }] }
       - if:

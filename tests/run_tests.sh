@@ -107,6 +107,39 @@ for fixture in tests/fixture/*.deck.yaml; do
     fi
 done
 
+# Import: Mermaid in, a sheet out, byte-exact (spec §18.1 promises determinism).
+for fixture in tests/fixture/mmd/*.mmd; do
+    [ -e "$fixture" ] || continue
+    name=$(basename "$fixture" .mmd)
+    expected="tests/expected/import_$name.deck.yaml"
+    got="tests/out/import_$name.deck.yaml"
+    total=$((total + 1))
+    rm -f "$got"
+    if ! "$BIN" --import "$fixture" --out "$got" 2>/dev/null; then
+        echo "[ FAIL ] $name (import) -- exited non-zero"
+        failed=$((failed + 1))
+        continue
+    fi
+    if diff -u "$expected" "$got"; then
+        echo "[  OK  ] $name (import)"
+    else
+        echo "[ FAIL ] $name -- imported sheet differs from $expected"
+        failed=$((failed + 1))
+    fi
+done
+
+# An import must refuse to write over a sheet that already exists (§18.1): the
+# layout it invents would replace one somebody arranged.
+total=$((total + 1))
+guard="tests/out/import_guard.deck.yaml"
+: > "$guard"
+if "$BIN" --import tests/fixture/mmd/klein.mmd --out "$guard" 2>/dev/null; then
+    echo "[ FAIL ] import ueberschreibt eine vorhandene Datei"
+    failed=$((failed + 1))
+else
+    echo "[  OK  ] import refuses an existing target"
+fi
+
 # PPTX: the parts byte-exact, and a real reader must open the package (spec §17.2).
 if ! command -v unzip >/dev/null; then
     echo "[ SKIP ] pptx -- no unzip; a silent skip would read like a pass, so this says so"

@@ -1,0 +1,26 @@
+%% Every shape, every edge kind, a subgraph, a label with a line break,
+%% a node that only appears in an edge, and one line chart cannot read.
+flowchart LR
+    a1["Kasten"]
+    a2(["Kapsel"])
+    a3(("Kreis"))
+    a4{"Raute"}
+    a5{{"Sechseck"}}
+    a6[("Zylinder")]
+    a7[["Unterprogramm"]]
+    a8("Rund<br/>zweite Zeile")
+    subgraph g1 ["Eine Gruppe"]
+        b1["drinnen"]
+        b2["auch drinnen"]
+    end
+    a1 --> a2
+    a2 --- a3
+    a3 -.-> a4
+    a4 ==> a5
+    a5 <--> a6
+    a6 ~~~ a7
+    a7 -->|"mit Text"| a8
+    a8 -- kurz --> b1
+    b1 --> b2
+    b2 --> nie_erklaert
+    classDef wichtig fill:#f9f

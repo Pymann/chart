@@ -976,7 +976,70 @@ switch, `?slide=N` opens one directly. No external script or font, because an ex
 that needs a CDN stops working exactly when it is needed — offline, in a train, in five
 years.
 
-## 18. Stage plan for the surface
+## 18. Reading Mermaid back in
+
+Mermaid can be **imported**, and §2 is the reason this section is long: the sheet is the
+document, Mermaid is a projection that threw coordinates away (§5.7). Reading it back is
+therefore not the inverse of writing it — it is a **reconstruction**, and chart says so
+instead of pretending.
+
+### 18.1 What an import is, and is not (normative)
+
+- An import **invents the layout**. The nodes get positions chart computed, not positions
+  anyone chose. Importing a diagram that was exported from a sheet does **not** restore
+  that sheet, and must never be sold as a round trip: `sheet -> mmd -> sheet` keeps the
+  structure and loses the arrangement, every time.
+- Therefore an import **never writes over the source sheet**. It produces a new sheet,
+  and chart refuses to import onto a path that already exists unless asked twice.
+- An import is **deterministic**: the same Mermaid gives the same sheet, byte for byte.
+  Otherwise the tests of §9 cannot exist and two authors importing the same file would
+  get different diffs.
+- **Unknown syntax is reported, never dropped in silence.** Every line chart does not
+  understand is named with its number and its text, and the import continues. A diagram
+  that quietly lost three edges is worse than one that failed, because nobody looks for
+  what is not there.
+
+### 18.2 The subset chart reads (normative)
+
+| Mermaid | becomes |
+|---|---|
+| `flowchart TD\|LR\|BT\|RL`, `graph …` | `dtype: flowchart`, `dir:` |
+| `id["text"]`, bare `id` | `kind: rect` |
+| `id("text")`, `id(["text"])` | `round`, `stadium` |
+| `id(("text"))`, `id{"text"}`, `id{{"text"}}` | `circle`, `diamond`, `hexagon` |
+| `id[("text")]`, `id[["text"]]` | `cylinder`, `subroutine` |
+| `a --> b`, `a --- b`, `a -.-> b`, `a ==> b`, `a <--> b`, `a ~~~ b` | `arrow`, `open`, `dotted`, `thick`, `bidirectional`, `invisible` |
+| `a -->\|"label"\| b`, `a -- label --> b` | the edge's `text` |
+| `subgraph id ["title"] … end` | a `Group`, and every node inside carries its id |
+| `<br/>` inside a label | a newline |
+| `classDef`, `style`, `click`, `linkStyle` | not read yet; they are reported as unread, never silently skipped |
+
+A node named only in an edge (`a --> b` with no declaration for `b`) is created as a
+`rect` with its id as the label: Mermaid allows it, so refusing it would reject valid
+files over a formality.
+
+### 18.3 The layout chart invents (normative)
+
+- Nodes are put in **layers from the roots outward**: a node nothing points at is a root
+  on layer 0, and a node is placed **once** -- the first edge out of a placed node fixes
+  its layer, and a back edge into it changes nothing. Relaxing instead (always one below
+  the deepest node that points at it) lets a cycle push its own members down a layer per
+  pass: a three-node loop walked off the page before this was written down. A diagram
+  that is one big cycle has no root at all, and then the first node **declared** is the
+  root -- some node has to be, and the file's order is the only ordering Mermaid carries.
+- Layers run **down for `TD`/`BT` and across for `LR`/`RL`**, so the drawing reads the way
+  the author's `flowchart TD` said it should.
+- Inside a layer, nodes keep **declaration order** — the order of the file is the only
+  ordering information Mermaid carries, and inventing a better one would make the result
+  depend on chart's mood rather than on the input.
+- Spacing is fixed: a node is `210 x 76`, with `40` between neighbours and `70` between
+  layers, and each layer is centred on the page. Fixed numbers, because §18.1 promises
+  the same bytes for the same input.
+- The result is a **starting point to drag around**, not a finished drawing. chart says
+  so in the status line after an import, because an author who believes the layout is
+  meaningful will read structure into an accident.
+
+## 19. Stage plan for the surface
 
 | Stage | Content |
 |---|---|
@@ -986,6 +1049,7 @@ years.
 | **3** | Presentation mode, image drawing, slide strip |
 | **4** | Freehand recognition (§7) and straightening (§7.6) |
 | **5** | Files (§16) and the export formats of §17 |
+| **6** | Reading Mermaid back in (§18) |
 
 Stages 1 and 3 are deliberately split: everything in stage 1 can be tested without a
 display, and that is where the export promises of §2 and §13 are actually checked. The
