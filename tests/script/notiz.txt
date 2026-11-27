@@ -1,0 +1,39 @@
+# Ein Kasten AUF einer Lebenslinie ist eine Notiz, kein neuer Teilnehmer
+# (spec §7.7).  Der erste liegt auf einer Linie -> "Note right of", der zweite
+# spannt ueber beide -> "Note over".  Die Zeile, auf der gezeichnet wurde,
+# bestimmt den Platz in der Schrittliste.
+wait 3
+at 200 230
+down 0
+at 310 230
+at 310 290
+at 200 290
+at 200 235
+up 0
+wait 2
+at 900 600
+down 1
+up 1
+wait 4
+type gilt ab hier
+wait 2
+key Return
+wait 3
+at 200 350
+down 0
+at 540 350
+at 540 410
+at 200 410
+at 200 355
+up 0
+wait 2
+at 900 600
+down 1
+up 1
+wait 4
+type beide warten
+wait 2
+key Return
+wait 3
+save
+wait 2

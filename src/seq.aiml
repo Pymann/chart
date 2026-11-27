@@ -194,6 +194,43 @@
                   - set: [idx, { +: [idx, 1] }]
             - return: ""
 
+      # The NEAREST participant to a point, "" only when the sheet has none.  The ink
+      # is drawn by a hand, not snapped to a band: a box that lands in the 60 units
+      # between two lifelines still belongs to one of them (spec §7.7).
+      - def:
+          name: lane_near
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [spot_x, f32]]
+          return: string
+          body:
+            - decl: [order, list<i32>, { call: [<.columns, sheet] }]
+            - decl: [best, string, ""]
+            - decl: [best_gap, f32, 999999.0]
+            - decl: [reach, f32, { /: [{ call: [<.box_w] }, 2.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - decl: [mid, f32, { +: [{ call: [<.col_x, idx] }, reach] }]
+                  - decl: [gap, f32, { call: [math.abs, { -: [spot_x, mid] }] }]
+                  - if:
+                      condition: { lt: [gap, best_gap] }
+                      then: [{ set: [best_gap, gap] }, { set: [best, node.ident] }]
+                  - set: [idx, { +: [idx, 1] }]
+            - return: best
+
+      # Which row a point falls on, for a step drawn or dropped there (spec §5.8.3).
+      - def:
+          name: row_at
+          args: [[spot_y, f32]]
+          return: i32
+          body:
+            - decl: [steps, f32, { /: [{ -: [spot_y, { call: [<.row_y, 0] }] }, 42.0] }]
+            - decl: [which, i32, { cast: [{ call: [math.round, steps] }, i32] }]
+            - if: { condition: { lt: [which, 0] }, then: [{ return: 0 }] }
+            - return: which
+
       # The centre of a participant's column, in design coordinates.
       - def:
           name: centre_of

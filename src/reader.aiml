@@ -5,6 +5,7 @@
 # because this is a different job: the editor owns the surface, this owns the reading.
 # It hands the new node's id back rather than opening the label itself -- labelling is
 # the surface's business.
+- import: "src/seq.aiml"
 - import: "src/ink.aiml"
 - import: "src/runtime.aiml"
 
@@ -34,8 +35,10 @@
     members:
       - [ink, ref<Ink>]
       - [diag, ref<Diag>]
+      - [seq, ref<SeqLayout>]       # borrow, wired by the classgroup -- columns and rows
       - [status, string]            # what the bar should say afterwards
       - [made_id, string]           # a node that wants its label opened, "" = none
+      - [made_step, string]         # a STEP that wants its label opened, "" = none
       - [want_line, i32]            # what the next edge should look like (spec §5.3)
       - [want_head, i32]
       - [want_tail, i32]
@@ -311,6 +314,17 @@
           args: [[slide, ref<Sheet>], [shape, ref<Guess>]]
           return: string
           body:
+            # In a sequence a box on a lifeline is a NOTE, not a new participant
+            # (spec §7.7): below the head row there are no free positions to put a
+            # column in, and a box drawn there means "this holds from here on".
+            - if:
+                condition: { eq: [slide.dtype, DiagramType.sequence] }
+                then:
+                  - decl: [head_end, f32, { +: [{ call: [<.seq.top_y] }, { call: [<.seq.box_h] }] }]
+                  - decl: [mid_y, f32, { +: [shape.pos_y, { /: [shape.height, 2.0] }] }]
+                  - if:
+                      condition: { gt: [mid_y, head_end] }
+                      then: [{ return: { call: [<.make_note, slide, shape] } }]
             - decl: [fresh, Node]
             - set: [fresh.ident, "n${slide.next_id}"]
             - set: [fresh.kind, shape.kind]
@@ -326,6 +340,36 @@
             - decl: [size_h, i32, { cast: [fresh.height, i32] }]
             - call: [<.diag.say, "ANGELEGT ${fresh.ident} art=${fresh.kind} bei ${spot_x},${spot_y} ${size_w}x${size_h} knoten=${slide.nodes.len}"]
             - return: fresh.ident
+
+      # A note drawn on the lifelines (spec §7.7).  One lane gives `Note right of`,
+      # a box that spans two gives `Note over a,b` -- the same two shapes §5.8.3
+      # exports.  It lands on the ROW it was drawn on, because the step list IS the
+      # time axis: appending would move a note the author placed deliberately.
+      - def:
+          name: make_note
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [shape, ref<Guess>]]
+          return: string
+          body:
+            - decl: [mid_y, f32, { +: [shape.pos_y, { /: [shape.height, 2.0] }] }]
+            - decl: [left_id, string, { call: [<.seq.lane_near, slide, shape.pos_x] }]
+            - decl: [right_id, string, { call: [<.seq.lane_near, slide, { +: [shape.pos_x, shape.width] }] }]
+            - if: { condition: { eq: [left_id, ""] }, then: [{ set: [<.status, "kein Teilnehmer, keine Notiz"] }, { return: "" }] }
+            - decl: [note, Step]
+            - set: [note.ident, "s${slide.next_id}"]
+            - set: [note.kind, StepKind.note]
+            - set: [note.from_id, left_id]
+            - if: { condition: { neq: [right_id, left_id] }, then: [{ set: [note.to_id, right_id] }] }
+            - decl: [row, i32, { call: [<.seq.row_at, mid_y] }]
+            - if:
+                condition: { lt: [row, slide.steps.len] }
+                then: [{ call: [slide.steps.insert, row, note] }]
+                else: [{ call: [slide.steps.push, note] }]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - set: [<.made_step, note.ident]
+            - set: [<.status, "Notiz erkannt"]
+            - call: [<.diag.say, "NOTIZ ${note.ident} an ${left_id} bis '${note.to_id}' zeile=${row}"]
+            - return: ""
 
       - def:
           name: make_edge

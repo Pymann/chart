@@ -813,6 +813,29 @@ odd-sized node is a legitimate thing to want.
 
 ---
 
+### 7.7 Drawing on a sequence (normative)
+
+The recogniser is the same everywhere, but what a recognised box *becomes* depends on
+the diagram.  In a `sequence`:
+
+| Drawn | Becomes |
+|---|---|
+| a box whose centre is in the **head row** (the top 56 units of the page's layout) | a participant, as in every other diagram |
+| a box **below** it, on or near a lifeline | a **note** (`Note right of n1`) |
+| a box spanning **two** lifelines | a note over both (`Note over n1,n2`) |
+
+Below the head row a sequence has **no free positions** (§5.8.3) -- a participant put
+there would be dragged into a column anyway, and the author who drew a box across a
+lifeline meant "this holds from here on", which is what a note is.
+
+The note lands on the **row it was drawn on**, not at the end: the step list is the time
+axis, so appending would move a note the author placed deliberately.  Which lifeline it
+belongs to is the **nearest** one, not a strict hit -- ink is drawn by a hand, and the 60
+units between two columns belong to the nearer of them (unlike the connect gesture, §5.8.3,
+which is a pointer and may be strict).
+
+Its label opens immediately, exactly as a new node's does (§6).
+
 ## 8. Chrome
 
 ### 8.0 The window's chrome (normative)

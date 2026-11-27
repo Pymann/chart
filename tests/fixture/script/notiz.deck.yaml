@@ -1,0 +1,9 @@
+title: "Sequenz"
+slides:
+  - title: "Sequenz"
+    dtype: sequence
+    dir: TD
+    next_id: 3
+    nodes:
+      - { id: n1, kind: actor, x: 100, y: 0, w: 1, h: 1, text: "Nutzer" }
+      - { id: n2, kind: rect, x: 400, y: 0, w: 1, h: 1, text: "Server" }

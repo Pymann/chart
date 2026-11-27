@@ -389,6 +389,15 @@
                             then:
                               - call: [<.begin_edit, <.reader.made_id]
                               - set: [<.reader.made_id, ""]
+                        # a note drawn on a lifeline is a STEP, and its label is
+                        # edited the way the menu does it (spec §7.7)
+                        - if:
+                            condition: { neq: [<.reader.made_step, ""] }
+                            then:
+                              - set: [<.sel_step, <.reader.made_step]
+                              - set: [<.sel, ""]
+                              - set: [<.reader.made_step, ""]
+                              - call: [<.edit_step]
                         # A group that produced nothing is KEPT: drawing a head first
                         # and then taking a moment over the line must not cost the
                         # head. The right button is the explicit discard.
@@ -834,7 +843,7 @@
         sees: [exporter]
       - class: Reader
         instance: reader
-        sees: [ink, diag]
+        sees: [ink, diag, seq]
       - class: Editor
         instance: editor
         sees: [sheet_io, mermaid, markdown, exporter, ink, pen, grip, files, diag, reader, menu, label, clip, script, art, top_bar, tools, seq, seq_art, edge_art, deeds, past]
