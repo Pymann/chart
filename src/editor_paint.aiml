@@ -1,0 +1,217 @@
+# Drawing the editor surface (doc/spec/chart.md §15, §8.0): the slide, the strips
+# and the preview box.  Reads the state below it and draws -- it never edits.
+- import: "src/editor_state.aiml"
+
+- class:
+    name: EditorPaint
+    extends: EditorState
+    description: "Slide, strips and preview box -- drawing only (spec §15.1)"
+    methods:
+      # ── geometry ────────────────────────────────────────────────────────────
+      # Scale that fits the 1280x720 page into the canvas rect, with a margin.
+      - def:
+          name: fit_scale
+          args: [[avail_w, f32], [avail_h, f32], [margin, f32]]
+          return: f32
+          body:
+            - decl: [scale_x, f32, { /: [{ "*": [avail_w, margin] }, 1280.0] }]
+            - decl: [scale_y, f32, { /: [{ "*": [avail_h, margin] }, 720.0] }]
+            - if: { condition: { lt: [scale_x, scale_y] }, then: [{ return: scale_x }] }
+            - return: scale_y
+      # ── the page ────────────────────────────────────────────────────────────
+      - def:
+          name: draw_slide
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [margin, f32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - if: { condition: { lt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, 0] }] }
+            - if: { condition: { ge: [<.deck.current, <.deck.slides.len] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [scale, f32, { call: [<.fit_scale, cvs_w, cvs_h, margin] }]
+            - set: [<.last_scale, scale]
+            - decl: [page_w, f32, { "*": [1280.0, scale] }]
+            - decl: [page_h, f32, { "*": [720.0, scale] }]
+            - decl: [org_x, f32, { +: [cvs_x, { /: [{ -: [cvs_w, page_w] }, 2.0] }] }]
+            - decl: [org_y, f32, { +: [cvs_y, { /: [{ -: [cvs_h, page_h] }, 2.0] }] }]
+            # a soft shadow, so the page reads as a sheet of paper
+            - call: [ui.draw_rect, { +: [org_x, 6.0] }, { +: [org_y, 7.0] }, page_w, page_h, 0x0A0F1438]
+            - call: [ui.draw_rect, org_x, org_y, page_w, page_h, 0xFFFFFFFF]
+            - decl: [page, Shape]
+            - set: [page.pos_x, org_x]
+            - set: [page.pos_y, org_y]
+            - set: [page.width, page_w]
+            - set: [page.height, page_h]
+            - set: [page.tint, 0xC2CCD6FF]
+            - set: [page.thick, 1.0]
+            - call: [<.pen.frame, page]
+            - decl: [head_live, i32, 0]
+            - if:
+                condition: { "&&": [{ eq: [<.editing, 1] }, { eq: [<.edit_id, "#titel"] }] }
+                then: [{ set: [head_live, 1] }]
+            - if:
+                condition: { "&&": [{ neq: [slide.title, ""] }, { eq: [head_live, 0] }] }
+                then:
+                  - call: [ui.draw_text, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [30.0, scale] }] }, slide.title, 0x101A24FF]
+            - if:
+                condition: { eq: [head_live, 1] }
+                then:
+                  - decl: [head_box, Shape]
+                  - call: [<.label.title_box, org_x, org_y, scale, head_box]
+                  - call: [<.label.draw_in, head_box]
+                  - call: [ui.draw_line, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, { -: [{ +: [org_x, page_w] }, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [62.0, scale] }] }, 1.0, 0xD8DEE6FF]
+            # A sequence is laid out, not placed (spec §5.8.3): the derived geometry
+            # goes INTO the nodes first, so hit testing, dragging and the label
+            # editor keep working on ordinary rectangles.
+            - decl: [is_seq, i32, 0]
+            - if: { condition: { eq: [slide.dtype, DiagramType.sequence] }, then: [{ set: [is_seq, 1] }] }
+            - if:
+                condition: { eq: [is_seq, 1] }
+                then:
+                  - call: [<.seq.apply, slide]
+                  - call: [<.seq_art.draw, slide, org_x, org_y, scale, <.sel_step]
+                else: [{ call: [<.edge_art.draw_edges, slide, org_x, org_y, scale, <.sel_edge] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - call: [<.art.draw_node, node, org_x, org_y, scale]
+                  - if:
+                      condition: { eq: [node.ident, <.sel] }
+                      then:
+                        - if:
+                            condition: { eq: [<.presenting, 0] }
+                            then:
+                              - decl: [halo, Shape]
+                              - set: [halo.pos_x, { -: [{ +: [org_x, { "*": [node.pos_x, scale] }] }, 5.0] }]
+                              - set: [halo.pos_y, { -: [{ +: [org_y, { "*": [node.pos_y, scale] }] }, 5.0] }]
+                              - set: [halo.width, { +: [{ "*": [node.width, scale] }, 10.0] }]
+                              - set: [halo.height, { +: [{ "*": [node.height, scale] }, 10.0] }]
+                              - set: [halo.tint, 0x2F80EDFF]
+                              - set: [halo.thick, 2.0]
+                              - call: [<.pen.frame, halo]
+                  - set: [idx, { +: [idx, 1] }]
+            # the ink: every stroke of the group, until it is read (spec §7.5a)
+            - if:
+                condition: { gt: [<.ink.count, 1] }
+                then:
+                  - decl: [sidx, i32, 0]
+                  - while:
+                      condition: { lt: [sidx, <.ink.starts.len] }
+                      body:
+                        - decl: [begin, i32, { call: [<.ink.at_from, sidx] }]
+                        - decl: [count, i32, { call: [<.ink.at_len, sidx] }]
+                        - if:
+                            condition: { gt: [count, 1] }
+                            then:
+                              - decl: [ink, buffer<f32>]
+                              - call: [ink.alloc, 16384]
+                              - decl: [pidx, i32, 0]
+                              - while:
+                                  condition: { lt: [pidx, count] }
+                                  body:
+                                    - call: [<.ink.points.seek, { "*": [{ +: [begin, pidx] }, 8] }]
+                                    - decl: [raw_x, f32, { call: [<.ink.points.read, f32] }]
+                                    - decl: [raw_y, f32, { call: [<.ink.points.read, f32] }]
+                                    - call: [ink.write, { +: [org_x, { "*": [raw_x, scale] }] }, f32]
+                                    - call: [ink.write, { +: [org_y, { "*": [raw_y, scale] }] }, f32]
+                                    - set: [pidx, { +: [pidx, 1] }]
+                              - call: [ui.draw_polyline, ink, 2.5, 0x2F80EDFF]
+                        - set: [sidx, { +: [sidx, 1] }]
+
+            # What will be connected, before the button is let go (spec §15.1).
+            - if:
+                condition: { neq: [<.link_from, ""] }
+                then:
+                  - decl: [src_node, Node]
+                  - if:
+                      condition: { eq: [{ call: [<.grip.node_by_id, slide, <.link_from, src_node] }, 1] }
+                      then:
+                        - call: [ui.draw_line,
+                                 { +: [org_x, { "*": [{ +: [src_node.pos_x, { /: [src_node.width, 2.0] }] }, scale] }] },
+                                 { +: [org_y, { "*": [{ +: [src_node.pos_y, { /: [src_node.height, 2.0] }] }, scale] }] },
+                                 { call: [input.mouse_pos_x] }, { call: [input.mouse_pos_y] }, 2.0, 0x2F80EDC0]
+
+            - if:
+                condition: { eq: [<.presenting, 1] }
+                then:
+                  - decl: [number, i32, { +: [<.deck.current, 1] }]
+                  - call: [ui.draw_text, { -: [{ +: [cvs_x, cvs_w] }, 70.0] }, { -: [{ +: [cvs_y, cvs_h] }, 26.0] }, "${number} / ${<.deck.slides.len}", 0x8A97A5FF]
+                  - if:
+                      condition: { eq: [<.show_notes, 1] }
+                      then:
+                        - if:
+                            condition: { neq: [slide.notes, ""] }
+                            then:
+                              - call: [ui.draw_rect, cvs_x, { -: [{ +: [cvs_y, cvs_h] }, 58.0] }, cvs_w, 58.0, 0x0A0F14D8]
+                              - call: [ui.draw_text, { +: [cvs_x, 18.0] }, { -: [{ +: [cvs_y, cvs_h] }, 42.0] }, slide.notes, 0xF0E8D0FF]
+      # The status strip is drawn by the chrome (spec §8.0); the editor only says
+      # what goes in it: the last thing that happened, and where we are.
+      - def:
+          name: status_strip
+          static_off: ["same_arg", "str_cmp"]
+          args: [[win_w, f32], [win_h, f32]]
+          body:
+            - decl: [where, string, ""]
+            - if:
+                condition: { gt: [<.deck.slides.len, 0] }
+                then:
+                  - decl: [number, i32, { +: [<.deck.current, 1] }]
+                  - set: [where, "Folie ${number}/${<.deck.slides.len}"]
+            - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [where, "${where}  *"] }] }
+            - call: [<.top_bar.foot, win_w, win_h, <.status, where]
+      - def:
+          name: strip_bottom
+          return: f32
+          body:
+            - return: { call: [<.top_bar.foot_height] }
+      # The menu strip asks the deck what it should offer (spec §8.0): the slide
+      # list under `Ansicht`, and `Kante` only while an edge is selected.
+      - def:
+          name: feed_bar
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - decl: [edge_on, i32, 0]
+            - if: { condition: { neq: [<.sel_edge, ""] }, then: [{ set: [edge_on, 1] }] }
+            - set: [<.top_bar.has_edge, edge_on]
+            - call: [<.top_bar.clear_slides]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [slide, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - decl: [number, i32, { +: [idx, 1] }]
+                  - decl: [mark, string, "  "]
+                  - if: { condition: { eq: [idx, <.deck.current] }, then: [{ set: [mark, "> "] }] }
+                  - decl: [name, string, slide.title]
+                  - if: { condition: { eq: [name, ""] }, then: [{ set: [name, "(ohne Titel)"] }] }
+                  - call: [<.top_bar.add_slide, "${mark}${number} ${name}", { +: [40, idx] }]
+                  - set: [idx, { +: [idx, 1] }]
+      # The rect the live label is drawn in: the heading's, or the node's.
+      - def:
+          name: live_box
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [box, ref<Shape>]]
+          return: i32
+          body:
+            - if:
+                condition: { eq: [<.edit_id, "#titel"] }
+                then:
+                  - call: [<.label.title_box, org_x, org_y, scale, box]
+                  - return: 1
+            - decl: [spot, i32, 0]
+            - while:
+                condition: { lt: [spot, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, spot] }]
+                  - if:
+                      condition: { eq: [node.ident, <.edit_id] }
+                      then:
+                        - set: [box.pos_x, { +: [org_x, { "*": [node.pos_x, scale] }] }]
+                        - set: [box.pos_y, { +: [org_y, { "*": [node.pos_y, scale] }] }]
+                        - set: [box.width, { "*": [node.width, scale] }]
+                        - set: [box.height, { "*": [node.height, scale] }]
+                        - return: 1
+                  - set: [spot, { +: [spot, 1] }]
+            - return: 0

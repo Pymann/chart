@@ -1,0 +1,383 @@
+# What an action DOES (doc/spec/chart.md §8.3): the dispatch table behind the
+# strips, the menus and the keyboard, plus the clipboard deeds it shares with them.
+- import: "src/editor_paint.aiml"
+
+- class:
+    name: EditorAct
+    extends: EditorPaint
+    description: "The action table of the strips, menus and keys (spec §8.3)"
+    methods:
+      - def:
+          name: edit_title
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - set: [<.editing, 1]
+            - set: [<.edit_id, "#titel"]
+            - set: [<.sel, ""]
+            - set: [<.sel_edge, ""]
+            - call: [<.label.begin, "#titel", slide.title]
+            - set: [<.status, "Ueberschrift: tippen, Enter uebernimmt"]
+      # Copy, cut, paste, duplicate -- one method, so the keys and the Bearbeiten
+      # menu cannot drift apart (spec §6).  1 copy, 2 cut, 3 paste, 4 duplicate.
+      - def:
+          name: clip_deed
+          static_off: ["same_arg", "str_cmp"]
+          args: [[wanted, i32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { le: [wanted, 2] }
+                then:
+                  - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Element waehlen"] }, { return: null }] }
+                  - if:
+                      condition: { eq: [{ call: [<.clip.copy, slide, <.sel] }, 1] }
+                      then:
+                        - set: [<.status, "kopiert"]
+                        - if:
+                            condition: { eq: [wanted, 2] }
+                            then: [{ call: [<.dispatch, 20] }, { set: [<.status, "ausgeschnitten"] }]
+                  - return: null
+            # duplicate is copy and paste in one gesture -- the offset comes from the
+            # paste, so a duplicate sits beside its original like any other
+            - if:
+                condition: { eq: [wanted, 4] }
+                then:
+                  - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Element waehlen"] }, { return: null }] }
+                  - if: { condition: { eq: [{ call: [<.clip.copy, slide, <.sel] }, 0] }, then: [{ return: null }] }
+            - decl: [made, string, { call: [<.clip.paste, slide] }]
+            - if:
+                condition: { neq: [made, ""] }
+                then:
+                  - set: [<.sel, made]
+                  - set: [<.sel_edge, ""]
+                  - call: [<.touch]
+                  - set: [<.status, "eingefuegt"]
+                else: [{ set: [<.status, "nichts in der Ablage"] }]
+      # Carry out what the menu picked.  The menu knows the target and the colour;
+      # the sheet is changed here, because the sheet belongs to the editor.
+      - def:
+          name: menu_deed
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.menu.deed, 0] }, then: [{ return: null }] }
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [deed, i32, <.menu.deed]
+            - decl: [tone, i32, <.menu.tone]
+            - decl: [kind, i32, <.menu.kind]
+            - decl: [ident, string, <.menu.ident]
+            - call: [<.menu.close]
+            - if: { condition: { eq: [deed, 3] }, then: [{ call: [<.dispatch, 20] }, { call: [<.touch] }, { return: null }] }
+            - if:
+                condition: { eq: [{ call: [<.deeds.paint, slide, ident, kind, deed, tone] }, 1] }
+                then:
+                  - call: [<.touch]
+                  - set: [<.status, "Farbe gesetzt"]
+      # ── dispatch ────────────────────────────────────────────────────────────
+      - def:
+          name: dispatch
+          static_off: ["same_arg", "str_cmp"]
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
+
+            - if: { condition: { eq: [action, 1] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
+            # 15/16 undo and redo, 17 a new deck (spec §16.4)
+            - if:
+                condition: { eq: [action, 15] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.past.undo, <.deck] }, 1] }
+                      then:
+                        - call: [<.clear_selection]
+                        - call: [<.ink.clear]
+                        - set: [<.dirty, 1]
+                        - set: [<.changed, 0]
+                        - set: [<.status, "Schritt zurueck"]
+                      else: [{ set: [<.status, "nichts mehr zurueckzunehmen"] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 16] }
+                then:
+                  - if:
+                      condition: { eq: [{ call: [<.past.redo, <.deck] }, 1] }
+                      then:
+                        - call: [<.clear_selection]
+                        - call: [<.ink.clear]
+                        - set: [<.dirty, 1]
+                        - set: [<.changed, 0]
+                        - set: [<.status, "Schritt vor"]
+                      else: [{ set: [<.status, "nichts mehr vorzunehmen"] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 17] }
+                then:
+                  - if:
+                      condition: { eq: [<.dirty, 1] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [<.files.ask_keep, "Die Aenderungen vorher speichern?"] }, 1] }
+                            then: [{ call: [<.save_deck, ""] }]
+                  - call: [<.files.fresh, <.deck]
+                  - set: [<.deck_path, ""]
+                  - set: [<.dirty, 0]
+                  - set: [<.changed, 0]
+                  - call: [<.clear_selection]
+                  - call: [<.ink.clear]
+                  - call: [<.past.start, <.deck]
+                  - set: [<.status, "neues Blatt"]
+                  - return: null
+            # 230..233: the clipboard, the same deeds the keys do (spec §6)
+            - if:
+                condition: { "&&": [{ ge: [action, 230] }, { le: [action, 233] }] }
+                then:
+                  - call: [<.clip_deed, { -: [action, 229] }]
+                  - return: null
+            - if:
+                condition: { eq: [action, 61] }
+                then:
+                  - decl: [where, string, { call: [<.files.ask_save_as] }]
+                  - if: { condition: { neq: [where, ""] }, then: [{ call: [<.save_deck, where] }] }
+                  - return: null
+            - if:
+                condition: { eq: [action, 60] }
+                then:
+                  # dirty first (§16.2): the open dialog's cancel is the third answer
+                  - if:
+                      condition: { eq: [<.dirty, 1] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [<.files.ask_keep, "Die Aenderungen vorher speichern?"] }, 1] }
+                            then: [{ call: [<.save_deck, ""] }]
+                  - decl: [chosen, string, { call: [<.files.ask_open] }]
+                  - if: { condition: { eq: [chosen, ""] }, then: [{ set: [<.status, "abgebrochen"] }, { return: null }] }
+                  - if:
+                      condition: { eq: [{ call: [<.files.load, <.deck, chosen] }, 1] }
+                      then:
+                        - set: [<.deck_path, chosen]
+                        - set: [<.dirty, 0]
+                        - call: [<.clear_selection]
+                        - call: [<.ink.clear]
+                  - set: [<.status, <.files.status]
+                  - return: null
+            - decl: [exports, i32, 0]
+            - if: { condition: { eq: [action, 2] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 3] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 65] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 66] }, then: [{ set: [exports, 1] }] }
+            - if: { condition: { eq: [action, 67] }, then: [{ set: [exports, 1] }] }
+            - if:
+                condition: { eq: [exports, 1] }
+                then:
+                  - call: [<.files.export_to, <.deck, action, <.deck_path]
+                  - set: [<.status, <.files.status]
+                  - return: null
+            - if:
+                condition: { eq: [action, 68] }
+                then:
+                  - if: { condition: { eq: [<.sel, ""] }, then: [{ set: [<.status, "erst ein Bild-Element waehlen"] }, { return: null }] }
+                  - decl: [picture, string, { call: [<.files.browse.ask, 2, ""] }]
+                  - if: { condition: { eq: [picture, ""] }, then: [{ return: null }] }
+                  - call: [<.set_image, picture]
+                  - return: null
+
+            - if:
+                condition: { eq: [action, 27] }
+                then:
+                  - set: [<.armed, 101]
+                  - set: [<.status, "zeichnen -- Form wird erkannt"]
+                  - return: null
+            - if:
+                condition: { eq: [action, 19] }
+                then:
+                  - set: [<.armed, 100]
+                  - set: [<.status, "von Knoten zu Knoten ziehen"]
+                  - return: null
+            - if:
+                condition: { eq: [action, 26] }
+                then:
+                  - if: { condition: { neq: [<.sel_step, ""] }, then: [{ call: [<.edit_step] }, { return: null }] }
+                  - if: { condition: { neq: [<.sel, ""] }, then: [{ call: [<.begin_edit, <.sel] }] }
+                  - return: null
+            # 210..214: how the label looks (spec §5.6a)
+            - if:
+                condition: { "&&": [{ ge: [action, 210] }, { le: [action, 214] }] }
+                then:
+                  - call: [<.set_deco, action]
+                  - return: null
+            # 201/202: the parts of a sequence that are not nodes (spec §5.8.3)
+            - if:
+                condition: { "||": [{ eq: [action, 201] }, { eq: [action, 202] }] }
+                then:
+                  - call: [<.add_step, action]
+                  - return: null
+            # The selected edge's connector (spec §5.3): line 50..53, head 54..58,
+            # tail 80..84.  The tail used to start at 59, where 60 and 61 are open
+            # and save-as -- tested earlier, so those two caps were unreachable (§8.1).
+            - decl: [edge_deed, i32, 0]
+            - if: { condition: { "&&": [{ ge: [action, 50] }, { le: [action, 58] }] }, then: [{ set: [edge_deed, 1] }] }
+            - if: { condition: { "&&": [{ ge: [action, 80] }, { le: [action, 84] }] }, then: [{ set: [edge_deed, 1] }] }
+            - if:
+                condition: { eq: [edge_deed, 1] }
+                then:
+                  - if: { condition: { eq: [<.sel_edge, ""] }, then: [{ return: null }] }
+                  - decl: [slide_k, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                  - decl: [kidx, i32, 0]
+                  - while:
+                      condition: { lt: [kidx, slide_k.edges.len] }
+                      body:
+                        - decl: [edge_k, ref<Edge>, { at: [slide_k.edges, kidx] }]
+                        - if:
+                            condition: { eq: [edge_k.ident, <.sel_edge] }
+                            then:
+                              - if:
+                                  condition: { le: [action, 53] }
+                                  then:
+                                    - set: [edge_k.line, { -: [action, 50] }]
+                                    - set: [<.status, "Linienart gesetzt"]
+                                  else:
+                                    - if:
+                                        condition: { le: [action, 58] }
+                                        then:
+                                          - set: [edge_k.head, { -: [action, 54] }]
+                                          - set: [<.status, "Kopf gesetzt"]
+                                        else:
+                                          - set: [edge_k.tail, { -: [action, 80] }]
+                                          - set: [<.status, "Fuss gesetzt"]
+                              - call: [<.touch]
+                              - set: [kidx, slide_k.edges.len]
+                        - set: [kidx, { +: [kidx, 1] }]
+                  - return: null
+
+            # 110+: a shape from the tool strip (§8.0).  Its own range, because
+            # 10..18 ends at 18 and 20..30 are already taken.
+            - if:
+                condition: { ge: [action, 110] }
+                then:
+                  - set: [<.armed, { -: [action, 110] }]
+                  - set: [<.status, "Form gewaehlt -- in die Flaeche klicken"]
+                  - return: null
+            # 70..73: the diagram type (§8.0).  Only flowchart is projected (§1.1),
+            # and the status says so rather than hiding the choice.
+            - if:
+                condition: { "&&": [{ ge: [action, 70] }, { le: [action, 73] }] }
+                then:
+                  - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+                  - decl: [slide_d, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                  - set: [slide_d.dtype, { -: [action, 70] }]
+                  - call: [<.touch]
+                  - if:
+                      condition: { eq: [slide_d.dtype, DiagramType.flowchart] }
+                      then: [{ set: [<.status, "Flussdiagramm"] }]
+                      else: [{ set: [<.status, "nur flowchart wird exportiert (spec 1.1)"] }]
+                  - return: null
+
+            # 10..18: arm a stencil.  The next canvas click places it (spec §15.1).
+            - if:
+                condition: { ge: [action, 10] }
+                then:
+                  - if:
+                      condition: { le: [action, 18] }
+                      then:
+                        - set: [<.armed, { -: [action, 10] }]
+                        - set: [<.status, "Form gewaehlt -- in die Flaeche klicken"]
+                        - return: null
+
+            - if:
+                condition: { eq: [action, 20] }
+                then:
+                  - if:
+                      condition: { neq: [<.sel_step, ""] }
+                      then:
+                        - call: [<.drop_step]
+                        - return: null
+                  - if:
+                      condition: { neq: [<.sel_edge, ""] }
+                      then:
+                        - decl: [slide_e, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                        - decl: [eidx, i32, 0]
+                        - while:
+                            condition: { lt: [eidx, slide_e.edges.len] }
+                            body:
+                              - decl: [edge_e, ref<Edge>, { at: [slide_e.edges, eidx] }]
+                              - if:
+                                  condition: { eq: [edge_e.ident, <.sel_edge] }
+                                  then:
+                                    - call: [slide_e.edges.remove, eidx]
+                                    - set: [<.sel_edge, ""]
+                                    - set: [<.status, "Kante entfernt"]
+                                    - return: null
+                              - set: [eidx, { +: [eidx, 1] }]
+                  - if:
+                      condition: { neq: [<.sel, ""] }
+                      then:
+                        - decl: [cur_del, i32, <.deck.current]
+                        - decl: [slide_del, ref<Sheet>, { at: [<.deck.slides, cur_del] }]
+                        # its edges go with it: a kept edge names an endpoint that is
+                        # gone, and §5 would project Mermaid that never declares it.
+                        # Backwards, so a removal does not skip the next edge.
+                        - decl: [cut, i32, { -: [slide_del.edges.len, 1] }]
+                        - while:
+                            condition: { ge: [cut, 0] }
+                            body:
+                              - decl: [edge_c, ref<Edge>, { at: [slide_del.edges, cut] }]
+                              - decl: [touches, i32, 0]
+                              - if: { condition: { eq: [edge_c.from_id, <.sel] }, then: [{ set: [touches, 1] }] }
+                              - if: { condition: { eq: [edge_c.to_id, <.sel] }, then: [{ set: [touches, 1] }] }
+                              - if: { condition: { eq: [touches, 1] }, then: [{ call: [slide_del.edges.remove, cut] }] }
+                              - set: [cut, { -: [cut, 1] }]
+                        - decl: [pos, i32, 0]
+                        - while:
+                            condition: { lt: [pos, slide_del.nodes.len] }
+                            body:
+                              - decl: [node, ref<Node>, { at: [slide_del.nodes, pos] }]
+                              - if:
+                                  condition: { eq: [node.ident, <.sel] }
+                                  then:
+                                    - call: [slide_del.nodes.remove, pos]
+                                    - call: [<.touch]
+                                    - set: [<.sel, ""]
+                                    - set: [<.status, "entfernt"]
+                                    - return: null
+                              - set: [pos, { +: [pos, 1] }]
+                  - return: null
+
+            - if:
+                condition: { eq: [action, 21] }
+                then:
+                  - if: { condition: { gt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, { -: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
+                  - return: null
+            - if:
+                condition: { eq: [action, 22] }
+                then:
+                  - if: { condition: { lt: [<.deck.current, { -: [<.deck.slides.len, 1] }] }, then: [{ set: [<.deck.current, { +: [<.deck.current, 1] }] }, { set: [<.sel, ""] }] }
+                  - return: null
+            - if: { condition: { eq: [action, 24] }, then: [{ call: [<.edit_title] }, { return: null }] }
+            - if:
+                condition: { eq: [action, 23] }
+                then:
+                  - decl: [fresh, Sheet]
+                  - set: [fresh.title, "Neue Folie"]
+                  - set: [fresh.next_id, 1]
+                  - call: [<.deck.slides.push, fresh]
+                  - set: [<.deck.current, { -: [<.deck.slides.len, 1] }]
+                  - set: [<.sel, ""]
+                  - set: [<.status, "Folie angelegt"]
+                  - return: null
+
+            - if:
+                condition: { eq: [action, 30] }
+                then:
+                  - set: [<.presenting, 1]
+                  - set: [<.sel, ""]
+                  - return: null
+
+            # 40+: pick that slide
+            - if:
+                condition: { ge: [action, 40] }
+                then:
+                  - set: [<.deck.current, { -: [action, 40] }]
+                  - set: [<.sel, ""]

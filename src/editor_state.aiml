@@ -1,0 +1,326 @@
+# The editor's state (doc/spec/chart.md §15): the deck, what is selected, what is
+# being dragged or edited -- plus the edits that need no window.  The layer at the
+# bottom of the editor chain, so it declares the wired collaborators once for all
+# layers above it (aiml spec/58 §5.1a).
+- import: "src/runtime.aiml"
+- import: "src/ink.aiml"
+- import: "src/pen.aiml"
+- import: "src/grip.aiml"
+- import: "src/files.aiml"
+- import: "src/reader.aiml"
+- import: "src/menu.aiml"
+- import: "src/label.aiml"
+- import: "src/clip.aiml"
+- import: "src/script.aiml"
+- import: "src/node_art.aiml"
+- import: "src/topbar.aiml"
+- import: "src/toolbar.aiml"
+- import: "src/seq_art.aiml"
+- import: "src/edge_art.aiml"
+- import: "src/deeds.aiml"
+- import: "src/history.aiml"
+
+- class:
+    name: EditorState
+    description: "Deck, selection, drag and the window-free edits (spec §15)"
+    members:
+      - [sheet_io, ref<SheetIO>]        # borrow, wired by the classgroup (aiml spec/58 §5.1a)
+      - [mermaid, ref<MermaidOut>]
+      - [markdown, ref<MarkdownOut>]
+      - [exporter, ref<Exporter>]
+      - [ink, ref<Ink>]
+      - [pen, ref<Pen>]
+      - [grip, ref<Grip>]
+      - [files, ref<Files>]
+      - [menu, ref<Menu>]
+      - [dirty, i32]                   # unsaved changes (spec §16.2)
+      - [deck, Deck]
+      - [deck_path, string]
+      - [armed, i32]                    # NodeKind to place on the next canvas click, -1 = none
+      - [sel, string]                   # selected node ident, "" = nothing
+      - [drag_id, string]               # node being dragged
+      - [drag_dx, f32]
+      - [drag_dy, f32]
+      - [presenting, i32]
+      - [show_notes, i32]
+      - [status, string]
+      - [editing, i32]                  # 1 while a label is being edited (spec §6)
+      - [label, ref<LabelEdit>]        # caret, selection, clipboard (spec §6)
+      - [clip, ref<Clip>]              # copy/cut/paste of an element
+      - [script, ref<Script>]          # --script: input steps, one per frame
+      - [edit_id, string]              # "#titel" edits the slide heading
+      - [link_from, string]             # source node while an edge is being dragged
+      - [sel_edge, string]
+      - [sel_step, string]              # selected step of a sequence (spec §5.8.3)
+      - [last_scale, f32]               # slide scale of the last frame, for auto-grow
+      - [diag, ref<Diag>]               # --diag 1: the shared log
+      - [reader, ref<Reader>]           # turns ink into sheet elements (spec §7)
+      - [settle, f64]                   # seconds the ink waits (spec §7.5a)
+      - [read_at, i32]                  # ink size when it was last read
+      - [last_action, i32]              # DIAGNOSE: was die Leiste zurueckgab
+      - [art, ref<NodeArt>]            # draws one node (spec §15.2)
+      - [edge_art, ref<EdgeArt>]       # draws the connectors (spec §5.3)
+      - [deeds, ref<Deeds>]            # sheet edits that need no window
+      - [past, ref<History>]           # undo/redo (spec §16.4)
+      - [changed, i32]                 # something changed and has not settled yet
+      - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
+      - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
+      - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
+      - [tools, ref<ToolBar>]          # the tool strip
+    methods:
+      - def:
+          name: touch
+          body:
+            - set: [<.dirty, 1]
+            # the snapshot is NOT taken here: a drag calls touch every frame, and an
+            # undo per mouse frame is an undo nobody can use (spec §16.4).  The frame
+            # loop records it once the hand comes to rest.
+            - set: [<.changed, 1]
+      - def:
+          name: clear_selection
+          body:
+            - set: [<.sel_step, ""]
+            - set: [<.sel, ""]
+            - set: [<.sel_edge, ""]
+            - set: [<.editing, 0]
+            - set: [<.edit_id, ""]
+      # Save goes through Files; the editor keeps only what the editor owns: which
+      # path the deck came from, and whether it still differs from the file.
+      - def:
+          name: save_deck
+          static_off: ["same_arg", "str_cmp"]
+          args: [[where, string]]
+          body:
+            - decl: [written, string, { call: [<.files.save, <.deck, where, <.deck_path] }]
+            - if:
+                condition: { neq: [written, ""] }
+                then:
+                  - set: [<.deck_path, written]
+                  - set: [<.dirty, 0]
+            - set: [<.status, <.files.status]
+      # A picture is stored relative to the deck when it lies below it (§16.3): a deck
+      # moved with its images keeps working, and one pointing into a home directory
+      # says so plainly instead of breaking somewhere else.
+      - def:
+          name: set_image
+          static_off: ["same_arg", "str_cmp"]
+          args: [[picture, string]]
+          body:
+            - decl: [kept, string, picture]
+            - decl: [here, path, <.deck_path]
+            - decl: [up_dir, path, { call: [here.parent] }]
+            - decl: [folder, string, { call: [up_dir.to_string] }]
+            - if:
+                condition: { "&&": [{ neq: [folder, ""] }, { eq: [{ call: [picture.starts_with, "${folder}/"] }, 1] }] }
+                then: [{ set: [kept, { call: [picture.substr, { +: [folder.len, 1] }, { -: [picture.len, { +: [folder.len, 1] }] }] }] }]
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, <.sel] }
+                      then:
+                        - if:
+                            condition: { neq: [node.kind, NodeKind.image] }
+                            then:
+                              - set: [<.status, "das gewaehlte Element ist kein Bild"]
+                              - return: null
+                        - set: [node.src, kept]
+                        - set: [<.dirty, 1]
+                        - set: [<.status, "Bild: ${kept}"]
+                        - return: null
+                  - set: [idx, { +: [idx, 1] }]
+      # A step's text is edited with the same editor as a label (§6).  The id is
+      # prefixed so commit_label can tell a step from a node without guessing.
+      - def:
+          name: edit_step
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - if: { condition: { eq: [<.sel_step, ""] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - set: [<.editing, 1]
+            - set: [<.edit_id, "#step:${<.sel_step}"]
+            - call: [<.label.begin, <.sel_step, { call: [<.deeds.text_of_step, slide, <.sel_step] }]
+            - set: [<.status, "tippen, Enter uebernimmt"]
+      # Picking something up ends the drawing (§7.5a): ink that produced nothing is
+      # litter once the author has moved on to arranging.
+      - def:
+          name: drop_ink
+          body:
+            - if: { condition: { eq: [<.ink.count, 0] }, then: [{ return: null }] }
+            - call: [<.ink.clear]
+            - set: [<.read_at, 0]
+            - set: [<.status, "Zeichnung verworfen -- Element gewaehlt"]
+      - def:
+          name: begin_edit
+          static_off: ["same_arg", "str_cmp"]
+          args: [[ident, string]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, ident] }
+                      then:
+                        - set: [<.editing, 1]
+                        - set: [<.edit_id, ident]
+                        # A class is edited as ONE text: the name on the first line,
+                        # a member per line after it (spec §5.8.2).  No second editor,
+                        # and the compartments cannot drift away from the name.
+                        - decl: [whole, string, node.text]
+                        - decl: [ridx, i32, 0]
+                        - while:
+                            condition: { lt: [ridx, node.rows.len] }
+                            body:
+                              - decl: [row, string, { at: [node.rows, ridx] }]
+                              - set: [whole, "${whole}\n${row}"]
+                              - set: [ridx, { +: [ridx, 1] }]
+                        - call: [<.label.begin, ident, whole]
+                        - set: [<.sel, ident]
+                        - set: [<.status, "tippen, Enter uebernimmt"]
+                        - return: null
+                  - set: [idx, { +: [idx, 1] }]
+      # Commit and grow the box to the text: measured, never estimated (spec §6).
+      - def:
+          name: commit_label
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - set: [<.editing, 0]
+            - if: { condition: { eq: [<.edit_id, ""] }, then: [{ return: null }] }
+            - call: [<.diag.say, "UEBERNOMMEN ${<.edit_id} = '${<.label.text}'"]
+            - call: [<.touch]
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { eq: [<.edit_id, "#titel"] }
+                then:
+                  - set: [slide.title, <.label.text]
+                  - set: [<.edit_id, ""]
+                  - call: [<.label.stop]
+                  - set: [<.status, "Ueberschrift uebernommen"]
+                  - return: null
+            - if:
+                condition: { call: [<.edit_id.starts_with, "#step:"] }
+                then:
+                  - decl: [want, string, { call: [<.edit_id.substr, 6, { -: [<.edit_id.len, 6] }] }]
+                  - call: [<.deeds.say_step, slide, want, <.label.text]
+                  - set: [<.edit_id, ""]
+                  - call: [<.label.stop]
+                  - set: [<.status, "uebernommen"]
+                  - return: null
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, slide.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [slide.nodes, idx] }]
+                  - if:
+                      condition: { eq: [node.ident, <.edit_id] }
+                      then:
+                        - if:
+                            condition: { eq: [slide.dtype, DiagramType.class_diagram] }
+                            then:
+                              - call: [<.deeds.fill_rows, node, <.label.text, <.last_scale]
+                              - set: [<.edit_id, ""]
+                              - call: [<.label.stop]
+                              - set: [<.status, "uebernommen"]
+                              - return: null
+                        - set: [node.text, <.label.text]
+                        - if:
+                            condition: { gt: [<.last_scale, 0.0] }
+                            then:
+                              - decl: [lines, list<string>, { call: [<.label.text.split, "\n"] }]
+                              - decl: [widest, f32, 0.0]
+                              - decl: [line_i, i32, 0]
+                              - while:
+                                  condition: { lt: [line_i, lines.len] }
+                                  body:
+                                    - decl: [line, string, { at: [lines, line_i] }]
+                                    - decl: [line_w, f32, { call: [ui.measure_text, line] }]
+                                    - if: { condition: { gt: [line_w, widest] }, then: [{ set: [widest, line_w] }] }
+                                    - set: [line_i, { +: [line_i, 1] }]
+                              - decl: [want, f32, { +: [{ /: [widest, <.last_scale] }, 48.0] }]
+                              - if: { condition: { gt: [want, node.width] }, then: [{ set: [node.width, want] }] }
+                        - set: [<.edit_id, ""]
+                        - call: [<.label.stop]
+                        - set: [<.status, "uebernommen"]
+                        - return: null
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [<.edit_id, ""]
+          # The deeds themselves live in Deeds (a sheet edit needs no window); the editor
+      # keeps only what it owns: which element is meant, and what the status says.
+      - def:
+          name: set_deco
+          static_off: ["same_arg", "str_cmp"]
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [kind, i32, 0]
+            - decl: [ident, string, ""]
+            - if: { condition: { neq: [<.sel, ""] }, then: [{ set: [kind, 1] }, { set: [ident, <.sel] }] }
+            - if: { condition: { neq: [<.sel_edge, ""] }, then: [{ set: [kind, 2] }, { set: [ident, <.sel_edge] }] }
+            - if:
+                condition: { eq: [kind, 0] }
+                then:
+                  - set: [<.status, "erst ein Element waehlen"]
+                  - return: null
+            - if:
+                condition: { eq: [action, 214] }
+                then:
+                  - decl: [spot_x, f32, { -: [{ call: [<.top_bar.title_x, 2] }, 8.0] }]
+                  - call: [<.menu.open_at, kind, ident, spot_x, { call: [<.top_bar.height] }]
+                  - set: [<.status, "Farbe waehlen"]
+                  - return: null
+            - decl: [bit, i32, 0]
+            - if: { condition: { eq: [action, 210] }, then: [{ set: [bit, 1] }] }
+            - if: { condition: { eq: [action, 211] }, then: [{ set: [bit, 2] }] }
+            - if: { condition: { eq: [action, 212] }, then: [{ set: [bit, 4] }] }
+            - if:
+                condition: { eq: [{ call: [<.deeds.set_deco, slide, ident, kind, bit] }, 1] }
+                then:
+                  - call: [<.touch]
+                  - set: [<.status, "Auszeichnung gesetzt"]
+      - def:
+          name: add_step
+          static_off: ["same_arg", "str_cmp"]
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { neq: [slide.dtype, DiagramType.sequence] }
+                then:
+                  - set: [<.status, "Notiz und Block gibt es nur in einer Sequenz (spec 5.8.3)"]
+                  - return: null
+            - decl: [fresh, string, ""]
+            - if:
+                condition: { eq: [action, 202] }
+                then: [{ set: [fresh, { call: [<.deeds.add_block, slide] }] }]
+                else:
+                  - decl: [host, string, <.sel]
+                  - if:
+                      condition: { eq: [host, ""] }
+                      then:
+                        - if: { condition: { eq: [slide.nodes.len, 0] }, then: [{ set: [<.status, "erst einen Teilnehmer anlegen"] }, { return: null }] }
+                        - decl: [first, ref<Node>, { at: [slide.nodes, 0] }]
+                        - set: [host, first.ident]
+                  - set: [fresh, { call: [<.deeds.add_note, slide, host] }]
+            - call: [<.touch]
+            - set: [<.sel_step, fresh]
+            - call: [<.edit_step]
+      - def:
+          name: drop_step
+          static_off: ["same_arg", "str_cmp"]
+          body:
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - if:
+                condition: { eq: [{ call: [<.deeds.drop_step, slide, <.sel_step] }, 1] }
+                then:
+                  - set: [<.sel_step, ""]
+                  - call: [<.touch]
+                  - set: [<.status, "Schritt entfernt"]
