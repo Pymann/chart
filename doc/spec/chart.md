@@ -1024,6 +1024,10 @@ three copies drift apart and the pointer lands somewhere other than where the pi
 it would.  A test pins this: the same slide coordinate, placed at 100 % and at 200 %, must
 store the same `x`/`y` (§9.2).
 
+**The wheel zooms, at the pointer.**  The plane point under the cursor stays under it,
+which is what makes a wheel a magnifier rather than a slider, and the step is 1.15 per
+notch between 10 % and 400 %.
+
 **Panning is on the right mouse button, by the drag.**  Right-press and move: the view
 follows the hand.  Right-press and release without moving (less than 6 window pixels) is
 the old right-click -- read the ink, or open the element menu (§8.2).  The button that
@@ -1635,9 +1639,12 @@ order.
 
 **Everything belongs to exactly one frame.**  There are no loose elements between frames:
 a plane whose notes live nowhere would export a document that is missing them, and §5's
-promise is that the export is the drawing.  Drawing on empty plane therefore **creates a
-new frame** there, snapped to the frame grid, and the element lands inside it -- a new
-diagram is made by drawing one, not by a menu.
+promise is that the export is the drawing.
+
+**The bare plane stays bare.**  A press that misses every frame does nothing but pan: a
+surface that grows a page whenever the hand slips is a surface nobody can drag.  A frame
+is made deliberately with `Neue Folie`, and on the plane it lands **where you are
+looking** -- appended to a row far away, it would be a page you have to go and find.
 
 **Moving a frame does not reorder the deck.**  The list order is the document (it decides
 export, presentation and PPTX); the plane position is where it sits.  Two authors who

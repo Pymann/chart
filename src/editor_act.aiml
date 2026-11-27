@@ -360,6 +360,16 @@
             - if:
                 condition: { eq: [action, 23] }
                 then:
+                  # On the plane a new frame lands WHERE YOU ARE LOOKING (spec §20.1):
+                  # appending it to a row far away would be a page you have to go find.
+                  - if:
+                      condition: { eq: [<.deck.mode, ViewMode.plane] }
+                      then:
+                        - call: [<.new_frame_at, { -: [<.focus_x, 640.0] }, { -: [<.focus_y, 360.0] }]
+                        - decl: [made, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                        - set: [made.title, "Neue Folie"]
+                        - set: [<.sel, ""]
+                        - return: null
                   - decl: [fresh, Sheet]
                   - set: [fresh.title, "Neue Folie"]
                   - set: [fresh.next_id, 1]
@@ -454,15 +464,9 @@
                         - if: { condition: { neq: [which, <.deck.current] }, then: [{ call: [<.clear_selection] }] }
                         - set: [<.deck.current, which]
                   - return: 1
-            # the bare plane: a press with something to put down opens a frame first
-            - if:
-                condition: { call: [input.mouse_pressed, 0] }
-                then:
-                  - decl: [scale, f32, { /: [view.width, 1280.0] }]
-                  - decl: [plane_x, f32, { /: [{ -: [spot_x, view.pos_x] }, scale] }]
-                  - decl: [plane_y, f32, { /: [{ -: [spot_y, view.pos_y] }, scale] }]
-                  - call: [<.new_frame_at, { -: [plane_x, 640.0] }, { -: [plane_y, 360.0] }]
-                  - return: 1
+            # The bare plane stays bare.  A frame is made DELIBERATELY (`Neue Folie`,
+            # §8.0), not by every press that happens to miss one -- a surface that
+            # grows a page whenever the hand slips is a surface nobody can pan.
             - return: 0
 
       # Moving a frame by its tab (spec §20.2).  Returns 1 while it has the pointer,
@@ -507,3 +511,33 @@
             - call: [input.set_cursor, "hand"]
             - call: [<.touch]
             - return: 1
+
+      # Zooming with the wheel, AT THE POINTER (spec §8.4a).  The plane point under
+      # the cursor must not move: that is what makes a wheel feel like a magnifier
+      # instead of a slider.  focus' = focus + (pointer - centre) * (1/s0 - 1/s1).
+      - def:
+          name: wheel_zoom
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32]]
+          body:
+            - decl: [turn, vec2, { call: [input.mouse_scroll] }]
+            - if: { condition: { eq: [turn.y, 0.0] }, then: [{ return: null }] }
+            - decl: [spot_x, f32, { call: [input.mouse_pos_x] }]
+            - decl: [spot_y, f32, { call: [input.mouse_pos_y] }]
+            - if: { condition: { lt: [spot_y, cvs_y] }, then: [{ return: null }] }
+            - if: { condition: { gt: [spot_y, { +: [cvs_y, cvs_h] }] }, then: [{ return: null }] }
+            - decl: [before, f32, <.last_scale]
+            - if: { condition: { le: [before, 0.0] }, then: [{ return: null }] }
+            - decl: [after, f32, { "*": [before, 1.15] }]
+            - if: { condition: { lt: [turn.y, 0.0] }, then: [{ set: [after, { /: [before, 1.15] }] }] }
+            - if: { condition: { lt: [after, 0.1] }, then: [{ set: [after, 0.1] }] }
+            - if: { condition: { gt: [after, 4.0] }, then: [{ set: [after, 4.0] }] }
+            - if:
+                condition: { eq: [<.deck.mode, ViewMode.plane] }
+                then:
+                  - decl: [away_x, f32, { -: [spot_x, { +: [cvs_x, { /: [cvs_w, 2.0] }] }] }]
+                  - decl: [away_y, f32, { -: [spot_y, { +: [cvs_y, { /: [cvs_h, 2.0] }] }] }]
+                  - decl: [shift, f32, { -: [{ /: [1.0, before] }, { /: [1.0, after] }] }]
+                  - set: [<.focus_x, { +: [<.focus_x, { "*": [away_x, shift] }] }]
+                  - set: [<.focus_y, { +: [<.focus_y, { "*": [away_y, shift] }] }]
+            - call: [<.set_zoom, after]

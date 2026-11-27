@@ -175,6 +175,7 @@
             - decl: [mouse_y, f32, { call: [input.mouse_pos_y] }]
             # the SAME rect the picture was drawn with (spec §8.4), which in plane mode
             # is the current FRAME's place on the plane (spec §20.3)
+            - call: [<.wheel_zoom, cvs_x, cvs_y, cvs_w, cvs_h]
             - decl: [on_frame, i32, { call: [<.pick_frame, cvs_x, cvs_y, cvs_w, cvs_h] }]
             - decl: [view, Shape]
             - call: [<.view_for, cvs_x, cvs_y, cvs_w, cvs_h, view]
@@ -192,9 +193,11 @@
             - if: { condition: { ge: [mouse_x, { +: [cvs_x, cvs_w] }] }, then: [{ set: [over_canvas, 0] }] }
             - if: { condition: { lt: [mouse_y, cvs_y] }, then: [{ set: [over_canvas, 0] }] }
             - if: { condition: { ge: [mouse_y, { +: [cvs_y, cvs_h] }] }, then: [{ set: [over_canvas, 0] }] }
-            # on the bare plane there is nothing to draw ON (spec §20.1)
-            - if: { condition: { eq: [on_frame, 0] }, then: [{ set: [over_canvas, 0] }] }
+
             - if: { condition: { eq: [{ call: [<.pan_drag, mouse_x, mouse_y, over_canvas] }, 1] }, then: [{ return: null }] }
+            # Only AFTER the view drag: the plane is dragged from anywhere on the canvas,
+            # and most of a plane is bare.  Drawing still needs a frame (spec §20.1).
+            - if: { condition: { eq: [on_frame, 0] }, then: [{ set: [over_canvas, 0] }] }
             # ── the pointer says what a drag from here would do (spec §15.1a) ─
             - if:
                 condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
