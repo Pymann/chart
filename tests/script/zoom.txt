@@ -1,0 +1,27 @@
+# Zoom is a VIEW transform (spec §8.4): the same slide coordinate must store the
+# same x/y at every zoom, and an existing node must not move because the view did.
+# This is the test the "one origin" rule exists for -- with the formula in three
+# places, the second node lands somewhere else than the first.
+wait 3
+tool Raute
+wait 2
+at 640 360
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+menu Ansicht|200 %
+wait 3
+tool Raute
+wait 2
+at 760 420
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+menu Ansicht|Einpassen
+wait 2
+save
+wait 2

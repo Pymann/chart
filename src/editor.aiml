@@ -45,35 +45,14 @@
             - set: [slide.next_id, { +: [slide.next_id, 1] }]
             - set: [<.sel_edge, edge.ident]
             - set: [<.status, "Kante gezogen"]
+      # ── who owns the pointer (spec §8.0, §8.2) ───────────────────────────────
+      # Its own method because canvas_input sits at the 300-line limit.  Returns 1
+      # when an overlay consumed the frame.
       - def:
-          name: canvas_input
-          static_off: ["same_arg", "str_cmp"]
-          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [margin, f32]]
+          name: overlay_claim
+          args: [[mouse_x, f32], [mouse_y, f32]]
+          return: i32
           body:
-            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
-            - decl: [mouse_x, f32, { call: [input.mouse_pos_x] }]
-            - decl: [mouse_y, f32, { call: [input.mouse_pos_y] }]
-            - decl: [scale, f32, { call: [<.fit_scale, cvs_w, cvs_h, margin] }]
-            - decl: [org_x, f32, { +: [cvs_x, { /: [{ -: [cvs_w, { "*": [1280.0, scale] }] }, 2.0] }] }]
-            - decl: [org_y, f32, { +: [cvs_y, { /: [{ -: [cvs_h, { "*": [720.0, scale] }] }, 2.0] }] }]
-            - decl: [slide_x, f32, { /: [{ -: [mouse_x, org_x] }, scale] }]
-            - decl: [slide_y, f32, { /: [{ -: [mouse_y, org_y] }, scale] }]
-            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
-            # §8.0: chrome owns its area.  The canvas cell now spans the whole
-            # window, so the canvas has to reject the strips' rows itself --
-            # otherwise a press on a button also starts a stroke.
-            - decl: [over_canvas, i32, 1]
-            - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ set: [over_canvas, 0] }] }
-            - if: { condition: { ge: [mouse_x, { +: [cvs_x, cvs_w] }] }, then: [{ set: [over_canvas, 0] }] }
-            - if: { condition: { lt: [mouse_y, cvs_y] }, then: [{ set: [over_canvas, 0] }] }
-            - if: { condition: { ge: [mouse_y, { +: [cvs_y, cvs_h] }] }, then: [{ set: [over_canvas, 0] }] }
-            # ── the pointer says what a drag from here would do (spec §15.1a) ─
-            - if:
-                condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
-                then: [{ call: [input.set_cursor, "arrow"] }]
-                else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y, scale] }]
-            # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
-            # meine bisherige Diagnose hing an PRESSED.
             # The same claim for the strips' dropdowns (§8.0).  They hang OVER the
             # canvas, and the canvas is asked first: without this a click on
             # `Kante > Fuss Pfeil` also landed on empty canvas, which dropped the
@@ -83,7 +62,7 @@
                 condition: { "||": [{ eq: [<.top_bar.shown, 1] }, { eq: [<.tools.type_open, 1] }] }
                 then:
                   - call: [input.set_cursor, "arrow"]
-                  - return: null
+                  - return: 1
             # §8.2: while the menu is open it owns the pointer.  An overlay that
             # draws on top but claims nothing lets the click through -- here that
             # would draw a stroke THROUGH the menu.
@@ -95,7 +74,71 @@
                       then:
                         - decl: [took, i32, { call: [<.menu.press, mouse_x, mouse_y] }]
                         - if: { condition: { eq: [took, 1] }, then: [{ call: [<.menu_deed] }] }
-                  - return: null
+                  - return: 1
+            - return: 0
+
+      # ── pan the view with the middle button (spec §8.4) ──────────────────────
+      # Its own method because canvas_input sits at the 300-line limit.  Returns 1
+      # when it consumed the frame, so the caller stops before drag and selection.
+      - def:
+          name: pan_drag
+          args: [[mouse_x, f32], [mouse_y, f32], [over_canvas, i32]]
+          return: i32
+          body:
+            # Only the middle button: the left one draws and drags, the right one
+            # opens the menu, and a view that moves under either of them is a view
+            # that moves by accident.  page_rect clamps, so no gap can open.
+            - decl: [mid_now, i32, { call: [input.mouse_button, 2] }]
+            - if:
+                condition: { "&&": [{ eq: [mid_now, 1] }, { "&&": [{ eq: [<.panning, 0] }, { eq: [over_canvas, 1] }] }] }
+                then:
+                  - set: [<.panning, 1]
+                  - set: [<.pan_from_x, { -: [mouse_x, <.pan_x] }]
+                  - set: [<.pan_from_y, { -: [mouse_y, <.pan_y] }]
+            - if: { condition: { eq: [mid_now, 0] }, then: [{ set: [<.panning, 0] }] }
+            - if:
+                condition: { eq: [<.panning, 1] }
+                then:
+                  - set: [<.pan_x, { -: [mouse_x, <.pan_from_x] }]
+                  - set: [<.pan_y, { -: [mouse_y, <.pan_from_y] }]
+                  - call: [input.set_cursor, "hand"]
+                  - return: 1
+            - return: 0
+
+      - def:
+          name: canvas_input
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [mouse_x, f32, { call: [input.mouse_pos_x] }]
+            - decl: [mouse_y, f32, { call: [input.mouse_pos_y] }]
+            # the SAME page rect the picture was drawn with (spec §8.4)
+            - decl: [view, Shape]
+            - call: [<.page_rect, cvs_x, cvs_y, cvs_w, cvs_h, view]
+            - decl: [scale, f32, { /: [view.width, 1280.0] }]
+            - decl: [org_x, f32, view.pos_x]
+            - decl: [org_y, f32, view.pos_y]
+            - decl: [slide_x, f32, { /: [{ -: [mouse_x, org_x] }, scale] }]
+            - decl: [slide_y, f32, { /: [{ -: [mouse_y, org_y] }, scale] }]
+            - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            # §8.0: chrome owns its area.  The canvas cell now spans the whole
+            # window, so the canvas has to reject the strips' rows itself --
+            # otherwise a press on a button also starts a stroke.
+            - decl: [over_canvas, i32, 1]
+            - if: { condition: { lt: [mouse_x, cvs_x] }, then: [{ set: [over_canvas, 0] }] }
+            - if: { condition: { ge: [mouse_x, { +: [cvs_x, cvs_w] }] }, then: [{ set: [over_canvas, 0] }] }
+            - if: { condition: { lt: [mouse_y, cvs_y] }, then: [{ set: [over_canvas, 0] }] }
+            - if: { condition: { ge: [mouse_y, { +: [cvs_y, cvs_h] }] }, then: [{ set: [over_canvas, 0] }] }
+            - if: { condition: { eq: [{ call: [<.pan_drag, mouse_x, mouse_y, over_canvas] }, 1] }, then: [{ return: null }] }
+            # ── the pointer says what a drag from here would do (spec §15.1a) ─
+            - if:
+                condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
+                then: [{ call: [input.set_cursor, "arrow"] }]
+                else: [{ call: [<.grip.point, slide, <.sel, slide_x, slide_y, scale] }]
+            # DIAGNOSE: beide Flanken getrennt -- ui.button feuert auf RELEASED,
+            # meine bisherige Diagnose hing an PRESSED.
+            - if: { condition: { eq: [{ call: [<.overlay_claim, mouse_x, mouse_y] }, 1] }, then: [{ return: null }] }
             - decl: [down_now, i32, { call: [input.mouse_pressed, 0] }]
             - decl: [up_now, i32, { call: [input.mouse_released, 0] }]
             - decl: [held, i32, { call: [input.mouse_button, 0] }]
@@ -163,8 +206,8 @@
                         - decl: [fresh, Node]
                         - set: [fresh.ident, "n${slide.next_id}"]
                         - set: [fresh.kind, <.armed]
-                        - set: [fresh.pos_x, { -: [slide_x, 100.0] }]
-                        - set: [fresh.pos_y, { -: [slide_y, 45.0] }]
+                        - set: [fresh.pos_x, { call: [<.snap_val, { -: [slide_x, 100.0] }] }]
+                        - set: [fresh.pos_y, { call: [<.snap_val, { -: [slide_y, 45.0] }] }]
                         - set: [fresh.width, 200.0]
                         - set: [fresh.height, 90.0]
                         - call: [slide.nodes.push, fresh]
@@ -404,8 +447,8 @@
                             condition: { eq: [node.ident, <.drag_id] }
                             then:
                               - call: [<.touch]
-                              - set: [node.pos_x, { -: [slide_x, <.drag_dx] }]
-                              - set: [node.pos_y, { -: [slide_y, <.drag_dy] }]
+                              - set: [node.pos_x, { call: [<.snap_val, { -: [slide_x, <.drag_dx] }] }]
+                              - set: [node.pos_y, { call: [<.snap_val, { -: [slide_y, <.drag_dy] }] }]
                               - set: [pos, slide.nodes.len]
                         - set: [pos, { +: [pos, 1] }]
       # ── keyboard: ONE consumer (spec §6, normative) ────────────────────────
@@ -506,6 +549,11 @@
                   - if: { condition: { eq: [key, "V"] }, then: [{ set: [key_deed, 3] }] }
                   - if: { condition: { eq: [key, "Z"] }, then: [{ call: [<.dispatch, 15] }, { return: null }] }
                   - if: { condition: { eq: [key, "Y"] }, then: [{ call: [<.dispatch, 16] }, { return: null }] }
+                  # Ansicht (spec §8.4): digits, because aiml has no name for +/-
+                  - if: { condition: { eq: [key, "0"] }, then: [{ call: [<.dispatch, 130] }, { return: null }] }
+                  - if: { condition: { eq: [key, "5"] }, then: [{ call: [<.dispatch, 131] }, { return: null }] }
+                  - if: { condition: { eq: [key, "1"] }, then: [{ call: [<.dispatch, 132] }, { return: null }] }
+                  - if: { condition: { eq: [key, "2"] }, then: [{ call: [<.dispatch, 133] }, { return: null }] }
                   - if:
                       condition: { gt: [key_deed, 0] }
                       then: [{ call: [<.clip_deed, key_deed] }, { return: null }]
@@ -597,9 +645,11 @@
                         # the window (§8.0), and a step must land where the slide is
                         - decl: [sc_top, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
                         - decl: [sc_cvs_h, f32, { -: [{ -: [win_h, sc_top] }, { call: [<.strip_bottom] }] }]
-                        - decl: [sc_scale, f32, { call: [<.fit_scale, win_w, sc_cvs_h, 0.88] }]
-                        - decl: [sc_org_x, f32, { /: [{ -: [win_w, { "*": [1280.0, sc_scale] }] }, 2.0] }]
-                        - decl: [sc_org_y, f32, { +: [sc_top, { /: [{ -: [sc_cvs_h, { "*": [720.0, sc_scale] }] }, 2.0] }] }]
+                        - decl: [sc_view, Shape]
+                        - call: [<.page_rect, 0.0, sc_top, win_w, sc_cvs_h, sc_view]
+                        - decl: [sc_scale, f32, { /: [sc_view.width, 1280.0] }]
+                        - decl: [sc_org_x, f32, sc_view.pos_x]
+                        - decl: [sc_org_y, f32, sc_view.pos_y]
                         - decl: [verdict, i32, { call: [<.script.tick, sc_org_x, sc_org_y, sc_scale] }]
                         - if: { condition: { eq: [verdict, 2] }, then: [{ call: [<.save_deck, ""] }] }
                         # verdict 3 = shot: taken at the end of the frame, below
@@ -618,7 +668,7 @@
                       then:
                         - call: [ui.begin_grid, cols_show, rows]
                         - call: [ui.begin_cell, 0, 0, 1, 1]
-                        - call: [<.draw_slide, 0.0, 0.0, win_w, win_h, 0.98]
+                        - call: [<.draw_slide, 0.0, 0.0, win_w, win_h]
                         - call: [ui.end_cell]
                         - call: [ui.end_grid]
                       else:
@@ -629,9 +679,9 @@
                         - call: [ui.begin_cell, 0, 0, 1, 1]
                         - decl: [strip_h, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
                         - decl: [cvs_h, f32, { -: [{ -: [win_h, strip_h] }, { call: [<.strip_bottom] }] }]
-                        - call: [<.draw_slide, 0.0, strip_h, win_w, cvs_h, 0.88]
+                        - call: [<.draw_slide, 0.0, strip_h, win_w, cvs_h]
                         - call: [<.menu.draw]
-                        - call: [<.canvas_input, 0.0, strip_h, win_w, cvs_h, 0.88]
+                        - call: [<.canvas_input, 0.0, strip_h, win_w, cvs_h]
                         - call: [ui.end_cell]
                         - call: [ui.end_grid]
                         - call: [<.status_strip, win_w, win_h]

@@ -942,10 +942,50 @@ One action integer runs the whole editor, so the ranges are written down:
 | 80..84 | its tail (none, arrow, circle, cross, hollow) |
 | 100, 101 | pointer mode: drag an arrow / draw freely |
 | 110 + n | arm shape n of the tool strip |
+| 130..137 | zoom (fit, 50, 100, 200, in, out), grid, snap (§8.4) |
 
 ---
 
 ---
+
+### 8.4 Ansicht — zoom, grid, snap (normative)
+
+| Entry | Action | Key |
+|---|---|---|
+| `Einpassen` | the page fits the canvas; the pan is reset | `Strg+0` |
+| `50 %` · `100 %` · `200 %` | that scale exactly | `Strg+5` · `Strg+1` · `Strg+2` |
+| `Hineinzoomen` · `Herauszoomen` | the next step of 50, 75, 100, 150, 200, 300 % | menu only |
+
+The steps have **no key** because aiml's key canon has no name for the `+` and `-` keys:
+letters, digits and the named keys, nothing else (aiml spec/44_0 §1, and the runtime's
+table agrees — there is no `Minus`/`Equal`).  Digits are what is left, so the scales got
+them and the ladder is reachable from the menu.
+| `Raster` | show the grid | |
+| `Am Raster einrasten` | place and drop on the grid | |
+
+**Zoom is a view transform and never changes a stored coordinate.**  Zooming in, placing
+nothing, and zooming out leaves the sheet byte-identical.  This keeps §14's promise
+(positions belong to the author) under a feature that looks like it moves things.
+Snapping is the deliberate exception: it rounds the value that is *written*, so it does
+show up in the sheet — a user who turns it on asked for exactly that.
+
+**One origin.**  Page scale and page origin are computed in **one** place
+(`EditorPaint.page_rect`), and drawing, pointer input and the script tick all read it from
+there.  The formula stood in three places before zoom existed; with a zoom and a pan in it,
+three copies drift apart and the pointer lands somewhere other than where the picture says
+it would.  A test pins this: the same slide coordinate, placed at 100 % and at 200 %, must
+store the same `x`/`y` (§9.2).
+
+**Panning only exists where it is needed, and it is measured from centred.**  Pan `0` is
+the centred page at every zoom, so zooming in keeps the middle of the page in the middle of
+the canvas instead of jumping into a corner.  While the page fits the canvas it is centred
+and the pan is ignored.  Larger than the canvas, the middle mouse button drags it, clamped
+so no gap can open between a page edge and the canvas edge on an axis that overflows —
+a view that can be dragged into emptiness loses the drawing.
+
+**The grid is drawn, never exported.**  10 slide units minor, 50 major, inside the page and
+below the elements.  It belongs to the view, so no exporter (§5) and no PPTX page (§13)
+knows about it.  Snap granularity is the minor spacing, 10 units.
 
 ## 9. Tests
 

@@ -1,0 +1,9 @@
+title: "Zoom"
+slides:
+  - title: "Zoom"
+    dtype: flowchart
+    dir: TD
+    next_id: 3
+    nodes:
+      - { id: n1, kind: diamond, x: 540, y: 315, w: 200, h: 90, text: "" }
+      - { id: n2, kind: diamond, x: 660, y: 375, w: 200, h: 90, text: "" }

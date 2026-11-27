@@ -8,6 +8,15 @@
     description: "Slide, strips and preview box -- drawing only (spec §15.1)"
     methods:
       # ── geometry ────────────────────────────────────────────────────────────
+      # The one fit margin: the page keeps a little air on every side -- and more of
+      # it while presenting, where no chrome competes for the room.
+      - def:
+          name: fit_margin
+          return: f32
+          body:
+            - if: { condition: { eq: [<.presenting, 1] }, then: [{ return: 0.98 }] }
+            - return: 0.88
+
       # Scale that fits the 1280x720 page into the canvas rect, with a margin.
       - def:
           name: fit_scale
@@ -18,25 +27,109 @@
             - decl: [scale_y, f32, { /: [{ "*": [avail_h, margin] }, 720.0] }]
             - if: { condition: { lt: [scale_x, scale_y] }, then: [{ return: scale_x }] }
             - return: scale_y
+      # ── where the page sits (spec §8.4, normative: ONE origin) ──────────────
+      # Scale and origin for the current zoom and pan, clamped.  Drawing, pointer
+      # input and the script tick all read the page rect from HERE -- the formula
+      # stood in three places before zoom existed, and three copies of a formula
+      # with a pan in it drift apart.  The clamped pan is written back, so the
+      # stored value corrects itself on the next frame instead of staying out.
+      - def:
+          name: page_rect
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [out, ref<Shape>]]
+          body:
+            - decl: [scale, f32, <.view_zoom]
+            # Presenting never zooms and never pans (§14): the slide is scaled to fit
+            # and centred, whatever the editor's view was set to.
+            - if: { condition: { eq: [<.presenting, 1] }, then: [{ set: [scale, 0.0] }] }
+            - if:
+                condition: { le: [scale, 0.0] }
+                then: [{ set: [scale, { call: [<.fit_scale, cvs_w, cvs_h, { call: [<.fit_margin] }] }] }]
+            - decl: [page_w, f32, { "*": [1280.0, scale] }]
+            - decl: [page_h, f32, { "*": [720.0, scale] }]
+            # An axis that fits is centred and ignores the pan (§8.4).
+            - decl: [slack_x, f32, { /: [{ -: [cvs_w, page_w] }, 2.0] }]
+            - decl: [slack_y, f32, { /: [{ -: [cvs_h, page_h] }, 2.0] }]
+            # The pan is an offset from CENTRED, not from the corner: zooming then keeps
+            # the middle of the page in the middle of the canvas instead of jumping into
+            # a corner.  Clamped so no gap can open, and the clamped value is written
+            # back, so a pan dragged past the edge corrects itself instead of staying out.
+            - if:
+                condition: { ge: [page_w, cvs_w] }
+                then:
+                  - set: [slack_x, { +: [slack_x, <.pan_x] }]
+                  - decl: [floor_x, f32, { -: [cvs_w, page_w] }]
+                  - if: { condition: { gt: [slack_x, 0.0] }, then: [{ set: [slack_x, 0.0] }] }
+                  - if: { condition: { lt: [slack_x, floor_x] }, then: [{ set: [slack_x, floor_x] }] }
+                  - set: [<.pan_x, { -: [slack_x, { /: [{ -: [cvs_w, page_w] }, 2.0] }] }]
+                else: [{ set: [<.pan_x, 0.0] }]
+            - if:
+                condition: { ge: [page_h, cvs_h] }
+                then:
+                  - set: [slack_y, { +: [slack_y, <.pan_y] }]
+                  - decl: [floor_y, f32, { -: [cvs_h, page_h] }]
+                  - if: { condition: { gt: [slack_y, 0.0] }, then: [{ set: [slack_y, 0.0] }] }
+                  - if: { condition: { lt: [slack_y, floor_y] }, then: [{ set: [slack_y, floor_y] }] }
+                  - set: [<.pan_y, { -: [slack_y, { /: [{ -: [cvs_h, page_h] }, 2.0] }] }]
+                else: [{ set: [<.pan_y, 0.0] }]
+            - set: [out.pos_x, { +: [cvs_x, slack_x] }]
+            - set: [out.pos_y, { +: [cvs_y, slack_y] }]
+            - set: [out.width, page_w]
+            - set: [out.height, page_h]
+
+      # The grid belongs to the view: it is drawn inside the page, under the
+      # elements, and no exporter knows about it (spec §8.4).
+      - def:
+          name: draw_grid
+          args: [[org_x, f32], [org_y, f32], [page_w, f32], [page_h, f32], [scale, f32]]
+          body:
+            - decl: [step, f32, { "*": [10.0, scale] }]
+            - if: { condition: { lt: [step, 4.0] }, then: [{ set: [step, { "*": [50.0, scale] }] }] }
+            - if: { condition: { lt: [step, 4.0] }, then: [{ return: null }] }
+            - decl: [at_x, f32, step]
+            - decl: [unit, i32, 1]
+            - while:
+                condition: { lt: [at_x, page_w] }
+                body:
+                  - decl: [tint_x, i32, 0xEDF1F5FF]
+                  - if: { condition: { eq: [{ "%": [unit, 5] }, 0] }, then: [{ set: [tint_x, 0xDCE3EAFF] }] }
+                  - call: [ui.draw_line, { +: [org_x, at_x] }, org_y, { +: [org_x, at_x] }, { +: [org_y, page_h] }, 1.0, tint_x]
+                  - set: [at_x, { +: [at_x, step] }]
+                  - set: [unit, { +: [unit, 1] }]
+            - decl: [at_y, f32, step]
+            - set: [unit, 1]
+            - while:
+                condition: { lt: [at_y, page_h] }
+                body:
+                  - decl: [tint_y, i32, 0xEDF1F5FF]
+                  - if: { condition: { eq: [{ "%": [unit, 5] }, 0] }, then: [{ set: [tint_y, 0xDCE3EAFF] }] }
+                  - call: [ui.draw_line, org_x, { +: [org_y, at_y] }, { +: [org_x, page_w] }, { +: [org_y, at_y] }, 1.0, tint_y]
+                  - set: [at_y, { +: [at_y, step] }]
+                  - set: [unit, { +: [unit, 1] }]
+
       # ── the page ────────────────────────────────────────────────────────────
       - def:
           name: draw_slide
           static_off: ["same_arg", "str_cmp"]
-          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [margin, f32]]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32]]
           body:
             - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
             - if: { condition: { lt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, 0] }] }
             - if: { condition: { ge: [<.deck.current, <.deck.slides.len] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
             - decl: [slide, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
-            - decl: [scale, f32, { call: [<.fit_scale, cvs_w, cvs_h, margin] }]
+            - decl: [view, Shape]
+            - call: [<.page_rect, cvs_x, cvs_y, cvs_w, cvs_h, view]
+            - decl: [page_w, f32, view.width]
+            - decl: [page_h, f32, view.height]
+            - decl: [scale, f32, { /: [page_w, 1280.0] }]
             - set: [<.last_scale, scale]
-            - decl: [page_w, f32, { "*": [1280.0, scale] }]
-            - decl: [page_h, f32, { "*": [720.0, scale] }]
-            - decl: [org_x, f32, { +: [cvs_x, { /: [{ -: [cvs_w, page_w] }, 2.0] }] }]
-            - decl: [org_y, f32, { +: [cvs_y, { /: [{ -: [cvs_h, page_h] }, 2.0] }] }]
+            - decl: [org_x, f32, view.pos_x]
+            - decl: [org_y, f32, view.pos_y]
             # a soft shadow, so the page reads as a sheet of paper
             - call: [ui.draw_rect, { +: [org_x, 6.0] }, { +: [org_y, 7.0] }, page_w, page_h, 0x0A0F1438]
             - call: [ui.draw_rect, org_x, org_y, page_w, page_h, 0xFFFFFFFF]
+            - if:
+                condition: { eq: [<.grid_on, 1] }
+                then: [{ call: [<.draw_grid, org_x, org_y, page_w, page_h, scale] }]
             - decl: [page, Shape]
             - set: [page.pos_x, org_x]
             - set: [page.pos_y, org_y]

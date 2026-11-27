@@ -1,0 +1,8 @@
+title: "Raster"
+slides:
+  - title: "Raster"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    nodes:
+      - { id: n1, kind: diamond, x: 200, y: 210, w: 200, h: 90, text: "" }

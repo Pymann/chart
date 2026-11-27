@@ -83,6 +83,7 @@
           args: [[action, i32]]
           body:
             - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
+            - if: { condition: { "&&": [{ ge: [action, 130] }, { le: [action, 137] }] }, then: [{ call: [<.view_deed, action] }, { return: null }] }
 
             - if: { condition: { eq: [action, 1] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
             # 15/16 undo and redo, 17 a new deck (spec §16.4)
@@ -381,3 +382,27 @@
                 then:
                   - set: [<.deck.current, { -: [action, 40] }]
                   - set: [<.sel, ""]
+
+      # ── Ansicht: zoom, grid, snap (spec §8.4) ────────────────────────────────
+      - def:
+          name: view_deed
+          args: [[action, i32]]
+          body:
+            - if: { condition: { eq: [action, 130] }, then: [{ call: [<.set_zoom, 0.0] }, { return: null }] }
+            - if: { condition: { eq: [action, 131] }, then: [{ call: [<.set_zoom, 0.5] }, { return: null }] }
+            - if: { condition: { eq: [action, 132] }, then: [{ call: [<.set_zoom, 1.0] }, { return: null }] }
+            - if: { condition: { eq: [action, 133] }, then: [{ call: [<.set_zoom, 2.0] }, { return: null }] }
+            - if: { condition: { eq: [action, 134] }, then: [{ call: [<.zoom_step, 1] }, { return: null }] }
+            - if: { condition: { eq: [action, 135] }, then: [{ call: [<.zoom_step, -1] }, { return: null }] }
+            - if:
+              condition: { eq: [action, 136] }
+              then:
+                - set: [<.grid_on, { -: [1, <.grid_on] }]
+                - set: [<.status, "Raster ${<.grid_on}"]
+                - return: null
+            - if:
+              condition: { eq: [action, 137] }
+              then:
+                - set: [<.snap_on, { -: [1, <.snap_on] }]
+                - set: [<.status, "Einrasten ${<.snap_on}"]
+                - return: null

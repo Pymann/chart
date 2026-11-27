@@ -63,6 +63,16 @@
       - [deeds, ref<Deeds>]            # sheet edits that need no window
       - [past, ref<History>]           # undo/redo (spec §16.4)
       - [changed, i32]                 # something changed and has not settled yet
+      # Ansicht (spec §8.4): a VIEW transform -- none of this reaches the sheet,
+      # except snap_on, which rounds the value that is written.
+      - [view_zoom, f32]                # 0.0 = fit the canvas
+      - [pan_x, f32]
+      - [pan_y, f32]
+      - [panning, i32]                  # middle button held
+      - [pan_from_x, f32]
+      - [pan_from_y, f32]
+      - [grid_on, i32]
+      - [snap_on, i32]
       - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
       - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
       - [top_bar, ref<TopBar>]         # the menu strip (spec §8.0)
@@ -324,3 +334,52 @@
                   - set: [<.sel_step, ""]
                   - call: [<.touch]
                   - set: [<.status, "Schritt entfernt"]
+
+      # ── Ansicht: zoom, grid, snap (spec §8.4) ───────────────────────────────
+      - def:
+          name: set_zoom
+          args: [[zval, f32]]
+          body:
+            - set: [<.view_zoom, zval]
+            - if:
+                condition: { le: [zval, 0.0] }
+                then:
+                  - set: [<.pan_x, 0.0]
+                  - set: [<.pan_y, 0.0]
+                  - set: [<.status, "Ansicht: einpassen"]
+                  - return: null
+            - decl: [pct, i32, { cast: [{ "*": [zval, 100.0] }, i32] }]
+            - set: [<.status, "Ansicht: ${pct} %"]
+
+      # The ladder is walked, not multiplied: a factor turns into 103 % after a few
+      # steps and the user can never get back to a round number.
+      - def:
+          name: zoom_step
+          args: [[dirn, i32]]
+          body:
+            - decl: [rungs, list<f32>, [0.5, 0.75, 1.0, 1.5, 2.0, 3.0]]
+            - decl: [here, i32, 2]
+            - decl: [pos, i32, 0]
+            - while:
+                condition: { lt: [pos, rungs.len] }
+                body:
+                  - if:
+                      condition: { le: [{ at: [rungs, pos] }, { +: [<.view_zoom, 0.001] }] }
+                      then: [{ set: [here, pos] }]
+                  - set: [pos, { +: [pos, 1] }]
+            - if: { condition: { le: [<.view_zoom, 0.0] }, then: [{ set: [here, 2] }] }
+            - decl: [want, i32, { +: [here, dirn] }]
+            - if: { condition: { lt: [want, 0] }, then: [{ set: [want, 0] }] }
+            - if: { condition: { ge: [want, rungs.len] }, then: [{ set: [want, { -: [rungs.len, 1] }] }] }
+            - call: [<.set_zoom, { at: [rungs, want] }]
+
+      # Rounds a WRITTEN coordinate to the grid.  Off, it hands the value straight
+      # back, so every caller can route through it unconditionally.
+      - def:
+          name: snap_val
+          args: [[val, f32]]
+          return: f32
+          body:
+            - if: { condition: { eq: [<.snap_on, 0] }, then: [{ return: val }] }
+            - decl: [steps, f32, { call: [math.round, { /: [val, 10.0] }] }]
+            - return: { "*": [steps, 10.0] }

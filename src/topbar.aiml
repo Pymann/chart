@@ -110,7 +110,14 @@
             - if:
                 condition: { eq: [menu, 3] }
                 then:
-                  - decl: [view_menu, list<string>, ["< Zurueck|21", "Weiter >|22", "-|0", "Praesentieren|30"]]
+                  - decl: [view_menu, list<string>, ["< Zurueck|21", "Weiter >|22",
+                                                     "-|0",
+                                                     "Einpassen|130", "50 %|131", "100 %|132", "200 %|133",
+                                                     "Hineinzoomen|134", "Herauszoomen|135",
+                                                     "-|0",
+                                                     "Raster|136", "Am Raster einrasten|137",
+                                                     "-|0",
+                                                     "Praesentieren|30"]]
                   - if:
                       condition: { gt: [<.slides.len, 0] }
                       then:

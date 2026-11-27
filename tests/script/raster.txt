@@ -1,0 +1,15 @@
+# Snapping is the one part of Ansicht that DOES reach the sheet (spec §8.4): it
+# rounds the written coordinate to 10 units.  303/257 would store 203/212.
+wait 3
+menu Ansicht|Am Raster einrasten
+wait 3
+tool Raute
+wait 2
+at 303 257
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+save
+wait 2
