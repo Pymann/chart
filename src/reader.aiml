@@ -230,6 +230,13 @@
                                   then: [{ set: [word, "Pfeil"] }]
                         - set: [shape.has_head, head_at_end]
                         - set: [shape.has_tail, head_at_start]
+                  # In a sequence a drawn arrow is a MESSAGE between two lifelines
+                  # (spec §7.7): its ends lie far below the head boxes, so matching
+                  # them against node rects finds nothing -- which is why drawing one
+                  # used to do nothing at all.
+                  - if:
+                      condition: { eq: [slide.dtype, DiagramType.sequence] }
+                      then: [{ return: { call: [<.make_message, slide, ends, shape] } }]
                   # 40 units, not 12: a line is begun beside a shape, not on it
                   - decl: [src, string, { call: [<.node_near, slide, ends.pos_x, ends.pos_y, 40.0] }]
                   - decl: [dst, string, { call: [<.node_near, slide, ends.tip_x, ends.tip_y, 40.0] }]
@@ -340,6 +347,48 @@
             - decl: [size_h, i32, { cast: [fresh.height, i32] }]
             - call: [<.diag.say, "ANGELEGT ${fresh.ident} art=${fresh.kind} bei ${spot_x},${spot_y} ${size_w}x${size_h} knoten=${slide.nodes.len}"]
             - return: fresh.ident
+
+      # A message drawn between two lifelines (spec §7.7).  Lands on the row it was
+      # drawn on, like a note, and keeps the line and the head the recogniser saw --
+      # a dashed stroke is a `-->>`, a stroke without a head is a `->`.
+      - def:
+          name: make_message
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [ends, ref<Guess>], [shape, ref<Guess>]]
+          return: i32
+          body:
+            - decl: [from_id, string, { call: [<.seq.lane_near, slide, ends.pos_x] }]
+            - decl: [to_id, string, { call: [<.seq.lane_near, slide, ends.tip_x] }]
+            # drawn backwards (head at the START) means the other direction
+            - if:
+                condition: { "&&": [{ eq: [shape.has_tail, 1] }, { eq: [shape.has_head, 0] }] }
+                then:
+                  - decl: [swap, string, from_id]
+                  - set: [from_id, to_id]
+                  - set: [to_id, swap]
+            - if:
+                condition: { "||": [{ eq: [from_id, ""] }, { eq: [from_id, to_id] }] }
+                then:
+                  - set: [<.status, "Nachricht braucht zwei Lebenslinien"]
+                  - return: 0
+            - decl: [note, Step]
+            - set: [note.ident, "s${slide.next_id}"]
+            - set: [note.kind, StepKind.message]
+            - set: [note.from_id, from_id]
+            - set: [note.to_id, to_id]
+            - set: [note.line, <.want_line]
+            - if: { condition: { eq: [shape.has_head, 0] }, then: [{ set: [note.head, EndCap.none] }] }
+            - decl: [mid_y, f32, { /: [{ +: [ends.pos_y, ends.tip_y] }, 2.0] }]
+            - decl: [row, i32, { call: [<.seq.row_at, mid_y] }]
+            - if:
+                condition: { lt: [row, slide.steps.len] }
+                then: [{ call: [slide.steps.insert, row, note] }]
+                else: [{ call: [slide.steps.push, note] }]
+            - set: [slide.next_id, { +: [slide.next_id, 1] }]
+            - set: [<.made_step, note.ident]
+            - set: [<.status, "Nachricht erkannt"]
+            - call: [<.diag.say, "NACHRICHT ${note.ident} ${from_id}->${to_id} zeile=${row}"]
+            - return: 1
 
       # A note drawn on the lifelines (spec §7.7).  One lane gives `Note right of`,
       # a box that spans two gives `Note over a,b` -- the same two shapes §5.8.3

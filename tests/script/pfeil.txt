@@ -1,0 +1,24 @@
+# Ein gezeichneter Pfeil zwischen zwei Lebenslinien ist eine NACHRICHT
+# (spec §7.7).  Vorher entstand gar nichts: die Enden wurden gegen die
+# Knotenkaesten geprueft, und die stehen nur in der Kopfzeile.
+wait 3
+at 255 300
+down 0
+at 340 300
+at 420 300
+at 485 300
+at 455 285
+at 485 300
+at 455 315
+up 0
+wait 2
+at 900 600
+down 1
+up 1
+wait 4
+type anmelden
+wait 2
+key Return
+wait 3
+save
+wait 2

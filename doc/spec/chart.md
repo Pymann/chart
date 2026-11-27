@@ -823,6 +823,8 @@ the diagram.  In a `sequence`:
 | a box whose centre is in the **head row** (the top 56 units of the page's layout) | a participant, as in every other diagram |
 | a box **below** it, on or near a lifeline | a **note** (`Note right of n1`) |
 | a box spanning **two** lifelines | a note over both (`Note over n1,n2`) |
+| a **line or arrow** between two lifelines | a **message** (`n1->>n2`), with the head the recogniser saw: no head is `->`, a dotted stroke is `-->>` |
+| a line whose head sits at its **start** | the same message, the other way round |
 
 Below the head row a sequence has **no free positions** (§5.8.3) -- a participant put
 there would be dragged into a column anyway, and the author who drew a box across a
@@ -834,7 +836,12 @@ belongs to is the **nearest** one, not a strict hit -- ink is drawn by a hand, a
 units between two columns belong to the nearer of them (unlike the connect gesture, §5.8.3,
 which is a pointer and may be strict).
 
-Its label opens immediately, exactly as a new node's does (§6).
+Both land on the **row they were drawn on** and their label opens immediately, exactly as
+a new node's does (§6).
+
+A drawn line whose two ends fall on the **same** lifeline is refused with a message
+rather than turned into a self-message: at the size a hand draws, a short stroke beside
+one lifeline is far more often a slip than a deliberate loop.
 
 ## 8. Chrome
 
