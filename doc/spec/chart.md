@@ -1078,6 +1078,10 @@ in this file.
 ### 9.1 Driving the editor from a file (normative)
 
 `chart --script FILE` replays input steps, **one per frame**, and then exits. The engine
+
+The editor otherwise opens **fullscreen** (`engine.create_window_fullscreen`).  A script
+run does not: it opens a fixed 1400x880 window, because `at_win` steps are window pixels
+and a test whose coordinates depend on whichever screen it runs on is a test that lies.
 can post input events (aiml spec/44_0 `input.post_*`), so a test clicks and types in the
 same process and through the same code path a hand takes -- no X11 robot, no reading
 pixels back.
@@ -1620,82 +1624,97 @@ and §14 already reserves `notes` for what the presenter sees and the audience d
 
 ---
 
-## 20. The plane (normative)
+## 20. The board (normative)
 
 A document is read in one of two **modes**, and the file says which:
 
 | Mode | |
 |---|---|
 | `slides` | one sheet at a time, centred, as every chapter before this one describes |
-| `plane` | every sheet at once, as a **frame** on one endless surface |
+| `plane` | one endless **board**, with the sheets on it as **frames** |
 
-### 20.1 A frame is a sheet
+### 20.1 Two kinds of place
 
-The plane adds no new kind of thing.  A frame **is** a `Sheet`, drawn at its own origin
-`plane_x` / `plane_y`, and its page keeps the fixed 1280x720 of §14 -- so a diagram looks
-the same in both modes, and every projection in §5, §13 and §17 is unchanged: one Mermaid
-and one SVG **per frame**, PPTX frames in list order, presentation walking them in list
-order.
+The board holds elements in **plane coordinates** and is never exported.  A **frame** is a
+`Sheet` with a place and a size on the board (`plane_x`, `plane_y`, `plane_w`, `plane_h`),
+and it is exactly what §5, §13 and §17 already project: one Mermaid and one SVG per frame,
+PPTX frames in list order, presentation walking them in list order.
 
-**Everything belongs to exactly one frame.**  There are no loose elements between frames:
-a plane whose notes live nowhere would export a document that is missing them, and §5's
-promise is that the export is the drawing.
+**You draw anywhere.**  A shape put down outside every frame belongs to the board: it is
+saved, it is drawn, and it appears in **no** export.  This is the deliberate loss that
+makes a board a board -- the alternative, refusing the stroke, turns the surface between
+the diagrams into dead space, and that is not what a board is for.  §5.7 lists it.
 
-**The bare plane stays bare.**  A press that misses every frame does nothing but pan: a
-surface that grows a page whenever the hand slips is a surface nobody can drag.  A frame
-is made deliberately with `Neue Folie`, and on the plane it lands **where you are
-looking** -- appended to a row far away, it would be a page you have to go and find.
+**An element belongs to the frame it is dropped in.**  Let go of a shape inside a frame
+and it is that frame's, in that frame's coordinates; let go of it outside and it is the
+board's.  Dropping a *frame* takes in the loose elements that end up inside it.  Without
+this rule the picture and the file disagree: a node would sit visibly inside a frame and
+still be missing from its export.
 
-**Moving a frame does not reorder the deck.**  The list order is the document (it decides
-export, presentation and PPTX); the plane position is where it sits.  Two authors who
-disagree about reading order would otherwise fight over the layout.
+**Moving a frame moves its contents**, because they are its contents -- they are stored in
+its coordinates, so this needs no extra rule and cannot drift.
 
-### 20.2 The tab
+### 20.2 Making a frame
 
-Each frame carries a **tab** above its top-left corner, 28 units high, showing the sheet's
-title (or `(ohne Titel)`), and the tab is the **handle**: dragging it moves the frame and
-clicking it makes that frame the current one.  A frame without a handle could only be
-moved by one of the gestures that already mean something inside it.  Renaming is
-`Bearbeiten > Ueberschrift`, the same entry that names a slide (§8.0) -- a frame is a
-sheet, so it is the same question.
+A frame is **drawn**: the `Rahmen` tool in the strip, dragged as a rectangle.  Its size is
+the rectangle, not a fixed page, so a board can hold a wide sequence beside a small flow
+chart.  `Neue Folie` also makes one, page-sized, where you are looking.
+
+A frame carries a **tab** above its top-left corner showing its title, and the tab is the
+**handle**: dragging it moves the frame, clicking it makes that frame current.  Renaming is
+`Bearbeiten > Ueberschrift`, the same entry that names a slide.
+
+**Export and the page.**  A frame whose rectangle is not 16:9 is exported as it is (SVG,
+Mermaid) and **letterboxed** for PPTX and for presentation (§13, §14): the page there is
+fixed, and scaling a frame into it is a view, not a re-layout.
 
 ### 20.3 Which frame is current
 
-Pressing anywhere inside a frame makes it current, and everything the editor does -- the
-armed stencil, the label, the clipboard, undo -- works on that frame's sheet, exactly as
-it works on the current slide today.  The status strip names it (`Rahmen 3 von 7`).
-
-A press on empty plane keeps the current frame, so the strips never act on nothing.
+Pressing inside a frame makes it current; pressing on the bare board makes **the board**
+current, and the strips then act on the board.  The status strip says which (`Rahmen 3 von
+7`, or `Board`).
 
 ### 20.4 The view
 
-Pan is **unbounded** here: §8.4's clamp is a slide-mode rule, because a slide is a page
-and a plane is not.  `Einpassen` fits **all** frames, not one page.  Zoom is the same
-ladder; the grid, when it is on, is the plane's, not the page's.
+Pan is **unbounded**: §8.4's clamp is a slide-mode rule, because a slide is a page and a
+board is not.  The right button drags it from anywhere, the wheel zooms at the pointer, and
+`Einpassen` fits everything there is -- frames and loose elements alike.
 
-**The view is held by a focus, in plane units** -- the plane point shown at the centre of
-the canvas -- and not by a pixel offset.  `Einpassen` keeps recomputing the focus, so it
-follows the content; any other zoom leaves the focus where the hand put it.  This is what
-makes dragging a frame work at all: with the view anchored to the content, moving a frame
-moves the content's centre, the view corrects itself, and the plane crawls out from under
-the hand.  Taking a frame by its tab, or panning while fitted, therefore **fixes the
-zoom** at its current value and says so in the strip.
+**The view is held by a focus, in plane units** -- the plane point at the centre of the
+canvas -- not by a pixel offset.  `Einpassen` keeps recomputing the focus, so it follows
+the content; any other zoom leaves the focus where the hand put it.  This is what makes
+dragging a frame work: with the view anchored to the content, moving a frame moves the
+content's centre, the view corrects itself, and the board crawls out from under the hand.
+Taking a frame by its tab, or panning while fitted, therefore **fixes the zoom** at its
+current value and says so in the strip.
 
 ### 20.5 What the file says
 
 ```yaml
 mode: plane            # omitted means `slides`
 slides:
-  - title: "Login"
+  - title: "Login"     # a frame: a place, a size, and everything §5 projects
     plane_x: 0
     plane_y: 0
+    plane_w: 1280
+    plane_h: 720
     ...
+  - title: "Board"     # THE BOARD: one per document, never exported
+    loose: true
+    nodes:
+      - { id: n1, kind: text, x: -400, y: 120, w: 300, h: 60, text: "noch klaeren" }
 ```
+
+The board is **a sheet in the same list**, marked `loose`, and it carries no rectangle.
+That is deliberate: `deck.current` stays ONE index, so every gesture, the selection, the
+label, the clipboard and undo keep working on it exactly as they work on a frame.  The
+export skips it by the flag, in the two places a deck reaches an exporter -- the editor's
+`Files.export_to` and the command line's `Exporter.run`.
 
 A file written before this chapter has no `plane_x`/`plane_y`.  Opening it in plane mode
 lays the frames out in **one row**, in list order, 160 units apart, and writes those
-positions on the next save: a layout that is computed fresh every time would move a
-document that its author had already arranged.
+positions on the next save: a layout computed fresh every time would move a document its
+author had already arranged.
 
 ---
 

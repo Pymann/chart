@@ -1,0 +1,26 @@
+# Das Board (spec §20.1): zwischen den Rahmen gezeichnet bleibt es DORT liegen,
+# im losen Blatt, und kein Export sieht es.  Danach einen Rahmen aufziehen --
+# seine Groesse ist das Rechteck, keine feste Seite (§20.2).
+# Die Luecke zwischen den beiden Rahmen liegt bei x 1280..1440.
+wait 3
+tool Raute
+wait 2
+at 1360 400
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+menu Ansicht|Rahmen aufziehen
+wait 3
+at 1300 60
+down 0
+wait 1
+at 1360 300
+wait 1
+at 1430 620
+wait 1
+up 0
+wait 3
+save
+wait 2

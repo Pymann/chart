@@ -29,8 +29,12 @@
       - [groups, list<Group>]
       - [steps, list<Step>]           # sequence only (spec §5.8.3)
       - [next_id, i32, 1]             # monotonic; never reused, so ids stay diff-stable
-      - [plane_x, f32]                # where the frame sits on the plane (spec §20)
+      - [plane_x, f32]                # where the frame sits on the board (spec §20)
       - [plane_y, f32]
+      - [plane_w, f32, 1280.0]        # a frame is DRAWN, so its size is its own (§20.2)
+      - [plane_h, f32, 720.0]
+      - [loose, i32]                  # 1 = THE BOARD: holds what belongs to no frame,
+                                      # in plane coordinates, and is never exported (§20.1)
 
 - model:
     name: Deck

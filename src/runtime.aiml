@@ -261,10 +261,15 @@
           body:
             - decl: [input, string, options.deck]
             - if: { condition: { eq: [input, ""] }, then: [{ set: [input, options.sheet] }] }
-            - decl: [deck, Deck]
+            - decl: [whole, Deck]
             - if:
-                condition: { eq: [{ call: [<.sheet_io.load, input, deck] }, 0] }
+                condition: { eq: [{ call: [<.sheet_io.load, input, whole] }, 0] }
                 then: [{ return: 1 }]
+            # Every export runs on the deck WITHOUT the board (spec §20.1).  The editor
+            # strips it in Files.export_to; this is the other door into the same rule,
+            # and a rule with two doors has to be written at both of them.
+            - decl: [deck, Deck]
+            - call: [<.sheet_io.without_board, whole, deck]
 
             - if:
                 condition: { neq: [options.markdown, ""] }

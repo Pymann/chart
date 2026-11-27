@@ -37,15 +37,30 @@
           name: page_rect
           args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [out, ref<Shape>]]
           body:
+            # The page is the CURRENT sheet's rectangle: a frame is drawn, so its size is
+            # its own (spec §20.2), and slide mode shows exactly that page.
+            - decl: [wide, f32, 1280.0]
+            - decl: [high, f32, 720.0]
+            - if:
+                condition: { gt: [<.deck.slides.len, 0] }
+                then:
+                  - decl: [here, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                  - if: { condition: { gt: [here.plane_w, 0.0] }, then: [{ set: [wide, here.plane_w] }] }
+                  - if: { condition: { gt: [here.plane_h, 0.0] }, then: [{ set: [high, here.plane_h] }] }
             - decl: [scale, f32, <.view_zoom]
             # Presenting never zooms and never pans (§14): the slide is scaled to fit
             # and centred, whatever the editor's view was set to.
             - if: { condition: { eq: [<.presenting, 1] }, then: [{ set: [scale, 0.0] }] }
             - if:
                 condition: { le: [scale, 0.0] }
-                then: [{ set: [scale, { call: [<.fit_scale, cvs_w, cvs_h, { call: [<.fit_margin] }] }] }]
-            - decl: [page_w, f32, { "*": [1280.0, scale] }]
-            - decl: [page_h, f32, { "*": [720.0, scale] }]
+                then:
+                  - decl: [room, f32, { call: [<.fit_margin] }]
+                  - decl: [fit_x, f32, { /: [{ "*": [cvs_w, room] }, wide] }]
+                  - decl: [fit_y, f32, { /: [{ "*": [cvs_h, room] }, high] }]
+                  - set: [scale, fit_x]
+                  - if: { condition: { lt: [fit_y, fit_x] }, then: [{ set: [scale, fit_y] }] }
+            - decl: [page_w, f32, { "*": [wide, scale] }]
+            - decl: [page_h, f32, { "*": [high, scale] }]
             # An axis that fits is centred and ignores the pan (§8.4).
             - decl: [slack_x, f32, { /: [{ -: [cvs_w, page_w] }, 2.0] }]
             - decl: [slack_y, f32, { /: [{ -: [cvs_h, page_h] }, 2.0] }]
@@ -73,8 +88,10 @@
                 else: [{ set: [<.pan_y, 0.0] }]
             - set: [out.pos_x, { +: [cvs_x, slack_x] }]
             - set: [out.pos_y, { +: [cvs_y, slack_y] }]
-            - set: [out.width, page_w]
-            - set: [out.height, page_h]
+            # width/height CARRY THE SCALE (1280x720 * scale), they are not the page:
+            # otherwise a frame of another size makes every caller's `width / 1280` lie.
+            - set: [out.width, { "*": [1280.0, scale] }]
+            - set: [out.height, { "*": [720.0, scale] }]
 
       # The grid belongs to the view: it is drawn inside the page, under the
       # elements, and no exporter knows about it (spec §8.4).
@@ -176,10 +193,11 @@
                   - decl: [left, f32, { +: [view.pos_x, { "*": [sheet.plane_x, scale] }] }]
                   - decl: [top, f32, { +: [view.pos_y, { "*": [sheet.plane_y, scale] }] }]
                   - decl: [inside, i32, 1]
+                  - if: { condition: { eq: [sheet.loose, 1] }, then: [{ set: [inside, 0] }] }
                   - if: { condition: { lt: [spot_x, left] }, then: [{ set: [inside, 0] }] }
                   - if: { condition: { lt: [spot_y, top] }, then: [{ set: [inside, 0] }] }
-                  - if: { condition: { gt: [spot_x, { +: [left, view.width] }] }, then: [{ set: [inside, 0] }] }
-                  - if: { condition: { gt: [spot_y, { +: [top, view.height] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_x, { +: [left, { "*": [sheet.plane_w, scale] }] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_y, { +: [top, { "*": [sheet.plane_h, scale] }] }] }, then: [{ set: [inside, 0] }] }
                   - if: { condition: { eq: [inside, 1] }, then: [{ return: idx }] }
                   - set: [idx, { +: [idx, 1] }]
             - return: -1
@@ -199,10 +217,32 @@
                 condition: { lt: [idx, <.deck.slides.len] }
                 body:
                   - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
-                  - if: { condition: { "||": [{ eq: [idx, 0] }, { lt: [sheet.plane_x, least_x] }] }, then: [{ set: [least_x, sheet.plane_x] }] }
-                  - if: { condition: { "||": [{ eq: [idx, 0] }, { lt: [sheet.plane_y, least_y] }] }, then: [{ set: [least_y, sheet.plane_y] }] }
-                  - if: { condition: { "||": [{ eq: [idx, 0] }, { gt: [{ +: [sheet.plane_x, 1280.0] }, most_x] }] }, then: [{ set: [most_x, { +: [sheet.plane_x, 1280.0] }] }] }
-                  - if: { condition: { "||": [{ eq: [idx, 0] }, { gt: [{ +: [sheet.plane_y, 720.0] }, most_y] }] }, then: [{ set: [most_y, { +: [sheet.plane_y, 720.0] }] }] }
+                  # A frame counts as its rectangle; the BOARD counts as the things on
+                  # it, because it has no rectangle -- `Einpassen` must reach a note
+                  # somebody parked far out (spec §20.4).
+                  - decl: [left, f32, sheet.plane_x]
+                  - decl: [top, f32, sheet.plane_y]
+                  - decl: [right, f32, { +: [sheet.plane_x, sheet.plane_w] }]
+                  - decl: [foot, f32, { +: [sheet.plane_y, sheet.plane_h] }]
+                  - if:
+                      condition: { eq: [sheet.loose, 1] }
+                      then:
+                        - set: [right, left]
+                        - set: [foot, top]
+                        - decl: [pos, i32, 0]
+                        - while:
+                            condition: { lt: [pos, sheet.nodes.len] }
+                            body:
+                              - decl: [node, ref<Node>, { at: [sheet.nodes, pos] }]
+                              - if: { condition: { lt: [node.pos_x, left] }, then: [{ set: [left, node.pos_x] }] }
+                              - if: { condition: { lt: [node.pos_y, top] }, then: [{ set: [top, node.pos_y] }] }
+                              - if: { condition: { gt: [{ +: [node.pos_x, node.width] }, right] }, then: [{ set: [right, { +: [node.pos_x, node.width] }] }] }
+                              - if: { condition: { gt: [{ +: [node.pos_y, node.height] }, foot] }, then: [{ set: [foot, { +: [node.pos_y, node.height] }] }] }
+                              - set: [pos, { +: [pos, 1] }]
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { lt: [left, least_x] }] }, then: [{ set: [least_x, left] }] }
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { lt: [top, least_y] }] }, then: [{ set: [least_y, top] }] }
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { gt: [right, most_x] }] }, then: [{ set: [most_x, right] }] }
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { gt: [foot, most_y] }] }, then: [{ set: [most_y, foot] }] }
                   - set: [idx, { +: [idx, 1] }]
             - set: [out.pos_x, least_x]
             - set: [out.pos_y, least_y]
@@ -262,9 +302,26 @@
                   - decl: [spot_y, f32, { +: [view.pos_y, { "*": [sheet.plane_y, scale] }] }]
                   - decl: [live, i32, 0]
                   - if: { condition: { eq: [idx, <.deck.current] }, then: [{ set: [live, 1] }] }
-                  - call: [<.paint_sheet, sheet, spot_x, spot_y, scale, live]
-                  - call: [<.frame_tab, sheet, spot_x, spot_y, scale, live]
+                  # the board goes UNDER the frames and carries no tab: it is the surface
+                  - if:
+                      condition: { eq: [sheet.loose, 1] }
+                      then: [{ call: [<.paint_sheet, sheet, spot_x, spot_y, scale, live] }]
+                      else:
+                        - call: [<.paint_sheet, sheet, spot_x, spot_y, scale, live]
+                        - call: [<.frame_tab, sheet, spot_x, spot_y, scale, live]
                   - set: [idx, { +: [idx, 1] }]
+            # the rectangle being dragged open (spec §20.2)
+            - if:
+                condition: { eq: [<.framing, 1] }
+                then:
+                  - decl: [band, Shape]
+                  - set: [band.pos_x, { +: [view.pos_x, { "*": [<.frame_from_x, scale] }] }]
+                  - set: [band.pos_y, { +: [view.pos_y, { "*": [<.frame_from_y, scale] }] }]
+                  - set: [band.width, { -: [{ call: [input.mouse_pos_x] }, band.pos_x] }]
+                  - set: [band.height, { -: [{ call: [input.mouse_pos_y] }, band.pos_y] }]
+                  - set: [band.tint, 0x2F80EDFF]
+                  - set: [band.thick, 2.0]
+                  - call: [<.pen.frame, band]
 
       # The tab's rect -- ONE source, so the handle is exactly where it is drawn.
       - def:
@@ -297,6 +354,7 @@
                            { +: [view.pos_x, { "*": [sheet.plane_x, scale] }] },
                            { +: [view.pos_y, { "*": [sheet.plane_y, scale] }] }, scale, tab]
                   - decl: [inside, i32, 1]
+                  - if: { condition: { eq: [sheet.loose, 1] }, then: [{ set: [inside, 0] }] }
                   - if: { condition: { lt: [spot_x, tab.pos_x] }, then: [{ set: [inside, 0] }] }
                   - if: { condition: { lt: [spot_y, tab.pos_y] }, then: [{ set: [inside, 0] }] }
                   - if: { condition: { gt: [spot_x, { +: [tab.pos_x, tab.width] }] }, then: [{ set: [inside, 0] }] }
@@ -339,27 +397,37 @@
           static_off: ["same_arg", "str_cmp"]
           args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [live, i32]]
           body:
-            - decl: [page_w, f32, { "*": [1280.0, scale] }]
-            - decl: [page_h, f32, { "*": [720.0, scale] }]
-            - call: [ui.draw_rect, { +: [org_x, 6.0] }, { +: [org_y, 7.0] }, page_w, page_h, 0x0A0F1438]
-            - call: [ui.draw_rect, org_x, org_y, page_w, page_h, 0xFFFFFFFF]
+            - decl: [page_w, f32, { "*": [slide.plane_w, scale] }]
+            - decl: [page_h, f32, { "*": [slide.plane_h, scale] }]
+            - if: { condition: { le: [slide.plane_w, 0.0] }, then: [{ set: [page_w, { "*": [1280.0, scale] }] }] }
+            - if: { condition: { le: [slide.plane_h, 0.0] }, then: [{ set: [page_h, { "*": [720.0, scale] }] }] }
+            # The board is not a page: no paper, no shadow, no border, no heading --
+            # it is the surface the pages lie on (spec §20.1).
             - if:
-                condition: { eq: [<.grid_on, 1] }
+                condition: { eq: [slide.loose, 0] }
+                then:
+                  - call: [ui.draw_rect, { +: [org_x, 6.0] }, { +: [org_y, 7.0] }, page_w, page_h, 0x0A0F1438]
+                  - call: [ui.draw_rect, org_x, org_y, page_w, page_h, 0xFFFFFFFF]
+            - if:
+                condition: { "&&": [{ eq: [<.grid_on, 1] }, { eq: [slide.loose, 0] }] }
                 then: [{ call: [<.draw_grid, org_x, org_y, page_w, page_h, scale] }]
-            - decl: [page, Shape]
-            - set: [page.pos_x, org_x]
-            - set: [page.pos_y, org_y]
-            - set: [page.width, page_w]
-            - set: [page.height, page_h]
-            - set: [page.tint, 0xC2CCD6FF]
-            - set: [page.thick, 1.0]
-            - call: [<.pen.frame, page]
+            - if:
+                condition: { eq: [slide.loose, 0] }
+                then:
+                  - decl: [page, Shape]
+                  - set: [page.pos_x, org_x]
+                  - set: [page.pos_y, org_y]
+                  - set: [page.width, page_w]
+                  - set: [page.height, page_h]
+                  - set: [page.tint, 0xC2CCD6FF]
+                  - set: [page.thick, 1.0]
+                  - call: [<.pen.frame, page]
             - decl: [head_live, i32, 0]
             - if:
                 condition: { "&&": [{ eq: [live, 1] }, { "&&": [{ eq: [<.editing, 1] }, { eq: [<.edit_id, "#titel"] }] }] }
                 then: [{ set: [head_live, 1] }]
             - if:
-                condition: { "&&": [{ neq: [slide.title, ""] }, { eq: [head_live, 0] }] }
+                condition: { "&&": [{ eq: [slide.loose, 0] }, { "&&": [{ neq: [slide.title, ""] }, { eq: [head_live, 0] }] }] }
                 then:
                   - call: [ui.draw_text, { +: [org_x, { "*": [52.0, scale] }] }, { +: [org_y, { "*": [30.0, scale] }] }, slide.title, 0x101A24FF]
             - if:
@@ -456,7 +524,12 @@
                   - set: [where, "Folie ${number}/${<.deck.slides.len}"]
                   - if:
                       condition: { eq: [<.deck.mode, ViewMode.plane] }
-                      then: [{ set: [where, "Rahmen ${number} von ${<.deck.slides.len}"] }]
+                      then:
+                        - decl: [here, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+                        - if:
+                            condition: { eq: [here.loose, 1] }
+                            then: [{ set: [where, "Board"] }]
+                            else: [{ set: [where, "Rahmen ${number} von ${<.deck.slides.len}"] }]
             - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [where, "${where}  *"] }] }
             - call: [<.top_bar.foot, win_w, win_h, <.status, where]
       - def:

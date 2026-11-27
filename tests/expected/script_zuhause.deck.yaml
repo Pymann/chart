@@ -1,0 +1,20 @@
+title: "Zuhause"
+mode: plane
+slides:
+  - title: "Rahmen"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 0
+    plane_y: 0
+    plane_w: 1280
+    plane_h: 720
+    nodes:
+      - { id: n1, kind: diamond, x: 700, y: 300, w: 200, h: 90, text: "los" }
+  - title: "Board"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 0
+    plane_y: 0
+    loose: true

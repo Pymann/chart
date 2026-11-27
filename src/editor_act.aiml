@@ -84,6 +84,7 @@
           body:
             - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
             - if: { condition: { "&&": [{ ge: [action, 130] }, { le: [action, 139] }] }, then: [{ call: [<.view_deed, action] }, { return: null }] }
+            - if: { condition: { eq: [action, 140] }, then: [{ set: [<.armed, 140] }, { set: [<.status, "Rahmen aufziehen"] }, { return: null }] }
 
             - if: { condition: { eq: [action, 1] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
             # 15/16 undo and redo, 17 a new deck (spec §16.4)
@@ -464,10 +465,16 @@
                         - if: { condition: { neq: [which, <.deck.current] }, then: [{ call: [<.clear_selection] }] }
                         - set: [<.deck.current, which]
                   - return: 1
-            # The bare plane stays bare.  A frame is made DELIBERATELY (`Neue Folie`,
-            # §8.0), not by every press that happens to miss one -- a surface that
-            # grows a page whenever the hand slips is a surface nobody can pan.
-            - return: 0
+            # Off every frame the BOARD is current (spec §20.3): you draw there, the
+            # things stay there, and no export sees them.  A press that misses a frame
+            # is not a press that misses -- that is what a board is.
+            - if:
+                condition: { call: [input.mouse_pressed, 0] }
+                then:
+                  - decl: [board, i32, { call: [<.board_here] }]
+                  - if: { condition: { neq: [board, <.deck.current] }, then: [{ call: [<.clear_selection] }] }
+                  - set: [<.deck.current, board]
+            - return: 1
 
       # Moving a frame by its tab (spec §20.2).  Returns 1 while it has the pointer,
       # so nothing else reads the same press.  The deck's ORDER is untouched -- where

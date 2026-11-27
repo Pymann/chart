@@ -1,0 +1,40 @@
+title: "Ebene"
+mode: plane
+slides:
+  - title: "Erstes"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 0
+    plane_y: 0
+    plane_w: 1280
+    plane_h: 720
+    nodes:
+      - { id: n1, kind: diamond, x: 540, y: 315, w: 200, h: 90, text: "" }
+  - title: "Zweites"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 1440
+    plane_y: 0
+    plane_w: 1280
+    plane_h: 720
+    nodes:
+      - { id: n1, kind: circle, x: 540, y: 315, w: 200, h: 90, text: "" }
+  - title: "Board"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 0
+    plane_y: 0
+    loose: true
+    nodes:
+      - { id: n1, kind: diamond, x: 1260, y: 355, w: 200, h: 90, text: "" }
+  - title: "Neuer Rahmen"
+    dtype: flowchart
+    dir: TD
+    next_id: 1
+    plane_x: 1300
+    plane_y: 60
+    plane_w: 130
+    plane_h: 559

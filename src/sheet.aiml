@@ -265,6 +265,11 @@
             - set: [sheet.next_id, { call: [<.kv_i32, root, "next_id"] }]
             - set: [sheet.plane_x, { call: [<.kv_f32, root, "plane_x"] }]
             - set: [sheet.plane_y, { call: [<.kv_f32, root, "plane_y"] }]
+            - decl: [wide, f32, { call: [<.kv_f32, root, "plane_w"] }]
+            - decl: [high, f32, { call: [<.kv_f32, root, "plane_h"] }]
+            - if: { condition: { gt: [wide, 0.0] }, then: [{ set: [sheet.plane_w, wide] }] }
+            - if: { condition: { gt: [high, 0.0] }, then: [{ set: [sheet.plane_h, high] }] }
+            - if: { condition: { eq: [{ call: [<.kv_text, root, "loose", ""] }, "true"] }, then: [{ set: [sheet.loose, 1] }] }
 
             # groups
             - decl: [groups_idx, i32, { call: [<.kv_index, root, "groups"] }]
@@ -501,6 +506,23 @@
             - call: [<.lay_out_plane, deck]
             - return: 1
 
+      # The deck as the EXPORT sees it: the board left out (spec §20.1).  One place,
+      # not a guard in every export loop -- four loops are four chances to forget one.
+      - def:
+          name: without_board
+          args: [[deck, ref<Deck>], [out, ref<Deck>]]
+          body:
+            - set: [out.title, deck.title]
+            - set: [out.mode, deck.mode]
+            - set: [out.current, 0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [sheet, Sheet, { at: [deck.slides, idx] }]
+                  - if: { condition: { eq: [sheet.loose, 0] }, then: [{ call: [out.slides.push, sheet] }] }
+                  - set: [idx, { +: [idx, 1] }]
+
       # A plane whose frames all sit at 0,0 was written before spec §20: lay them out
       # in ONE ROW, in list order, and let the next save record it.  Computing the
       # layout afresh every time would move a document its author had arranged.
@@ -524,8 +546,11 @@
                 condition: { lt: [idx, deck.slides.len] }
                 body:
                   - decl: [sheet2, ref<Sheet>, { at: [deck.slides, idx] }]
-                  - set: [sheet2.plane_x, { "*": [{ cast: [idx, f32] }, 1440.0] }]
-                  - set: [sheet2.plane_y, 0.0]
+                  - if:
+                      condition: { eq: [sheet2.loose, 0] }
+                      then:
+                        - set: [sheet2.plane_x, { "*": [{ cast: [idx, f32] }, 1440.0] }]
+                        - set: [sheet2.plane_y, 0.0]
                   - set: [idx, { +: [idx, 1] }]
 
       # YAML escaping for a double-quoted scalar.
@@ -572,7 +597,13 @@
                       then:
                         - decl: [plane_col, i32, { cast: [slide.plane_x, i32] }]
                         - decl: [plane_row, i32, { cast: [slide.plane_y, i32] }]
+                        - decl: [plane_wide, i32, { cast: [slide.plane_w, i32] }]
+                        - decl: [plane_high, i32, { cast: [slide.plane_h, i32] }]
                         - set: [out, "${out}    plane_x: ${plane_col}\n    plane_y: ${plane_row}\n"]
+                        - if:
+                            condition: { eq: [slide.loose, 1] }
+                            then: [{ set: [out, "${out}    loose: true\n"] }]
+                            else: [{ set: [out, "${out}    plane_w: ${plane_wide}\n    plane_h: ${plane_high}\n"] }]
                   - if:
                       condition: { gt: [slide.groups.len, 0] }
                       then:

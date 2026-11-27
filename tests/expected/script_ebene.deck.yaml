@@ -7,6 +7,8 @@ slides:
     next_id: 2
     plane_x: 0
     plane_y: 0
+    plane_w: 1280
+    plane_h: 720
     nodes:
       - { id: n1, kind: diamond, x: 540, y: 315, w: 200, h: 90, text: "" }
   - title: "Zweites"
@@ -15,5 +17,7 @@ slides:
     next_id: 2
     plane_x: 1440
     plane_y: 0
+    plane_w: 1280
+    plane_h: 720
     nodes:
       - { id: n1, kind: circle, x: 540, y: 315, w: 200, h: 90, text: "" }

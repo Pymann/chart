@@ -165,6 +165,32 @@
                   - return: 1
             - return: 0
 
+      # The frame tool (spec §20.2), in its own method because canvas_input may not
+      # grow past 300 lines (aiml spec/49 §4).
+      - def:
+          name: frame_press
+          args: [[spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - if: { condition: { neq: [<.armed, 140] }, then: [{ return: 0 }] }
+            - set: [<.framing, 1]
+            - set: [<.frame_from_x, spot_x]
+            - set: [<.frame_from_y, spot_y]
+            - set: [<.status, "Rahmen aufziehen"]
+            - return: 1
+
+      - def:
+          name: frame_release
+          args: [[spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - if: { condition: { eq: [<.framing, 0] }, then: [{ return: 0 }] }
+            - if: { condition: { eq: [{ call: [input.mouse_released, 0] }, 0] }, then: [{ return: 0 }] }
+            - set: [<.framing, 0]
+            - set: [<.armed, -1]
+            - call: [<.frame_from_drag, spot_x, spot_y]
+            - return: 1
+
       - def:
           name: canvas_input
           static_off: ["same_arg", "str_cmp"]
@@ -195,9 +221,7 @@
             - if: { condition: { ge: [mouse_y, { +: [cvs_y, cvs_h] }] }, then: [{ set: [over_canvas, 0] }] }
 
             - if: { condition: { eq: [{ call: [<.pan_drag, mouse_x, mouse_y, over_canvas] }, 1] }, then: [{ return: null }] }
-            # Only AFTER the view drag: the plane is dragged from anywhere on the canvas,
-            # and most of a plane is bare.  Drawing still needs a frame (spec §20.1).
-            - if: { condition: { eq: [on_frame, 0] }, then: [{ set: [over_canvas, 0] }] }
+
             # ── the pointer says what a drag from here would do (spec §15.1a) ─
             - if:
                 condition: { "||": [{ eq: [over_canvas, 0] }, { eq: [<.presenting, 1] }] }
@@ -267,6 +291,7 @@
                             then: [{ set: [<.link_from, src] }, { set: [<.status, "auf das Ziel loslassen"] }]
                             else: [{ set: [<.status, "Kante beginnt auf einem Knoten"] }]
                         - return: null
+                  - if: { condition: { eq: [{ call: [<.frame_press, slide_x, slide_y] }, 1] }, then: [{ return: null }] }
                   # stencil: place, then straight into the label (spec §15.1)
                   - if:
                       condition: { ge: [<.armed, 0] }
@@ -479,6 +504,7 @@
                   - return: null
 
             # ── release: finish a link ───────────────────────────────────────
+            - if: { condition: { eq: [{ call: [<.frame_release, slide_x, slide_y] }, 1] }, then: [{ return: null }] }
             - if:
                 condition: { call: [input.mouse_released, 0] }
                 then:
@@ -494,7 +520,9 @@
                               - set: [<.status, "auf keinem Knoten losgelassen -- nichts angelegt"]
                         - set: [<.link_from, ""]
                         - set: [<.armed, -1]
-                  - set: [<.drag_id, ""]
+                  # drag_id is NOT cleared here: the drop still has to decide which
+                  # frame the node now belongs to (spec §20.1), and a cleared id is a
+                  # node that silently stays where it was.
                   - return: null
 
             # ── resize by the halo (spec §15.1a) ─────────────────────────────
@@ -508,10 +536,21 @@
                   - call: [<.touch]
                   - return: null
 
-            # ── drag a node ──────────────────────────────────────────────────
+            - call: [<.drag_node, slide, slide_x, slide_y]
+      # Dragging a node, and letting it go (spec §15.1, §20.1).  Its own method
+      # because canvas_input may not grow past 300 lines (aiml spec/49 §4).
+      - def:
+          name: drag_node
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [slide_x, f32], [slide_y, f32]]
+          body:
             - if:
                 condition: { eq: [{ call: [input.mouse_button, 0] }, 0] }
-                then: [{ set: [<.drag_id, ""] }, { return: null }]
+                then:
+                  # let go INSIDE a frame and the node is that frame's (spec §20.1)
+                  - if: { condition: { neq: [<.drag_id, ""] }, then: [{ call: [<.rehome, <.drag_id] }] }
+                  - set: [<.drag_id, ""]
+                  - return: null
             - if:
                 condition: { neq: [<.drag_id, ""] }
                 then:
@@ -528,6 +567,7 @@
                               - set: [node.pos_y, { call: [<.snap_val, { -: [slide_y, <.drag_dy] }] }]
                               - set: [pos, slide.nodes.len]
                         - set: [pos, { +: [pos, 1] }]
+
       # ── keyboard: ONE consumer (spec §6, normative) ────────────────────────
       # Everything comes from the event queue. A key read both as an event and as a
       # poll fires twice, and the symptom is a Backspace that eats two characters.
@@ -676,7 +716,14 @@
             - set: [<.deck.current, { -: [opts.start, 1] }]
             - if: { condition: { lt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, 0] }] }
             - if: { condition: { ge: [<.deck.current, <.deck.slides.len] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
-            - decl: [win, window_handle, { call: [engine.create_window, 1400, 880, "chart"] }]
+            # Fullscreen for a person, a FIXED window for a script (spec §9.1): the
+            # script's `at_win` steps are window pixels, and a test whose coordinates
+            # depend on the screen it happens to run on is a test that lies.
+            - decl: [win, window_handle, null]
+            - if:
+                condition: { neq: [opts.script, ""] }
+                then: [{ set: [win, { call: [engine.create_window, 1400, 880, "chart"] }] }]
+                else: [{ set: [win, { call: [engine.create_window_fullscreen, "chart"] }] }]
             - if:
                 condition: { eq: [win, null] }
                 then:

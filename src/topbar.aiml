@@ -117,7 +117,7 @@
                                                      "-|0",
                                                      "Raster|136", "Am Raster einrasten|137",
                                                      "-|0",
-                                                     "Folienmodus|138", "Ebene|139",
+                                                     "Folienmodus|138", "Ebene|139", "Rahmen aufziehen|140",
                                                      "-|0",
                                                      "Praesentieren|30"]]
                   - if:

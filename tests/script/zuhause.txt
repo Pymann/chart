@@ -1,0 +1,15 @@
+# Ein Element gehoert dem Rahmen, in dem es LOSGELASSEN wird (spec §20.1).
+# Der lose Knoten liegt bei 1500/300 neben dem Rahmen; er wird in ihn
+# hineingezogen und muss danach IM Rahmen stehen, in dessen Koordinaten.
+wait 3
+at 1600 345
+down 0
+wait 1
+at 1200 345
+wait 1
+at 800 345
+wait 1
+up 0
+wait 3
+save
+wait 2

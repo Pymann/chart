@@ -80,6 +80,9 @@
       - [pan_from_x, f32]
       - [pan_from_y, f32]
       - [grid_on, i32]
+      - [framing, i32]                  # a frame is being dragged open (spec §20.2)
+      - [frame_from_x, f32]
+      - [frame_from_y, f32]
       - [tab_grab, i32]                 # frame being dragged by its tab, +1 (0 = none)
       - [tab_off_x, f32]
       - [tab_off_y, f32]
@@ -428,3 +431,119 @@
             - set: [<.deck.current, { -: [<.deck.slides.len, 1] }]
             - call: [<.touch]
             - set: [<.status, "neuer Rahmen"]
+
+      # The board's place in the list, made the first time it is needed (spec §20.1).
+      # It lives among the slides so that `deck.current` stays ONE index and every
+      # gesture keeps working -- the export skips it by its `loose` flag instead.
+      - def:
+          name: board_here
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - if: { condition: { eq: [sheet.loose, 1] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - decl: [fresh, Sheet]
+            - set: [fresh.loose, 1]
+            - set: [fresh.title, "Board"]
+            - set: [fresh.next_id, 1]
+            - set: [fresh.plane_w, 0.0]
+            - set: [fresh.plane_h, 0.0]
+            - call: [<.deck.slides.push, fresh]
+            - return: { -: [<.deck.slides.len, 1] }
+
+      # A frame drawn as a rectangle (spec §20.2).  Its size is the rectangle, so a
+      # board can hold a wide sequence beside a small flow chart.
+      - def:
+          name: frame_from_drag
+          args: [[to_x, f32], [to_y, f32]]
+          body:
+            - decl: [left, f32, <.frame_from_x]
+            - decl: [top, f32, <.frame_from_y]
+            - decl: [wide, f32, { -: [to_x, left] }]
+            - decl: [high, f32, { -: [to_y, top] }]
+            - if: { condition: { lt: [wide, 0.0] }, then: [{ set: [left, to_x] }, { set: [wide, { -: [0.0, wide] }] }] }
+            - if: { condition: { lt: [high, 0.0] }, then: [{ set: [top, to_y] }, { set: [high, { -: [0.0, high] }] }] }
+            - if:
+                condition: { "||": [{ lt: [wide, 120.0] }, { lt: [high, 80.0] }] }
+                then:
+                  - set: [<.status, "zu klein fuer einen Rahmen"]
+                  - return: null
+            - decl: [fresh, Sheet]
+            - set: [fresh.title, "Neuer Rahmen"]
+            - set: [fresh.next_id, 1]
+            - set: [fresh.plane_x, { call: [<.snap_val, left] }]
+            - set: [fresh.plane_y, { call: [<.snap_val, top] }]
+            - set: [fresh.plane_w, { call: [<.snap_val, wide] }]
+            - set: [fresh.plane_h, { call: [<.snap_val, high] }]
+            - call: [<.deck.slides.push, fresh]
+            - set: [<.deck.current, { -: [<.deck.slides.len, 1] }]
+            - call: [<.touch]
+            - decl: [side_w, i32, { cast: [wide, i32] }]
+            - decl: [side_h, i32, { cast: [high, i32] }]
+            - set: [<.status, "Rahmen ${side_w}x${side_h}"]
+
+      # Which frame holds a PLANE point, -1 for the bare board (spec §20.1).
+      - def:
+          name: frame_for_plane
+          args: [[spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - decl: [inside, i32, 1]
+                  - if: { condition: { eq: [sheet.loose, 1] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { lt: [spot_x, sheet.plane_x] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { lt: [spot_y, sheet.plane_y] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_x, { +: [sheet.plane_x, sheet.plane_w] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_y, { +: [sheet.plane_y, sheet.plane_h] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { eq: [inside, 1] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
+      # An element belongs to the frame it is DROPPED in (spec §20.1).  Without this
+      # the picture and the file disagree: a node sits visibly inside a frame and is
+      # still missing from its export.
+      - def:
+          name: rehome
+          static_off: ["same_arg", "str_cmp"]
+          args: [[ident, string]]
+          body:
+            - if: { condition: { neq: [<.deck.mode, ViewMode.plane] }, then: [{ return: null }] }
+            - if: { condition: { eq: [ident, ""] }, then: [{ return: null }] }
+            - decl: [from, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - decl: [pos, i32, 0]
+            - decl: [found, i32, -1]
+            - while:
+                condition: { lt: [pos, from.nodes.len] }
+                body:
+                  - decl: [node, ref<Node>, { at: [from.nodes, pos] }]
+                  - if: { condition: { eq: [node.ident, ident] }, then: [{ set: [found, pos] }] }
+                  - set: [pos, { +: [pos, 1] }]
+            - if: { condition: { lt: [found, 0] }, then: [{ return: null }] }
+            - decl: [moving, Node, { at: [from.nodes, found] }]
+            - decl: [mid_x, f32, { +: [{ +: [from.plane_x, moving.pos_x] }, { /: [moving.width, 2.0] }] }]
+            - decl: [mid_y, f32, { +: [{ +: [from.plane_y, moving.pos_y] }, { /: [moving.height, 2.0] }] }]
+            - decl: [want, i32, { call: [<.frame_for_plane, mid_x, mid_y] }]
+            - if: { condition: { lt: [want, 0] }, then: [{ set: [want, { call: [<.board_here] }] }] }
+            - if: { condition: { eq: [want, <.deck.current] }, then: [{ return: null }] }
+            # an edge cannot cross frames, so a node that leaves takes none with it:
+            # its connectors stay where they are and are dropped by the export
+            - decl: [into, ref<Sheet>, { at: [<.deck.slides, want] }]
+            - set: [moving.pos_x, { -: [{ +: [from.plane_x, moving.pos_x] }, into.plane_x] }]
+            - set: [moving.pos_y, { -: [{ +: [from.plane_y, moving.pos_y] }, into.plane_y] }]
+            - set: [moving.ident, "n${into.next_id}"]
+            - set: [into.next_id, { +: [into.next_id, 1] }]
+            - call: [from.nodes.remove, found]
+            - call: [into.nodes.push, moving]
+            - set: [<.deck.current, want]
+            - set: [<.sel, moving.ident]
+            - set: [<.drag_id, ""]
+            - call: [<.touch]
+            - set: [<.status, "in '${into.title}' abgelegt"]

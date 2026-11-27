@@ -96,6 +96,9 @@
           static_off: ["same_arg", "str_cmp"]
           args: [[deck, ref<Deck>], [action, i32], [deck_path, string]]
           body:
+            # never export the board (spec §20.1)
+            - decl: [clean, Deck]
+            - call: [<.sheet_io.without_board, deck, clean]
             - decl: [folder_wanted, i32, 0]
             - if: { condition: { eq: [action, 2] }, then: [{ set: [folder_wanted, 1] }] }
             - if: { condition: { eq: [action, 65] }, then: [{ set: [folder_wanted, 1] }] }
@@ -109,9 +112,9 @@
                 else: [{ set: [target, { call: [<.browse.ask, 1, suggest] }] }]
             - if: { condition: { eq: [target, ""] }, then: [{ set: [<.status, "abgebrochen"] }, { return: null }] }
             - decl: [good, i32, 0]
-            - if: { condition: { eq: [action, 2] }, then: [{ set: [good, { call: [<.exporter.write_markdown, deck, target] }] }] }
-            - if: { condition: { eq: [action, 65] }, then: [{ set: [good, { call: [<.exporter.write_svg, deck, target] }] }] }
-            - if: { condition: { eq: [action, 66] }, then: [{ set: [good, { call: [<.exporter.write_html, deck, target] }] }] }
+            - if: { condition: { eq: [action, 2] }, then: [{ set: [good, { call: [<.exporter.write_markdown, clean, target] }] }] }
+            - if: { condition: { eq: [action, 65] }, then: [{ set: [good, { call: [<.exporter.write_svg, clean, target] }] }] }
+            - if: { condition: { eq: [action, 66] }, then: [{ set: [good, { call: [<.exporter.write_html, clean, target] }] }] }
             - if:
                 condition: { eq: [action, 67] }
                 then:
@@ -119,12 +122,12 @@
                   - decl: [here, path, deck_path]
                   - decl: [up_dir, path, { call: [here.parent] }]
                   - decl: [folder, string, { call: [up_dir.to_string] }]
-                  - set: [good, { call: [<.pptx.emit, deck, target, folder] }]
+                  - set: [good, { call: [<.pptx.emit, clean, target, folder] }]
             - if:
                 condition: { eq: [action, 3] }
                 then:
                   # one .mmd is one diagram (§5), so this exports the slide on screen
-                  - decl: [slide, ref<Sheet>, { at: [deck.slides, deck.current] }]
+                  - decl: [slide, ref<Sheet>, { at: [clean.slides, deck.current] }]
                   - decl: [text, string, { call: [<.mermaid.emit, slide] }]
                   - set: [good, { call: [<.exporter.write_file, target, text] }]
             - if:
