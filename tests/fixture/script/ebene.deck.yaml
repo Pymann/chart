@@ -1,0 +1,10 @@
+title: "Ebene"
+slides:
+  - title: "Erstes"
+    dtype: flowchart
+    dir: TD
+    next_id: 1
+  - title: "Zweites"
+    dtype: flowchart
+    dir: TD
+    next_id: 1

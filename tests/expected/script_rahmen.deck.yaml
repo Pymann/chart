@@ -1,0 +1,19 @@
+title: "Ebene"
+mode: plane
+slides:
+  - title: "Erstes"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 400
+    plane_y: 400
+    nodes:
+      - { id: n1, kind: diamond, x: 540, y: 315, w: 200, h: 90, text: "" }
+  - title: "Zweites"
+    dtype: flowchart
+    dir: TD
+    next_id: 2
+    plane_x: 1440
+    plane_y: 0
+    nodes:
+      - { id: n1, kind: circle, x: 540, y: 315, w: 200, h: 90, text: "" }

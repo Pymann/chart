@@ -54,6 +54,13 @@
     wire: true
     values: [flowchart, sequence, state, class_diagram]
 
+# How a document is read (spec §20): one sheet at a time, or all of them as frames
+# on one endless plane.  A mode, not a second file format -- a frame IS a sheet.
+- enum:
+    name: ViewMode
+    wire: true
+    values: [slides, plane]
+
 - enum:
     name: Direction
     wire: true

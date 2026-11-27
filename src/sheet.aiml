@@ -263,6 +263,8 @@
             - set: [sheet.title, { call: [<.kv_text, root, "title", ""] }]
             - set: [sheet.notes, { call: [<.kv_text, root, "notes", ""] }]
             - set: [sheet.next_id, { call: [<.kv_i32, root, "next_id"] }]
+            - set: [sheet.plane_x, { call: [<.kv_f32, root, "plane_x"] }]
+            - set: [sheet.plane_y, { call: [<.kv_f32, root, "plane_y"] }]
 
             # groups
             - decl: [groups_idx, i32, { call: [<.kv_index, root, "groups"] }]
@@ -456,6 +458,13 @@
                   - return: 0
             - decl: [root, ref<yaml_node>, { call: [yaml.root, document] }]
             - set: [deck.title, { call: [<.kv_text, root, "title", ""] }]
+            - decl: [mode_word, string, { call: [<.kv_text, root, "mode", "slides"] }]
+            - if: { condition: { eq: [mode_word, "plane"] }, then: [{ set: [deck.mode, ViewMode.plane] }] }
+            - if:
+                condition: { "&&": [{ neq: [mode_word, "plane"] }, { neq: [mode_word, "slides"] }] }
+                then:
+                  - call: [log.error, "chart: ${path}: unknown mode '${mode_word}'"]
+                  - return: 0
             - decl: [slides_idx, i32, { call: [<.kv_index, root, "slides"] }]
             - if:
                 condition: { lt: [slides_idx, 0] }
@@ -489,7 +498,35 @@
                 then:
                   - call: [log.error, "chart: ${path}: 'slides' is empty -- a deck needs at least one slide"]
                   - return: 0
+            - call: [<.lay_out_plane, deck]
             - return: 1
+
+      # A plane whose frames all sit at 0,0 was written before spec §20: lay them out
+      # in ONE ROW, in list order, and let the next save record it.  Computing the
+      # layout afresh every time would move a document its author had arranged.
+      - def:
+          name: lay_out_plane
+          args: [[deck, ref<Deck>]]
+          body:
+            - if: { condition: { neq: [deck.mode, ViewMode.plane] }, then: [{ return: null }] }
+            - decl: [placed, i32, 0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [deck.slides, idx] }]
+                  - if: { condition: { neq: [sheet.plane_x, 0.0] }, then: [{ set: [placed, 1] }] }
+                  - if: { condition: { neq: [sheet.plane_y, 0.0] }, then: [{ set: [placed, 1] }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - if: { condition: { eq: [placed, 1] }, then: [{ return: null }] }
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, deck.slides.len] }
+                body:
+                  - decl: [sheet2, ref<Sheet>, { at: [deck.slides, idx] }]
+                  - set: [sheet2.plane_x, { "*": [{ cast: [idx, f32] }, 1440.0] }]
+                  - set: [sheet2.plane_y, 0.0]
+                  - set: [idx, { +: [idx, 1] }]
 
       # YAML escaping for a double-quoted scalar.
       - def:
@@ -512,7 +549,11 @@
           args: [[deck, ref<Deck>]]
           return: string
           body:
-            - decl: [out, string, "title: \"${ { call: [<.esc_yaml, deck.title] } }\"\nslides:\n"]
+            - decl: [out, string, "title: \"${ { call: [<.esc_yaml, deck.title] } }\"\n"]
+            # `slides` keeps its name in both modes: the list IS the document, and a
+            # second spelling for the same list would be a second format (spec §20).
+            - if: { condition: { eq: [deck.mode, ViewMode.plane] }, then: [{ set: [out, "${out}mode: plane\n"] }] }
+            - set: [out, "${out}slides:\n"]
             - decl: [sidx, i32, 0]
             - while:
                 condition: { lt: [sidx, deck.slides.len] }
@@ -526,6 +567,12 @@
                       condition: { neq: [slide.notes, ""] }
                       then: [{ set: [out, "${out}    notes: \"${ { call: [<.esc_yaml, slide.notes] } }\"\n"] }]
                   - set: [out, "${out}    next_id: ${slide.next_id}\n"]
+                  - if:
+                      condition: { eq: [deck.mode, ViewMode.plane] }
+                      then:
+                        - decl: [plane_col, i32, { cast: [slide.plane_x, i32] }]
+                        - decl: [plane_row, i32, { cast: [slide.plane_y, i32] }]
+                        - set: [out, "${out}    plane_x: ${plane_col}\n    plane_y: ${plane_row}\n"]
                   - if:
                       condition: { gt: [slide.groups.len, 0] }
                       then:

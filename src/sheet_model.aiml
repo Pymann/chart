@@ -29,11 +29,14 @@
       - [groups, list<Group>]
       - [steps, list<Step>]           # sequence only (spec §5.8.3)
       - [next_id, i32, 1]             # monotonic; never reused, so ids stay diff-stable
+      - [plane_x, f32]                # where the frame sits on the plane (spec §20)
+      - [plane_y, f32]
 
 - model:
     name: Deck
     description: "An ordered list of slides; what a presentation and an export work on (spec §11)"
     fields:
       - [title, string, ""]           # deck heading; the index's "# " (spec §13)
+      - [mode, ViewMode, ViewMode.slides]   # spec §20
       - [slides, list<Sheet>]
       - [current, i32, 0]             # slide being edited or shown; not saved

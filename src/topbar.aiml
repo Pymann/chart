@@ -117,6 +117,8 @@
                                                      "-|0",
                                                      "Raster|136", "Am Raster einrasten|137",
                                                      "-|0",
+                                                     "Folienmodus|138", "Ebene|139",
+                                                     "-|0",
                                                      "Praesentieren|30"]]
                   - if:
                       condition: { gt: [<.slides.len, 0] }

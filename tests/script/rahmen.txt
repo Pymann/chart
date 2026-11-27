@@ -1,0 +1,18 @@
+# Der Reiter ist der Griff (spec §20.2).  In FENSTERPIXELN gezogen, nicht in
+# Folienkoordinaten: die rechnen gegen den aktuellen Rahmen, und der ist genau
+# der, der sich hier bewegt -- die Hand wuerde ihrem eigenen Ziel nachlaufen.
+# Bei 50 % ist ein Fensterpixel zwei Ebeneneinheiten, also 200 px = 400 Einheiten.
+wait 3
+menu Ansicht|50 %
+wait 3
+at_win 50 272
+down 0
+wait 1
+at_win 150 372
+wait 1
+at_win 250 472
+wait 1
+up 0
+wait 3
+save
+wait 2

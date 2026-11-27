@@ -1024,6 +1024,13 @@ three copies drift apart and the pointer lands somewhere other than where the pi
 it would.  A test pins this: the same slide coordinate, placed at 100 % and at 200 %, must
 store the same `x`/`y` (§9.2).
 
+**Panning is on the right mouse button, by the drag.**  Right-press and move: the view
+follows the hand.  Right-press and release without moving (less than 6 window pixels) is
+the old right-click -- read the ink, or open the element menu (§8.2).  The button that
+pans is the one a hand already rests on; the middle button does the same for mice that
+have one.  In plane mode (§20) the drag is unbounded, which is what makes the plane a
+plane.
+
 **Panning only exists where it is needed, and it is measured from centred.**  Pan `0` is
 the centred page at every zoom, so zooming in keeps the middle of the page in the middle of
 the canvas instead of jumping into a corner.  While the page fits the canvas it is centred
@@ -1604,6 +1611,84 @@ prose and the diagram.
 several places, and once it is on the sheet the author will want to move it, widen it
 and colour it like everything else. A single `notes`-style string could do none of that,
 and §14 already reserves `notes` for what the presenter sees and the audience does not.
+
+---
+
+---
+
+## 20. The plane (normative)
+
+A document is read in one of two **modes**, and the file says which:
+
+| Mode | |
+|---|---|
+| `slides` | one sheet at a time, centred, as every chapter before this one describes |
+| `plane` | every sheet at once, as a **frame** on one endless surface |
+
+### 20.1 A frame is a sheet
+
+The plane adds no new kind of thing.  A frame **is** a `Sheet`, drawn at its own origin
+`plane_x` / `plane_y`, and its page keeps the fixed 1280x720 of §14 -- so a diagram looks
+the same in both modes, and every projection in §5, §13 and §17 is unchanged: one Mermaid
+and one SVG **per frame**, PPTX frames in list order, presentation walking them in list
+order.
+
+**Everything belongs to exactly one frame.**  There are no loose elements between frames:
+a plane whose notes live nowhere would export a document that is missing them, and §5's
+promise is that the export is the drawing.  Drawing on empty plane therefore **creates a
+new frame** there, snapped to the frame grid, and the element lands inside it -- a new
+diagram is made by drawing one, not by a menu.
+
+**Moving a frame does not reorder the deck.**  The list order is the document (it decides
+export, presentation and PPTX); the plane position is where it sits.  Two authors who
+disagree about reading order would otherwise fight over the layout.
+
+### 20.2 The tab
+
+Each frame carries a **tab** above its top-left corner, 28 units high, showing the sheet's
+title (or `(ohne Titel)`), and the tab is the **handle**: dragging it moves the frame and
+clicking it makes that frame the current one.  A frame without a handle could only be
+moved by one of the gestures that already mean something inside it.  Renaming is
+`Bearbeiten > Ueberschrift`, the same entry that names a slide (§8.0) -- a frame is a
+sheet, so it is the same question.
+
+### 20.3 Which frame is current
+
+Pressing anywhere inside a frame makes it current, and everything the editor does -- the
+armed stencil, the label, the clipboard, undo -- works on that frame's sheet, exactly as
+it works on the current slide today.  The status strip names it (`Rahmen 3 von 7`).
+
+A press on empty plane keeps the current frame, so the strips never act on nothing.
+
+### 20.4 The view
+
+Pan is **unbounded** here: §8.4's clamp is a slide-mode rule, because a slide is a page
+and a plane is not.  `Einpassen` fits **all** frames, not one page.  Zoom is the same
+ladder; the grid, when it is on, is the plane's, not the page's.
+
+**The view is held by a focus, in plane units** -- the plane point shown at the centre of
+the canvas -- and not by a pixel offset.  `Einpassen` keeps recomputing the focus, so it
+follows the content; any other zoom leaves the focus where the hand put it.  This is what
+makes dragging a frame work at all: with the view anchored to the content, moving a frame
+moves the content's centre, the view corrects itself, and the plane crawls out from under
+the hand.  Taking a frame by its tab, or panning while fitted, therefore **fixes the
+zoom** at its current value and says so in the strip.
+
+### 20.5 What the file says
+
+```yaml
+mode: plane            # omitted means `slides`
+slides:
+  - title: "Login"
+    plane_x: 0
+    plane_y: 0
+    ...
+```
+
+A file written before this chapter has no `plane_x`/`plane_y`.  Opening it in plane mode
+lays the frames out in **one row**, in list order, 160 units apart, and writes those
+positions on the next save: a layout that is computed fresh every time would move a
+document that its author had already arranged.
 
 ---
 

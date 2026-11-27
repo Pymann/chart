@@ -1,0 +1,29 @@
+# Der Planmodus (spec §20): umschalten, in den ERSTEN Rahmen zeichnen, dann in
+# den zweiten klicken und dort zeichnen.  Beim Umschalten werden die Rahmen in
+# eine Reihe gelegt (1440 auseinander) und die Positionen gespeichert.
+wait 3
+menu Ansicht|Ebene
+wait 3
+tool Raute
+wait 2
+at 640 360
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+# 1440 weiter rechts liegt der zweite Rahmen
+at 2080 360
+down 0
+up 0
+wait 3
+tool Kreis
+wait 2
+at 640 360
+down 0
+up 0
+wait 2
+key Escape
+wait 3
+save
+wait 2

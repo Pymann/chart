@@ -98,9 +98,40 @@
           args: [[mouse_x, f32], [mouse_y, f32], [over_canvas, i32]]
           return: i32
           body:
-            # Only the middle button: the left one draws and drags, the right one
-            # opens the menu, and a view that moves under either of them is a view
-            # that moves by accident.  page_rect clamps, so no gap can open.
+            # The right button pans, BY THE DRAG (spec §8.4).  It already meant two
+            # things -- read the ink, open the element menu -- so the movement decides:
+            # past 6 window pixels it is a pan, below it stays the old right click, and
+            # that click now fires on RELEASE, because on the press edge nobody can yet
+            # know which of the two it was.  The middle button pans straight away.
+            - set: [<.right_tap, 0]
+            - decl: [right_now, i32, { call: [input.mouse_button, 1] }]
+            - if:
+                condition: { "&&": [{ call: [input.mouse_pressed, 1] }, { eq: [over_canvas, 1] }] }
+                then:
+                  - set: [<.pan_armed, 1]
+                  - set: [<.pan_hold_x, mouse_x]
+                  - set: [<.pan_hold_y, mouse_y]
+                  - set: [<.pan_from_x, { -: [mouse_x, <.pan_x] }]
+                  - set: [<.pan_from_y, { -: [mouse_y, <.pan_y] }]
+                  - set: [<.focus_hold_x, <.focus_x]
+                  - set: [<.focus_hold_y, <.focus_y]
+            - if:
+                condition: { "&&": [{ eq: [<.pan_armed, 1] }, { eq: [right_now, 1] }] }
+                then:
+                  - decl: [went_x, f32, { call: [math.abs, { -: [mouse_x, <.pan_hold_x] }] }]
+                  - decl: [went_y, f32, { call: [math.abs, { -: [mouse_y, <.pan_hold_y] }] }]
+                  - if:
+                      condition: { "||": [{ gt: [went_x, 6.0] }, { gt: [went_y, 6.0] }] }
+                      then: [{ set: [<.panning, 1] }]
+            - if:
+                condition: { call: [input.mouse_released, 1] }
+                then:
+                  - if:
+                      condition: { "&&": [{ eq: [<.pan_armed, 1] }, { eq: [<.panning, 0] }] }
+                      then: [{ set: [<.right_tap, 1] }]
+                  - set: [<.pan_armed, 0]
+                  - set: [<.panning, 0]
+            # the middle button, for mice that have one: no threshold, it means nothing else
             - decl: [mid_now, i32, { call: [input.mouse_button, 2] }]
             - if:
                 condition: { "&&": [{ eq: [mid_now, 1] }, { "&&": [{ eq: [<.panning, 0] }, { eq: [over_canvas, 1] }] }] }
@@ -108,12 +139,28 @@
                   - set: [<.panning, 1]
                   - set: [<.pan_from_x, { -: [mouse_x, <.pan_x] }]
                   - set: [<.pan_from_y, { -: [mouse_y, <.pan_y] }]
-            - if: { condition: { eq: [mid_now, 0] }, then: [{ set: [<.panning, 0] }] }
+                  - set: [<.pan_hold_x, mouse_x]
+                  - set: [<.pan_hold_y, mouse_y]
+                  - set: [<.focus_hold_x, <.focus_x]
+                  - set: [<.focus_hold_y, <.focus_y]
+            - if:
+                condition: { "&&": [{ eq: [mid_now, 0] }, { eq: [right_now, 0] }] }
+                then: [{ set: [<.panning, 0] }]
             - if:
                 condition: { eq: [<.panning, 1] }
                 then:
-                  - set: [<.pan_x, { -: [mouse_x, <.pan_from_x] }]
-                  - set: [<.pan_y, { -: [mouse_y, <.pan_from_y] }]
+                  # the plane moves its FOCUS, in plane units; a page moves by pixels
+                  - if:
+                      condition: { eq: [<.deck.mode, ViewMode.plane] }
+                      then:
+                        - decl: [grip_scale, f32, <.last_scale]
+                        - if: { condition: { le: [grip_scale, 0.0] }, then: [{ set: [grip_scale, 1.0] }] }
+                        - set: [<.focus_x, { -: [<.focus_hold_x, { /: [{ -: [mouse_x, <.pan_hold_x] }, grip_scale] }] }]
+                        - set: [<.focus_y, { -: [<.focus_hold_y, { /: [{ -: [mouse_y, <.pan_hold_y] }, grip_scale] }] }]
+                        - if: { condition: { le: [<.view_zoom, 0.0] }, then: [{ call: [<.set_zoom, grip_scale] }] }
+                      else:
+                        - set: [<.pan_x, { -: [mouse_x, <.pan_from_x] }]
+                        - set: [<.pan_y, { -: [mouse_y, <.pan_from_y] }]
                   - call: [input.set_cursor, "hand"]
                   - return: 1
             - return: 0
@@ -126,9 +173,11 @@
             - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
             - decl: [mouse_x, f32, { call: [input.mouse_pos_x] }]
             - decl: [mouse_y, f32, { call: [input.mouse_pos_y] }]
-            # the SAME page rect the picture was drawn with (spec §8.4)
+            # the SAME rect the picture was drawn with (spec §8.4), which in plane mode
+            # is the current FRAME's place on the plane (spec §20.3)
+            - decl: [on_frame, i32, { call: [<.pick_frame, cvs_x, cvs_y, cvs_w, cvs_h] }]
             - decl: [view, Shape]
-            - call: [<.page_rect, cvs_x, cvs_y, cvs_w, cvs_h, view]
+            - call: [<.view_for, cvs_x, cvs_y, cvs_w, cvs_h, view]
             - decl: [scale, f32, { /: [view.width, 1280.0] }]
             - decl: [org_x, f32, view.pos_x]
             - decl: [org_y, f32, view.pos_y]
@@ -143,6 +192,8 @@
             - if: { condition: { ge: [mouse_x, { +: [cvs_x, cvs_w] }] }, then: [{ set: [over_canvas, 0] }] }
             - if: { condition: { lt: [mouse_y, cvs_y] }, then: [{ set: [over_canvas, 0] }] }
             - if: { condition: { ge: [mouse_y, { +: [cvs_y, cvs_h] }] }, then: [{ set: [over_canvas, 0] }] }
+            # on the bare plane there is nothing to draw ON (spec §20.1)
+            - if: { condition: { eq: [on_frame, 0] }, then: [{ set: [over_canvas, 0] }] }
             - if: { condition: { eq: [{ call: [<.pan_drag, mouse_x, mouse_y, over_canvas] }, 1] }, then: [{ return: null }] }
             # ── the pointer says what a drag from here would do (spec §15.1a) ─
             - if:
@@ -162,10 +213,11 @@
                   # that strip reports to the author now (§8.0), and "P1 R0 H1"
                   # tells an author nothing
                   - decl: [hit_dbg, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
+                  - decl: [mass_dbg, i32, { cast: [{ "*": [scale, 1000.0] }, i32] }]
                   # Diag.say checks the flag itself.  A `return` here skipped the whole
                   # press handling whenever --diag was off: the canvas ignored every
                   # click, and every live test had happened to run WITH --diag.
-                  - call: [<.diag.say, "P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}'"]
+                  - call: [<.diag.say, "P${down_now} R${up_now} H${held} fenster=${ { cast: [mouse_x, i32] } },${ { cast: [mouse_y, i32] } } folie=${ { cast: [slide_x, i32] } },${ { cast: [slide_y, i32] } } flaeche=${over_canvas} aktion=${<.last_action} werkzeug=${<.armed} treffer='${hit_dbg}' ursprung=${ { cast: [org_x, i32] } },${ { cast: [org_y, i32] } } mass=${mass_dbg} rahmen=${<.deck.current}"]
 
             # ── press ────────────────────────────────────────────────────────
             - if:
@@ -347,7 +399,7 @@
             # is under the cursor.  With ink waiting, §7.5a has the first claim --
             # that button was given to the author to read the ink.
             - if:
-                condition: { "&&": [{ call: [input.mouse_pressed, 1] }, { "&&": [{ eq: [<.ink.count, 0] }, { eq: [over_canvas, 1] }] }] }
+                condition: { "&&": [{ eq: [<.right_tap, 1] }, { "&&": [{ eq: [<.ink.count, 0] }, { eq: [over_canvas, 1] }] }] }
                 then:
                   - decl: [on_node, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
                   - if:
@@ -379,7 +431,7 @@
                   - decl: [fresh_ink, i32, 0]
                   - if: { condition: { neq: [<.ink.count, <.read_at] }, then: [{ set: [fresh_ink, 1] }] }
                   - if:
-                      condition: { "||": [{ call: [input.mouse_pressed, 1] }, { "&&": [{ eq: [fresh_ink, 1] }, { gt: [idle, <.settle] }] }] }
+                      condition: { "||": [{ eq: [<.right_tap, 1] }, { "&&": [{ eq: [fresh_ink, 1] }, { gt: [idle, <.settle] }] }] }
                       then:
                         - set: [<.read_at, <.ink.count]
                         - decl: [made, i32, { call: [<.reader.read_ink, slide] }]
@@ -402,7 +454,7 @@
                         # and then taking a moment over the line must not cost the
                         # head. The right button is the explicit discard.
                         - if:
-                            condition: { "||": [{ gt: [made, 0] }, { call: [input.mouse_pressed, 1] }] }
+                            condition: { "||": [{ gt: [made, 0] }, { eq: [<.right_tap, 1] }] }
                             then: [{ call: [<.ink.clear] }, { set: [<.read_at, 0] }]
                             else: [{ set: [<.ink.last, { call: [engine.time] }] }]
                         - return: null
@@ -668,7 +720,7 @@
                         - decl: [sc_top, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
                         - decl: [sc_cvs_h, f32, { -: [{ -: [win_h, sc_top] }, { call: [<.strip_bottom] }] }]
                         - decl: [sc_view, Shape]
-                        - call: [<.page_rect, 0.0, sc_top, win_w, sc_cvs_h, sc_view]
+                        - call: [<.view_for, 0.0, sc_top, win_w, sc_cvs_h, sc_view]
                         - decl: [sc_scale, f32, { /: [sc_view.width, 1280.0] }]
                         - decl: [sc_org_x, f32, sc_view.pos_x]
                         - decl: [sc_org_y, f32, sc_view.pos_y]
@@ -701,7 +753,10 @@
                         - call: [ui.begin_cell, 0, 0, 1, 1]
                         - decl: [strip_h, f32, { +: [{ call: [<.top_bar.height] }, { call: [<.tools.height] }] }]
                         - decl: [cvs_h, f32, { -: [{ -: [win_h, strip_h] }, { call: [<.strip_bottom] }] }]
-                        - call: [<.draw_slide, 0.0, strip_h, win_w, cvs_h]
+                        - if:
+                            condition: { eq: [<.deck.mode, ViewMode.plane] }
+                            then: [{ call: [<.draw_plane, 0.0, strip_h, win_w, cvs_h] }]
+                            else: [{ call: [<.draw_slide, 0.0, strip_h, win_w, cvs_h] }]
                         - call: [<.menu.draw]
                         - call: [<.canvas_input, 0.0, strip_h, win_w, cvs_h]
                         - call: [ui.end_cell]

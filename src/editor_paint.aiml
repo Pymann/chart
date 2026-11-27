@@ -125,6 +125,222 @@
             - decl: [org_x, f32, view.pos_x]
             - decl: [org_y, f32, view.pos_y]
             # a soft shadow, so the page reads as a sheet of paper
+            - call: [<.paint_sheet, slide, org_x, org_y, scale, 1]
+            - if:
+                condition: { eq: [<.presenting, 1] }
+                then:
+                  - decl: [number, i32, { +: [<.deck.current, 1] }]
+                  - call: [ui.draw_text, { -: [{ +: [cvs_x, cvs_w] }, 70.0] }, { -: [{ +: [cvs_y, cvs_h] }, 26.0] }, "${number} / ${<.deck.slides.len}", 0x8A97A5FF]
+                  - if:
+                      condition: { eq: [<.show_notes, 1] }
+                      then:
+                        - if:
+                            condition: { neq: [slide.notes, ""] }
+                            then:
+                              - call: [ui.draw_rect, cvs_x, { -: [{ +: [cvs_y, cvs_h] }, 58.0] }, cvs_w, 58.0, 0x0A0F14D8]
+                              - call: [ui.draw_text, { +: [cvs_x, 18.0] }, { -: [{ +: [cvs_y, cvs_h] }, 42.0] }, slide.notes, 0xF0E8D0FF]
+      # The status strip is drawn by the chrome (spec §8.0); the editor only says
+      # what goes in it: the last thing that happened, and where we are.
+      # The rect the POINTER must be measured against -- the one place both modes
+      # agree on (spec §8.4 "one origin", §20.3).  In plane mode it is the current
+      # frame's origin on the plane, so every gesture below keeps working in sheet
+      # coordinates and knows nothing about the plane.
+      - def:
+          name: view_for
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [out, ref<Shape>]]
+          body:
+            - if:
+                condition: { neq: [<.deck.mode, ViewMode.plane] }
+                then:
+                  - call: [<.page_rect, cvs_x, cvs_y, cvs_w, cvs_h, out]
+                  - return: null
+            - call: [<.plane_rect, cvs_x, cvs_y, cvs_w, cvs_h, out]
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - decl: [scale, f32, { /: [out.width, 1280.0] }]
+            - decl: [here, ref<Sheet>, { at: [<.deck.slides, <.deck.current] }]
+            - set: [out.pos_x, { +: [out.pos_x, { "*": [here.plane_x, scale] }] }]
+            - set: [out.pos_y, { +: [out.pos_y, { "*": [here.plane_y, scale] }] }]
+
+      # Which frame a window point falls in, -1 for the bare plane (spec §20.3).
+      - def:
+          name: frame_at
+          args: [[view, ref<Shape>], [spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - decl: [scale, f32, { /: [view.width, 1280.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - decl: [left, f32, { +: [view.pos_x, { "*": [sheet.plane_x, scale] }] }]
+                  - decl: [top, f32, { +: [view.pos_y, { "*": [sheet.plane_y, scale] }] }]
+                  - decl: [inside, i32, 1]
+                  - if: { condition: { lt: [spot_x, left] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { lt: [spot_y, top] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_x, { +: [left, view.width] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_y, { +: [top, view.height] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { eq: [inside, 1] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
+      # The box all frames occupy, in PLANE units (spec §20.4).  `Einpassen` fits this,
+      # not one page.
+      - def:
+          name: plane_span
+          args: [[out, ref<Shape>]]
+          body:
+            - decl: [least_x, f32, 0.0]
+            - decl: [least_y, f32, 0.0]
+            - decl: [most_x, f32, 1280.0]
+            - decl: [most_y, f32, 720.0]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { lt: [sheet.plane_x, least_x] }] }, then: [{ set: [least_x, sheet.plane_x] }] }
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { lt: [sheet.plane_y, least_y] }] }, then: [{ set: [least_y, sheet.plane_y] }] }
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { gt: [{ +: [sheet.plane_x, 1280.0] }, most_x] }] }, then: [{ set: [most_x, { +: [sheet.plane_x, 1280.0] }] }] }
+                  - if: { condition: { "||": [{ eq: [idx, 0] }, { gt: [{ +: [sheet.plane_y, 720.0] }, most_y] }] }, then: [{ set: [most_y, { +: [sheet.plane_y, 720.0] }] }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - set: [out.pos_x, least_x]
+            - set: [out.pos_y, least_y]
+            - set: [out.width, { -: [most_x, least_x] }]
+            - set: [out.height, { -: [most_y, least_y] }]
+
+      # Where plane coordinate (0,0) lands, and at what scale (spec §20.4).  The twin of
+      # page_rect, with ONE difference that is the whole point: the pan is not clamped.
+      # A plane that stops is a page.
+      - def:
+          name: plane_rect
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32], [out, ref<Shape>]]
+          body:
+            - decl: [span, Shape]
+            - call: [<.plane_span, span]
+            - decl: [scale, f32, <.view_zoom]
+            - if:
+                condition: { le: [scale, 0.0] }
+                then:
+                  - decl: [fit_x, f32, { /: [{ "*": [cvs_w, 0.88] }, span.width] }]
+                  - decl: [fit_y, f32, { /: [{ "*": [cvs_h, 0.88] }, span.height] }]
+                  - set: [scale, fit_x]
+                  - if: { condition: { lt: [fit_y, fit_x] }, then: [{ set: [scale, fit_y] }] }
+            # Fitting FOLLOWS the content, so it recomputes the focus; a zoom set by hand
+            # keeps the focus where the hand left it.  Anchoring the view to the content
+            # centre at all times would move the view while a frame is being dragged --
+            # the span changes with it, and the plane crawls under the hand.
+            - if:
+                condition: { le: [<.view_zoom, 0.0] }
+                then:
+                  - set: [<.focus_x, { +: [span.pos_x, { /: [span.width, 2.0] }] }]
+                  - set: [<.focus_y, { +: [span.pos_y, { /: [span.height, 2.0] }] }]
+            - set: [out.pos_x, { -: [{ +: [cvs_x, { /: [cvs_w, 2.0] }] }, { "*": [<.focus_x, scale] }] }]
+            - set: [out.pos_y, { -: [{ +: [cvs_y, { /: [cvs_h, 2.0] }] }, { "*": [<.focus_y, scale] }] }]
+            - set: [out.width, { "*": [1280.0, scale] }]
+            - set: [out.height, { "*": [720.0, scale] }]
+
+      # The whole plane: every frame at its own origin, plus its tab (spec §20.2).
+      - def:
+          name: draw_plane
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32]]
+          body:
+            - if: { condition: { eq: [<.deck.slides.len, 0] }, then: [{ return: null }] }
+            - if: { condition: { lt: [<.deck.current, 0] }, then: [{ set: [<.deck.current, 0] }] }
+            - if: { condition: { ge: [<.deck.current, <.deck.slides.len] }, then: [{ set: [<.deck.current, { -: [<.deck.slides.len, 1] }] }] }
+            - decl: [view, Shape]
+            - call: [<.plane_rect, cvs_x, cvs_y, cvs_w, cvs_h, view]
+            - decl: [scale, f32, { /: [view.width, 1280.0] }]
+            - set: [<.last_scale, scale]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - decl: [spot_x, f32, { +: [view.pos_x, { "*": [sheet.plane_x, scale] }] }]
+                  - decl: [spot_y, f32, { +: [view.pos_y, { "*": [sheet.plane_y, scale] }] }]
+                  - decl: [live, i32, 0]
+                  - if: { condition: { eq: [idx, <.deck.current] }, then: [{ set: [live, 1] }] }
+                  - call: [<.paint_sheet, sheet, spot_x, spot_y, scale, live]
+                  - call: [<.frame_tab, sheet, spot_x, spot_y, scale, live]
+                  - set: [idx, { +: [idx, 1] }]
+
+      # The tab's rect -- ONE source, so the handle is exactly where it is drawn.
+      - def:
+          name: tab_rect
+          args: [[sheet, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [out, ref<Shape>]]
+          body:
+            - decl: [name, string, sheet.title]
+            - if: { condition: { eq: [name, ""] }, then: [{ set: [name, "(ohne Titel)"] }] }
+            - decl: [tab_h, f32, { "*": [28.0, scale] }]
+            - if: { condition: { lt: [tab_h, 16.0] }, then: [{ set: [tab_h, 16.0] }] }
+            - set: [out.pos_x, org_x]
+            - set: [out.pos_y, { -: [org_y, { +: [tab_h, 4.0] }] }]
+            - set: [out.width, { +: [{ call: [ui.measure_text, name] }, 20.0] }]
+            - set: [out.height, tab_h]
+
+      # Which frame's TAB is under a window point, -1 for none (spec §20.2).
+      - def:
+          name: tab_at
+          args: [[view, ref<Shape>], [spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - decl: [scale, f32, { /: [view.width, 1280.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, <.deck.slides.len] }
+                body:
+                  - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                  - decl: [tab, Shape]
+                  - call: [<.tab_rect, sheet,
+                           { +: [view.pos_x, { "*": [sheet.plane_x, scale] }] },
+                           { +: [view.pos_y, { "*": [sheet.plane_y, scale] }] }, scale, tab]
+                  - decl: [inside, i32, 1]
+                  - if: { condition: { lt: [spot_x, tab.pos_x] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { lt: [spot_y, tab.pos_y] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_x, { +: [tab.pos_x, tab.width] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { gt: [spot_y, { +: [tab.pos_y, tab.height] }] }, then: [{ set: [inside, 0] }] }
+                  - if: { condition: { eq: [inside, 1] }, then: [{ return: idx }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: -1
+
+      # A frame's handle (spec §20.2): the title above its top-left corner.  The current
+      # frame's tab is filled, the others are outlined -- at a zoom where the pages are
+      # thumbnails, the tab is the only thing that still says which is which.
+      - def:
+          name: frame_tab
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [live, i32]]
+          body:
+            - decl: [tab, Shape]
+            - call: [<.tab_rect, sheet, org_x, org_y, scale, tab]
+            - decl: [name, string, sheet.title]
+            - if: { condition: { eq: [name, ""] }, then: [{ set: [name, "(ohne Titel)"] }] }
+            - decl: [tab_h, f32, tab.height]
+            - decl: [tab_w, f32, tab.width]
+            - decl: [tab_y, f32, tab.pos_y]
+            - decl: [tint, i32, 0xDCE3EAFF]
+            - decl: [ink, i32, 0x4A5666FF]
+            - if: { condition: { eq: [live, 1] }, then: [{ set: [tint, 0x2F80EDFF] }, { set: [ink, 0xFFFFFFFF] }] }
+            - call: [ui.draw_rect, org_x, tab_y, tab_w, tab_h, tint]
+            # measured, not guessed: the tab shrinks with the zoom and a fixed offset
+            # pushes the text out of it (spec §8.0 does the same for the menu titles)
+            - decl: [text_h, f32, { call: [ui.text_height] }]
+            - call: [ui.draw_text, { +: [org_x, 10.0] }, { +: [tab_y, { /: [{ -: [tab_h, text_h] }, 2.0] }] }, name, ink]
+
+      # One page, drawn at a given place and scale.  Both modes go through here: the
+      # slide mode draws the current sheet centred, the plane draws every frame at its
+      # own origin (spec §20.1) -- a frame IS a sheet, so there is one painter, not two.
+      # `live` marks the sheet the editor is working in: only it shows the selection,
+      # the open label, the ink and the link being dragged.
+      - def:
+          name: paint_sheet
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [org_x, f32], [org_y, f32], [scale, f32], [live, i32]]
+          body:
+            - decl: [page_w, f32, { "*": [1280.0, scale] }]
+            - decl: [page_h, f32, { "*": [720.0, scale] }]
             - call: [ui.draw_rect, { +: [org_x, 6.0] }, { +: [org_y, 7.0] }, page_w, page_h, 0x0A0F1438]
             - call: [ui.draw_rect, org_x, org_y, page_w, page_h, 0xFFFFFFFF]
             - if:
@@ -140,7 +356,7 @@
             - call: [<.pen.frame, page]
             - decl: [head_live, i32, 0]
             - if:
-                condition: { "&&": [{ eq: [<.editing, 1] }, { eq: [<.edit_id, "#titel"] }] }
+                condition: { "&&": [{ eq: [live, 1] }, { "&&": [{ eq: [<.editing, 1] }, { eq: [<.edit_id, "#titel"] }] }] }
                 then: [{ set: [head_live, 1] }]
             - if:
                 condition: { "&&": [{ neq: [slide.title, ""] }, { eq: [head_live, 0] }] }
@@ -174,7 +390,7 @@
                       condition: { eq: [node.ident, <.sel] }
                       then:
                         - if:
-                            condition: { eq: [<.presenting, 0] }
+                            condition: { "&&": [{ eq: [live, 1] }, { eq: [<.presenting, 0] }] }
                             then:
                               - decl: [halo, Shape]
                               - set: [halo.pos_x, { -: [{ +: [org_x, { "*": [node.pos_x, scale] }] }, 5.0] }]
@@ -187,7 +403,7 @@
                   - set: [idx, { +: [idx, 1] }]
             # the ink: every stroke of the group, until it is read (spec §7.5a)
             - if:
-                condition: { gt: [<.ink.count, 1] }
+                condition: { "&&": [{ eq: [live, 1] }, { gt: [<.ink.count, 1] }] }
                 then:
                   - decl: [sidx, i32, 0]
                   - while:
@@ -215,7 +431,7 @@
 
             # What will be connected, before the button is let go (spec §15.1).
             - if:
-                condition: { neq: [<.link_from, ""] }
+                condition: { "&&": [{ eq: [live, 1] }, { neq: [<.link_from, ""] }] }
                 then:
                   - decl: [src_node, Node]
                   - if:
@@ -226,21 +442,7 @@
                                  { +: [org_y, { "*": [{ +: [src_node.pos_y, { /: [src_node.height, 2.0] }] }, scale] }] },
                                  { call: [input.mouse_pos_x] }, { call: [input.mouse_pos_y] }, 2.0, 0x2F80EDC0]
 
-            - if:
-                condition: { eq: [<.presenting, 1] }
-                then:
-                  - decl: [number, i32, { +: [<.deck.current, 1] }]
-                  - call: [ui.draw_text, { -: [{ +: [cvs_x, cvs_w] }, 70.0] }, { -: [{ +: [cvs_y, cvs_h] }, 26.0] }, "${number} / ${<.deck.slides.len}", 0x8A97A5FF]
-                  - if:
-                      condition: { eq: [<.show_notes, 1] }
-                      then:
-                        - if:
-                            condition: { neq: [slide.notes, ""] }
-                            then:
-                              - call: [ui.draw_rect, cvs_x, { -: [{ +: [cvs_y, cvs_h] }, 58.0] }, cvs_w, 58.0, 0x0A0F14D8]
-                              - call: [ui.draw_text, { +: [cvs_x, 18.0] }, { -: [{ +: [cvs_y, cvs_h] }, 42.0] }, slide.notes, 0xF0E8D0FF]
-      # The status strip is drawn by the chrome (spec §8.0); the editor only says
-      # what goes in it: the last thing that happened, and where we are.
+
       - def:
           name: status_strip
           static_off: ["same_arg", "str_cmp"]
@@ -252,6 +454,9 @@
                 then:
                   - decl: [number, i32, { +: [<.deck.current, 1] }]
                   - set: [where, "Folie ${number}/${<.deck.slides.len}"]
+                  - if:
+                      condition: { eq: [<.deck.mode, ViewMode.plane] }
+                      then: [{ set: [where, "Rahmen ${number} von ${<.deck.slides.len}"] }]
             - if: { condition: { eq: [<.dirty, 1] }, then: [{ set: [where, "${where}  *"] }] }
             - call: [<.top_bar.foot, win_w, win_h, <.status, where]
       - def:

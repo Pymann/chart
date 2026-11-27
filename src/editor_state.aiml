@@ -66,12 +66,23 @@
       # Ansicht (spec §8.4): a VIEW transform -- none of this reaches the sheet,
       # except snap_on, which rounds the value that is written.
       - [view_zoom, f32]                # 0.0 = fit the canvas
-      - [pan_x, f32]
+      - [pan_x, f32]                    # slide mode: a pixel offset from centred
       - [pan_y, f32]
-      - [panning, i32]                  # middle button held
+      - [focus_x, f32]                  # plane mode: the plane point at the canvas centre
+      - [focus_y, f32]
+      - [focus_hold_x, f32]
+      - [focus_hold_y, f32]
+      - [panning, i32]                  # a view drag is under way
+      - [pan_armed, i32]                # right button down, not yet a drag
+      - [right_tap, i32]                # right click that did NOT become a drag
+      - [pan_hold_x, f32]               # where the right button went down
+      - [pan_hold_y, f32]
       - [pan_from_x, f32]
       - [pan_from_y, f32]
       - [grid_on, i32]
+      - [tab_grab, i32]                 # frame being dragged by its tab, +1 (0 = none)
+      - [tab_off_x, f32]
+      - [tab_off_y, f32]
       - [snap_on, i32]
       - [seq, ref<SeqLayout>]          # derived geometry of a sequence (spec §5.8.3)
       - [seq_art, ref<SeqArt>]         # lifelines, messages, notes, blocks
@@ -383,3 +394,37 @@
             - if: { condition: { eq: [<.snap_on, 0] }, then: [{ return: val }] }
             - decl: [steps, f32, { call: [math.round, { /: [val, 10.0] }] }]
             - return: { "*": [steps, 10.0] }
+
+      # Drawing on the bare plane makes a new frame there (spec §20.1): a new diagram
+      # is made by drawing one, not by a menu.  Snapped to the frame grid so a plane
+      # stays readable, and moved along while the cell is taken.
+      - def:
+          name: new_frame_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[plane_x, f32], [plane_y, f32]]
+          body:
+            - decl: [cell_x, f32, { "*": [{ call: [math.round, { /: [plane_x, 1440.0] }] }, 1440.0] }]
+            - decl: [cell_y, f32, { "*": [{ call: [math.round, { /: [plane_y, 880.0] }] }, 880.0] }]
+            - decl: [taken, i32, 1]
+            - while:
+                condition: { eq: [taken, 1] }
+                body:
+                  - set: [taken, 0]
+                  - decl: [idx, i32, 0]
+                  - while:
+                      condition: { lt: [idx, <.deck.slides.len] }
+                      body:
+                        - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, idx] }]
+                        - if:
+                            condition: { "&&": [{ eq: [sheet.plane_x, cell_x] }, { eq: [sheet.plane_y, cell_y] }] }
+                            then: [{ set: [taken, 1] }]
+                        - set: [idx, { +: [idx, 1] }]
+                  - if: { condition: { eq: [taken, 1] }, then: [{ set: [cell_x, { +: [cell_x, 1440.0] }] }] }
+            - decl: [fresh, Sheet]
+            - set: [fresh.plane_x, cell_x]
+            - set: [fresh.plane_y, cell_y]
+            - set: [fresh.next_id, 1]
+            - call: [<.deck.slides.push, fresh]
+            - set: [<.deck.current, { -: [<.deck.slides.len, 1] }]
+            - call: [<.touch]
+            - set: [<.status, "neuer Rahmen"]

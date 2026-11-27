@@ -83,7 +83,7 @@
           args: [[action, i32]]
           body:
             - if: { condition: { eq: [action, 0] }, then: [{ return: null }] }
-            - if: { condition: { "&&": [{ ge: [action, 130] }, { le: [action, 137] }] }, then: [{ call: [<.view_deed, action] }, { return: null }] }
+            - if: { condition: { "&&": [{ ge: [action, 130] }, { le: [action, 139] }] }, then: [{ call: [<.view_deed, action] }, { return: null }] }
 
             - if: { condition: { eq: [action, 1] }, then: [{ call: [<.save_deck, ""] }, { return: null }] }
             # 15/16 undo and redo, 17 a new deck (spec §16.4)
@@ -406,3 +406,104 @@
                 - set: [<.snap_on, { -: [1, <.snap_on] }]
                 - set: [<.status, "Einrasten ${<.snap_on}"]
                 - return: null
+            # 138/139: how the document is read (spec §20).  Switching resets the view:
+            # the pan of a page means nothing on a plane, and the other way round.
+            - if:
+                condition: { "||": [{ eq: [action, 138] }, { eq: [action, 139] }] }
+                then:
+                  - decl: [want, i32, ViewMode.slides]
+                  - if: { condition: { eq: [action, 139] }, then: [{ set: [want, ViewMode.plane] }] }
+                  - if: { condition: { eq: [<.deck.mode, want] }, then: [{ return: null }] }
+                  - set: [<.deck.mode, want]
+                  - if: { condition: { eq: [want, ViewMode.plane] }, then: [{ call: [<.sheet_io.lay_out_plane, <.deck] }] }
+                  - call: [<.set_zoom, 0.0]
+                  - call: [<.touch]
+                  - set: [<.status, "Ebene"]
+                  - if: { condition: { eq: [want, ViewMode.slides] }, then: [{ set: [<.status, "Folienmodus"] }] }
+                  - return: null
+
+      # Who the gestures act on (spec §20.3).  Returns 1 when the pointer is over a
+      # frame -- in slide mode always, because there the page IS the canvas.
+      - def:
+          name: pick_frame
+          static_off: ["same_arg", "str_cmp"]
+          args: [[cvs_x, f32], [cvs_y, f32], [cvs_w, f32], [cvs_h, f32]]
+          return: i32
+          body:
+            - if: { condition: { neq: [<.deck.mode, ViewMode.plane] }, then: [{ return: 1 }] }
+            - decl: [spot_x, f32, { call: [input.mouse_pos_x] }]
+            - decl: [spot_y, f32, { call: [input.mouse_pos_y] }]
+            # The strips lie OVER the canvas (spec §8.0).  Without this a press on a
+            # tool button counted as a press on the bare plane and opened a frame.
+            - if: { condition: { lt: [spot_x, cvs_x] }, then: [{ return: 1 }] }
+            - if: { condition: { lt: [spot_y, cvs_y] }, then: [{ return: 1 }] }
+            - if: { condition: { gt: [spot_x, { +: [cvs_x, cvs_w] }] }, then: [{ return: 1 }] }
+            - if: { condition: { gt: [spot_y, { +: [cvs_y, cvs_h] }] }, then: [{ return: 1 }] }
+            - if: { condition: { "||": [{ eq: [<.top_bar.shown, 1] }, { eq: [<.tools.type_open, 1] }] }, then: [{ return: 1 }] }
+            - decl: [view, Shape]
+            - call: [<.plane_rect, cvs_x, cvs_y, cvs_w, cvs_h, view]
+            # the tab is the handle (spec §20.2): grab, drag, let go
+            - if: { condition: { eq: [{ call: [<.tab_drag, view, spot_x, spot_y] }, 1] }, then: [{ return: 0 }] }
+            - decl: [which, i32, { call: [<.frame_at, view, spot_x, spot_y] }]
+            - if:
+                condition: { ge: [which, 0] }
+                then:
+                  - if:
+                      condition: { call: [input.mouse_pressed, 0] }
+                      then:
+                        - if: { condition: { neq: [which, <.deck.current] }, then: [{ call: [<.clear_selection] }] }
+                        - set: [<.deck.current, which]
+                  - return: 1
+            # the bare plane: a press with something to put down opens a frame first
+            - if:
+                condition: { call: [input.mouse_pressed, 0] }
+                then:
+                  - decl: [scale, f32, { /: [view.width, 1280.0] }]
+                  - decl: [plane_x, f32, { /: [{ -: [spot_x, view.pos_x] }, scale] }]
+                  - decl: [plane_y, f32, { /: [{ -: [spot_y, view.pos_y] }, scale] }]
+                  - call: [<.new_frame_at, { -: [plane_x, 640.0] }, { -: [plane_y, 360.0] }]
+                  - return: 1
+            - return: 0
+
+      # Moving a frame by its tab (spec §20.2).  Returns 1 while it has the pointer,
+      # so nothing else reads the same press.  The deck's ORDER is untouched -- where
+      # a frame sits and when it is shown are two different questions (spec §20.1).
+      - def:
+          name: tab_drag
+          static_off: ["same_arg", "str_cmp"]
+          args: [[view, ref<Shape>], [spot_x, f32], [spot_y, f32]]
+          return: i32
+          body:
+            - decl: [scale, f32, { /: [view.width, 1280.0] }]
+            - decl: [plane_x, f32, { /: [{ -: [spot_x, view.pos_x] }, scale] }]
+            - decl: [plane_y, f32, { /: [{ -: [spot_y, view.pos_y] }, scale] }]
+            - if:
+                condition: { call: [input.mouse_pressed, 0] }
+                then:
+                  - decl: [hit, i32, { call: [<.tab_at, view, spot_x, spot_y] }]
+                  - if:
+                      condition: { ge: [hit, 0] }
+                      then:
+                        - decl: [sheet, ref<Sheet>, { at: [<.deck.slides, hit] }]
+                        - set: [<.tab_grab, { +: [hit, 1] }]
+                        - set: [<.tab_off_x, { -: [plane_x, sheet.plane_x] }]
+                        - set: [<.tab_off_y, { -: [plane_y, sheet.plane_y] }]
+                        - if: { condition: { neq: [hit, <.deck.current] }, then: [{ call: [<.clear_selection] }] }
+                        - set: [<.deck.current, hit]
+                        # fix the zoom for the drag: fitting follows the content, and
+                        # the content is what the hand is moving (spec §20.4)
+                        - if: { condition: { le: [<.view_zoom, 0.0] }, then: [{ call: [<.set_zoom, scale] }] }
+                        - set: [<.status, "Rahmen verschieben"]
+                        - return: 1
+            - if: { condition: { eq: [<.tab_grab, 0] }, then: [{ return: 0 }] }
+            - if:
+                condition: { eq: [{ call: [input.mouse_button, 0] }, 0] }
+                then:
+                  - set: [<.tab_grab, 0]
+                  - return: 0
+            - decl: [moving, ref<Sheet>, { at: [<.deck.slides, { -: [<.tab_grab, 1] }] }]
+            - set: [moving.plane_x, { call: [<.snap_val, { -: [plane_x, <.tab_off_x] }] }]
+            - set: [moving.plane_y, { call: [<.snap_val, { -: [plane_y, <.tab_off_y] }] }]
+            - call: [input.set_cursor, "hand"]
+            - call: [<.touch]
+            - return: 1
