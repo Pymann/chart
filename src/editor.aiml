@@ -45,6 +45,19 @@
             - set: [slide.next_id, { +: [slide.next_id, 1] }]
             - set: [<.sel_edge, edge.ident]
             - set: [<.status, "Kante gezogen"]
+      # What the CONNECT gesture may start or end on (spec §5.8.3): a node as usual,
+      # and in a sequence also the participant's lifeline.
+      - def:
+          name: grab_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[slide, ref<Sheet>], [spot_x, f32], [spot_y, f32]]
+          return: string
+          body:
+            - decl: [hit, string, { call: [<.grip.node_at, slide, spot_x, spot_y] }]
+            - if: { condition: { neq: [hit, ""] }, then: [{ return: hit }] }
+            - if: { condition: { neq: [slide.dtype, DiagramType.sequence] }, then: [{ return: "" }] }
+            - return: { call: [<.seq.lane_at, slide, spot_x, spot_y] }
+
       # ── who owns the pointer (spec §8.0, §8.2) ───────────────────────────────
       # Its own method because canvas_input sits at the 300-line limit.  Returns 1
       # when an overlay consumed the frame.
@@ -193,7 +206,7 @@
                   - if:
                       condition: { eq: [<.armed, 100] }
                       then:
-                        - decl: [src, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
+                        - decl: [src, string, { call: [<.grab_at, slide, slide_x, slide_y] }]
                         - if:
                             condition: { neq: [src, ""] }
                             then: [{ set: [<.link_from, src] }, { set: [<.status, "auf das Ziel loslassen"] }]
@@ -408,7 +421,7 @@
                   - if:
                       condition: { neq: [<.link_from, ""] }
                       then:
-                        - decl: [dst, string, { call: [<.grip.node_at, slide, slide_x, slide_y] }]
+                        - decl: [dst, string, { call: [<.grab_at, slide, slide_x, slide_y] }]
                         - if:
                             condition: { "&&": [{ neq: [dst, ""] }, { neq: [dst, <.link_from] }] }
                             then: [{ call: [<.join_two, slide, <.link_from, dst] }]

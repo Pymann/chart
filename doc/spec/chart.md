@@ -231,6 +231,15 @@ edges:
 `line` defaults to `solid`, `head` to `arrow`, `tail` to `none`, so the common edge
 writes two short words and the unusual one says what it is.
 
+### 4.0a The writer never writes what the reader refuses (normative)
+
+An edge needs both `from_id` and `to_id`.  The reader **rejects** a file whose edge is
+missing one -- it has no Mermaid form (it would emit a bare `-->`), and dropping it
+quietly loses a line the author drew.  The writer therefore refuses it too, with a
+message naming the edge, rather than producing a file that the next open rejects.  A
+format where saving can create an unloadable file is worse than one that complains at
+the moment the damage is made.
+
 ### 4.1a Edges written before the split (normative)
 
 A sheet may carry the old single `kind:` instead of `line`/`head`/`tail`. It is **read**
@@ -520,6 +529,15 @@ message's place is its row, and both come from order. The sheet therefore carrie
 - An unbalanced block is an **error at export**, named with the step, not a silently
   closed one: Mermaid would render something, and it would not be the author's
   diagram.
+
+**Normative -- the connect gesture takes the whole lifeline.**  `Nachricht` starts and
+ends on a participant's **column**: the head box, or any point on its lifeline below it.
+The head box is 56 units tall at the top of a 720-unit page, while the arrow is drawn
+between the lifelines -- a gesture that only accepted the box would miss exactly where
+the user aims, and missing looks like a tool that does nothing.  Columns are 230 apart
+and the band is the box width, 170, so the 60 units between two lifelines belong to
+neither and no drag is claimed by the wrong participant.  Everywhere else a connect
+gesture still needs a node (§15.1).
 
 
 

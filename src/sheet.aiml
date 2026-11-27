@@ -345,6 +345,14 @@
                         - set: [edge.ident, { call: [<.kv_text, item, "id", ""] }]
                         - set: [edge.from_id, { call: [<.kv_text, item, "from_id", ""] }]
                         - set: [edge.to_id, { call: [<.kv_text, item, "to_id", ""] }]
+                        # Both ends or nothing: an edge without them has no Mermaid
+                        # form (it would emit a bare " --> "), and a reader that
+                        # drops it silently loses an author's line without a word.
+                        - if:
+                            condition: { "||": [{ eq: [edge.from_id, ""] }, { eq: [edge.to_id, ""] }] }
+                            then:
+                              - call: [log.error, "chart: ${path}: edge '${edge.ident}' is missing from_id or to_id"]
+                              - return: 0
                         - decl: [old_word, string, { call: [<.kv_text, item, "kind", ""] }]
                         - decl: [line_word, string, { call: [<.kv_text, item, "line", ""] }]
                         - decl: [head_word, string, { call: [<.kv_text, item, "head", ""] }]
@@ -433,13 +441,18 @@
           static_off: ["same_arg", "str_cmp"]
           args: [[document, ptr<yaml_doc>], [path, string], [deck, ref<Deck>]]
           return: i32
+          # No `yaml.free` in here.  A yaml_doc is a unique owned resource and the
+          # OWNING LOCAL in the caller is released on every exit (aiml spec/60 §3,
+          # spec/61 §9.1).  An early release inside this method frees the document and
+          # nulls only the PARAMETER, so the caller's local stayed set and its scope
+          # release hit a freed handle -- the runtime caught it and printed
+          # "invalid or freed yaml_doc handle" on every single deck that was loaded.
           body:
             - decl: [error_text, string, { call: [yaml.error, document] }]
             - if:
                 condition: { neq: [error_text, ""] }
                 then:
                   - call: [log.error, "chart: ${path}: ${error_text}"]
-                  - call: [yaml.free, document]
                   - return: 0
             - decl: [root, ref<yaml_node>, { call: [yaml.root, document] }]
             - set: [deck.title, { call: [<.kv_text, root, "title", ""] }]
@@ -452,12 +465,10 @@
                   - if:
                       condition: { eq: [ok_single, 0] }
                       then:
-                        - call: [yaml.free, document]
                         - return: 0
                   # A lone sheet carries no deck title of its own; its slide title stands in.
                   - if: { condition: { eq: [deck.title, ""] }, then: [{ set: [deck.title, single.title] }] }
                   - call: [deck.slides.push, single]
-                  - call: [yaml.free, document]
                   - return: 1
             - decl: [slides_node, ref<yaml_node>, { call: [yaml.value, root, slides_idx] }]
             - decl: [sidx, i32, 0]
@@ -470,7 +481,6 @@
                   - if:
                       condition: { eq: [ok_slide, 0] }
                       then:
-                        - call: [yaml.free, document]
                         - return: 0
                   - call: [deck.slides.push, slide]
                   - set: [sidx, { +: [sidx, 1] }]
@@ -478,9 +488,7 @@
                 condition: { eq: [deck.slides.len, 0] }
                 then:
                   - call: [log.error, "chart: ${path}: 'slides' is empty -- a deck needs at least one slide"]
-                  - call: [yaml.free, document]
                   - return: 0
-            - call: [yaml.free, document]
             - return: 1
 
       # YAML escaping for a double-quoted scalar.
@@ -571,30 +579,37 @@
                             condition: { lt: [eidx, slide.edges.len] }
                             body:
                               - decl: [edge, ref<Edge>, { at: [slide.edges, eidx] }]
-                              - decl: [line_word, string, { call: [enums.name, "LineStyle", edge.line] }]
-                              - decl: [head_word, string, { call: [enums.name, "EndCap", edge.head] }]
-                              - decl: [tail_word, string, { call: [enums.name, "EndCap", edge.tail] }]
-                              - set: [out, "${out}      - { id: ${edge.ident}, from_id: ${edge.from_id}, to_id: ${edge.to_id}"]
-                              # only what differs from the default: the common edge
-                              # stays one short line (spec §4)
-                              - if: { condition: { neq: [edge.line, LineStyle.solid] }, then: [{ set: [out, "${out}, line: ${line_word}"] }] }
-                              - if: { condition: { neq: [edge.head, EndCap.arrow] }, then: [{ set: [out, "${out}, head: ${head_word}"] }] }
-                              - if: { condition: { neq: [edge.tail, EndCap.none] }, then: [{ set: [out, "${out}, tail: ${tail_word}"] }] }
-                              - if: { condition: { neq: [edge.text, ""] }, then: [{ set: [out, "${out}, text: \"${ { call: [<.esc_yaml, edge.text] } }\""] }] }
-                              # the edge's own colour: set by the menu (§8.2) and by
-                              # `linkStyle` on import, and silently dropped here until
-                              # an imported linkStyle came back colourless
-                              - if: { condition: { neq: [edge.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${edge.stroke}"] }] }
+                              # Never write what the reader refuses (§4): an edge with a
+                              # missing end would make the file unloadable on the next open,
+                              # so it is dropped here -- out loud, never silently.
                               - if:
-                                  condition: { neq: [edge.rel, RelKind.plain] }
+                                  condition: { "&&": [{ neq: [edge.from_id, ""] }, { neq: [edge.to_id, ""] }] }
                                   then:
-                                    - decl: [rel_word, string, { call: [enums.name, "RelKind", edge.rel] }]
-                                    - set: [out, "${out}, rel: ${rel_word}"]
-                              - if: { condition: { neq: [edge.deco, 0] }, then: [{ set: [out, "${out}, deco: ${edge.deco}"] }] }
-                              - if: { condition: { neq: [edge.ink, 0] }, then: [{ set: [out, "${out}, ink: ${edge.ink}"] }] }
-                              - if: { condition: { neq: [edge.from_text, ""] }, then: [{ set: [out, "${out}, from_text: \"${ { call: [<.esc_yaml, edge.from_text] } }\""] }] }
-                              - if: { condition: { neq: [edge.to_text, ""] }, then: [{ set: [out, "${out}, to_text: \"${ { call: [<.esc_yaml, edge.to_text] } }\""] }] }
-                              - set: [out, "${out} }\n"]
+                                  - decl: [line_word, string, { call: [enums.name, "LineStyle", edge.line] }]
+                                  - decl: [head_word, string, { call: [enums.name, "EndCap", edge.head] }]
+                                  - decl: [tail_word, string, { call: [enums.name, "EndCap", edge.tail] }]
+                                  - set: [out, "${out}      - { id: ${edge.ident}, from_id: ${edge.from_id}, to_id: ${edge.to_id}"]
+                                  # only what differs from the default: the common edge
+                                  # stays one short line (spec §4)
+                                  - if: { condition: { neq: [edge.line, LineStyle.solid] }, then: [{ set: [out, "${out}, line: ${line_word}"] }] }
+                                  - if: { condition: { neq: [edge.head, EndCap.arrow] }, then: [{ set: [out, "${out}, head: ${head_word}"] }] }
+                                  - if: { condition: { neq: [edge.tail, EndCap.none] }, then: [{ set: [out, "${out}, tail: ${tail_word}"] }] }
+                                  - if: { condition: { neq: [edge.text, ""] }, then: [{ set: [out, "${out}, text: \"${ { call: [<.esc_yaml, edge.text] } }\""] }] }
+                                  # the edge's own colour: set by the menu (§8.2) and by
+                                  # `linkStyle` on import, and silently dropped here until
+                                  # an imported linkStyle came back colourless
+                                  - if: { condition: { neq: [edge.stroke, 0] }, then: [{ set: [out, "${out}, stroke: ${edge.stroke}"] }] }
+                                  - if:
+                                      condition: { neq: [edge.rel, RelKind.plain] }
+                                      then:
+                                        - decl: [rel_word, string, { call: [enums.name, "RelKind", edge.rel] }]
+                                        - set: [out, "${out}, rel: ${rel_word}"]
+                                  - if: { condition: { neq: [edge.deco, 0] }, then: [{ set: [out, "${out}, deco: ${edge.deco}"] }] }
+                                  - if: { condition: { neq: [edge.ink, 0] }, then: [{ set: [out, "${out}, ink: ${edge.ink}"] }] }
+                                  - if: { condition: { neq: [edge.from_text, ""] }, then: [{ set: [out, "${out}, from_text: \"${ { call: [<.esc_yaml, edge.from_text] } }\""] }] }
+                                  - if: { condition: { neq: [edge.to_text, ""] }, then: [{ set: [out, "${out}, to_text: \"${ { call: [<.esc_yaml, edge.to_text] } }\""] }] }
+                                  - set: [out, "${out} }\n"]
+                                  else: [{ call: [log.error, "chart: edge '${edge.ident}' has no ends and is not written"] }]
                               - set: [eidx, { +: [eidx, 1] }]
                   - set: [out, { call: [<.steps_yaml, slide, out] }]
                   - set: [sidx, { +: [sidx, 1] }]

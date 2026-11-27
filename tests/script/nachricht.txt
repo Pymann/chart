@@ -1,0 +1,14 @@
+# Die Verbindungsgeste muss auf der LEBENSLINIE greifen, nicht nur auf dem
+# Kopfkasten (spec §5.8.3): dort wird der Pfeil gezeichnet, dort zielt die Hand.
+# y=400 liegt weit unter den Koepfen (die enden bei 152).
+wait 3
+tool Nachricht
+wait 2
+at 255 400
+down 0
+wait 1
+at 485 400
+up 0
+wait 3
+save
+wait 2

@@ -169,6 +169,31 @@
                   - set: [idx, { +: [idx, 1] }]
             - return: -1
 
+      # Which participant's LIFELINE is under a point, "" for none (spec §5.8.3).
+      # The head box is only the top 56 units of a column; the arrow is drawn between
+      # the lifelines, so a gesture that only accepted the box would miss exactly
+      # where the user aims.  Columns are 230 apart and the band is 170 wide, so the
+      # 60 units between two lifelines belong to neither.
+      - def:
+          name: lane_at
+          static_off: ["same_arg", "str_cmp"]
+          args: [[sheet, ref<Sheet>], [spot_x, f32], [spot_y, f32]]
+          return: string
+          body:
+            - if: { condition: { lt: [spot_y, { call: [<.top_y] }] }, then: [{ return: "" }] }
+            - decl: [order, list<i32>, { call: [<.columns, sheet] }]
+            - decl: [reach, f32, { /: [{ call: [<.box_w] }, 2.0] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, order.len] }
+                body:
+                  - decl: [node, Node, { at: [sheet.nodes, { at: [order, idx] }] }]
+                  - decl: [mid, f32, { +: [{ call: [<.col_x, idx] }, reach] }]
+                  - decl: [gap, f32, { call: [math.abs, { -: [spot_x, mid] }] }]
+                  - if: { condition: { lt: [gap, reach] }, then: [{ return: node.ident }] }
+                  - set: [idx, { +: [idx, 1] }]
+            - return: ""
+
       # The centre of a participant's column, in design coordinates.
       - def:
           name: centre_of
